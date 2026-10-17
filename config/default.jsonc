@@ -1,0 +1,45 @@
+// ---------------------------------------------------------------------------
+// OpenMaver V2.0 默认配置（JSONC：支持 // 行注释与 /* */ 块注释）
+//
+// 所有功能模块默认 enabled: false，仅日志工具默认开启。
+// 嵌套 key 通过点号访问，例如：combat.aimassist.enabled
+//
+// 模块配置路径约定（见 module.Module）：
+//   包名去掉根包 "module" + "." + 类名小写
+//   例如 module.movement.AutoSprint -> movement.autosprint
+// ---------------------------------------------------------------------------
+{
+  // 移动相关模块
+  "movement": {
+    "autosprint": {
+      "enabled": false        // 示例模块 AutoSprint：默认关闭（链路验证时可临时改为 true）
+    }
+  },
+
+  // 战斗相关模块
+  "combat": {
+    "aimassist": {
+      "enabled": false,        // 瞄准辅助：默认关闭
+      "speed": 0.15,           // 平滑速度（0.0 ~ 1.0）
+      "maxDistance": 6.0       // 最大作用距离（单位：方块）
+    }
+  },
+
+  // 渲染相关模块
+  "render": {
+    "esp": {
+      "enabled": false,        // 透视标记：默认关闭
+      "color": "#FFFFFF",      // 颜色（十六进制 RGB）
+      "thickness": 1.5,        // 线宽
+      "maxDistance": 64        // 最大渲染距离（单位：方块）
+    }
+  },
+
+  // 工具类模块
+  "tools": {
+    "logger": {
+      "enabled": true,         // 日志系统默认开启
+      "path": "./logs/openmaver.log"
+    }
+  }
+}

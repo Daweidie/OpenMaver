@@ -1,0 +1,18 @@
+# 构建产物
+/build/
+/cmake-build-*/
+*.o
+*.so
+*.dll
+*.dylib
+
+# Java 编译产物
+*.class
+
+# 运行期日志
+/logs/
+
+# 编辑器
+.vscode/
+.idea/
+*.user
