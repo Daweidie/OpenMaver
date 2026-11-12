@@ -174,13 +174,16 @@ public final class OpenMaver {
      */
     public static synchronized void start() {
         if (started) {
+            System.err.println("[OpenMaver] start ignored: already started");
             return;
         }
+        System.err.println("[OpenMaver] start begin");
         init();
         Logger.info(NAME, "版本 " + getVersion() + " 启动完成");
         loadConfig();
         registerModules();
         started = true;
+        System.err.println("[OpenMaver] start complete");
 
         // 独立运行模式下自建驱动线程验证链路；Forge 模式由事件总线驱动
         if (standaloneDriver) {

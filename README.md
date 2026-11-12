@@ -38,8 +38,8 @@ OpenMaver/
 │   ├── mcmod.info                 # Forge mod 元数据（打包进 mod jar）
 │   ├── OpenMaverMod.java          # @Mod 入口
 │   ├── OpenMaverClientHandler.java# 客户端 tick / 渲染事件桥接 + 进入世界启动
-│   ├── OpenMaverHud.java          # 右下角「注入成功！！」提示（长方形 + 平滑动画）
-│   └── GuiOpenMaverClickGui.java  # 游戏内 ClickGUI（RSHIFT 开关，点击模块）
+│   ├── OpenMaverHud.java          # 右侧 ModuleList（胶囊列表 + 键位 + 启用动效）
+│   └── GuiOpenMaverClickGui.java  # 游戏内 ClickGUI（分类 / 搜索 / 展开设置）
 ├── mcstubs/                       # 编译 mc/ 用的 API stub（仅编译期，不进 jar）
 ├── tools/McpReobf.java            # MCP -> SRG reobf（Forge 1.8.9 运行期需要）
 ├── config/default.jsonc           # 默认配置
@@ -109,12 +109,38 @@ mc/*.java --javac(对 MCP API)--> mc-classes --McpReobf(MCP->SRG)--> mc-classes-
    PrismLauncher 用户：右键 `1.8.9` 实例 → *Edit* → *Version* → *Install Forge* → 选 `11.15.1.2318`。
 2. 用上面的命令构建出 **`build/openmaver-mod.jar`**。
 3. 把 `openmaver-mod.jar` 放进该实例的 `mods/` 目录（`~/.minecraft/mods/` 或 Prism 实例的 `minecraft/mods/`）。
-4. 启动游戏 → 进入世界，右下角会出现「注入成功！！」，RSHIFT 打开 ClickGUI。
+4. 启动游戏 → 进入世界，右下角会出现「注入成功！！」。
 
 > 用 PrismLauncher 的 vanilla 实例直接实现不了——`mc/` 的事件（`TickEvent`、`RenderGameOverlayEvent` 等）
 > 全部来自 Forge，必须先给该实例装上 Forge。
 
 ## 运行
+
+### 独立启动 Minecraft
+
+项目可以直接启动本机已安装的 Forge 1.8.9，不会打开 Prism 启动器：
+
+```bash
+./launch-openmaver.sh
+```
+
+脚本先构建项目，再从 Prism 的共享缓存读取 Java、Minecraft/Forge 依赖和活动账号会话，
+把 `build/openmaver-mod.jar` 安装到目标实例的 `minecraft/mods/OpenMaver.jar`，最后直接启动
+`net.minecraft.launchwrapper.Launch`。默认实例为 `1.8.9(1)`；可用 `OPENMAVER_INSTANCE`
+指定实例名，或用 `OPENMAVER_INSTANCE_DIR` 和 `PRISM_ROOT` 指定自定义目录。
+账号会话沿用该机器已缓存的有效游戏令牌；没有活动账号时可设置 `OPENMAVER_USERNAME`
+以离线身份进入仅允许离线账号的服务器。
+
+仅检查启动参数和本地依赖，不打开游戏：`python3 launch-openmaver.py --dry-run`。
+
+### 终端设置
+
+```bash
+./openmaver-tui.py
+```
+
+按 `1` 或 `2` 切换功能，设置会立即写入 Prism 实例的 `minecraft/config/openmaver.properties`，
+运行中的游戏会在约一秒内读到更新。自定义实例可通过 `OPENMAVER_INSTANCE_DIR` 指定。
 
 ### 独立模式
 
@@ -151,8 +177,9 @@ java -Djava.library.path=build/lib \
 | 首次进入世界（`ClientTickEvent`） | `OpenMaver.start()` + 右下角弹「注入成功！！」 |
 | `TickEvent.ClientTickEvent` (END) | `ModuleManager.onTick()` |
 | `RenderWorldLastEvent` | `ModuleManager.onRender()` |
-| `RenderGameOverlayEvent.Post` | `OpenMaverHud` 绘制右下角提示 |
+| `RenderGameOverlayEvent.Post` | `OpenMaverHud` 绘制右侧 ModuleList + 注入提示 |
 | RSHIFT（在游戏内） | 开关 `GuiOpenMaverClickGui` |
+| 模块绑定键（如 `V`） | 切换对应模块的启用状态 |
 
 配置文件默认读取游戏工作目录下的 `config/default.jsonc`
 （即 `.minecraft/config/default.jsonc`），可用系统属性覆盖：
@@ -166,14 +193,23 @@ java -Djava.library.path=build/lib \
 
 按需求，OpenMaver 的核心**延迟到玩家真正进入世界**时才启动，并给出可视反馈：
 
-- **右下角提示** `mc/OpenMaverHud.java`：一个长方形卡片，显示「注入成功！！」。
-  动画为「**滑入 350ms（ease-out）→ 停留 2500ms → 滑出 350ms（ease-in）+ 淡出**」，
-  从屏幕右侧滑入右下角；用 `System.nanoTime()` 计时，与帧率无关，因此是平滑的。
-  绘制在 `RenderGameOverlayEvent.Post`（`type == ALL`）里，此时 GL 矩阵已是缩放坐标。
-- **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关，
-  中央面板列出所有模块，点击即可开关（`Module.setEnabled`）。
+- **ModuleList** `mc/OpenMaverHud.java`：屏幕右侧垂直堆叠的模块列表。
+  每项是半透明深色圆角胶囊，左侧为青/紫/粉分类色条，右侧是圆角键帽形式的绑定键位；
+  启用项高亮并带轻微外发光，禁用项降低不透明度。模块启用时会从右侧轻微滑入并淡入，
+  同时触发一次短暂的外发光脉冲；列表首次出现时按注册顺序错峰滑入。
+  所有动画基于 `System.nanoTime()`，与帧率无关。
+- **右下角提示**：进入世界时仍会弹出「注入成功！！」胶囊，从屏幕右侧滑入、
+  停留约 2.4 秒后淡出；绘制在 `RenderGameOverlayEvent.Post`（`type == ALL`）里。
+- **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关。
+  深色玻璃面板 + 青蓝描边，左侧 Combat / Movement / Render / Player / Misc 分类栏，
+  顶部搜索（`Ctrl+K`）、ALL / ENABLED / DISABLED 筛选与排序；点击行展开设置在
+  `Gui.drawRect` 自绘的滑块 / 下拉 / 复选框中直接调参。模块列表来自
+  `ModuleManager`，Aim Assist 与 Player ESP 直接绑定 `OpenMaverFeatures`，
+  参数写入 `config/openmaver.properties`（拖拽结束与关闭 GUI 时落盘）。
+- **模块键位**：`config/default.jsonc` 中的 `<分类>.<模块>.key`（如
+  `movement.autosprint.key = "V"`）既会显示在 HUD 右侧，也会在游戏内绑定到该键。
 
-两者都在 `OpenMaverMod.init()` 里注册到 `MinecraftForge.EVENT_BUS`；
+HUD 与 ClickGUI 都在 `OpenMaverMod.init()` 里注册到 `MinecraftForge.EVENT_BUS`；
 进入世界由 `OpenMaverClientHandler.onClientTick()` 首次检测到 `theWorld/thePlayer`
 非空时触发：
 
@@ -206,12 +242,14 @@ cd /home/zty/OpenMaver
 ./build/bin/openmaver_injector --re-self \
   --so    "$(pwd)/build/lib/libopenmaver_core.so" \
   --options "jar=$(pwd)/build/openmaver-core.jar" \
-  --mcjar "$(pwd)/build/openmaver-mc.jar"             # ← 默认就是它，可省
+  --mcjar "$(pwd)/build/openmaver-mc.jar" \
+  --follow "$(pwd)/logs/openmaver.log"                 # 可选：注入后持续跟随日志
 # 省略 --pid 会自动选嗅探到的目标
 ```
 
 成功后：目标进程控制台出现 `[OpenMaver] 已注册游戏内 UI 到 Forge 事件总线`，
 **进入世界后右下角弹出「注入成功！！」，按 RSHIFT 打开 ClickGUI。**
+`--follow` 会让注入器在注入成功后继续运行；指定日志文件时从当前文件末尾开始跟随新增行，目标游戏退出后监视结束。按 Ctrl+C 只结束注入器的监视，不影响游戏进程。未提供日志文件时只显示目标进程存活状态。
 
 > 原理：`OpenMaverMcBridge`（在 core jar 里）用 JVMTI 找到游戏的 `LaunchClassLoader`，
 > `addURL` 挂上 `openmaver-mc.jar`，再取 `MinecraftForge.EVENT_BUS` 反射 `register(...)`。

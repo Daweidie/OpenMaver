@@ -47,6 +47,12 @@ public final class McpReobf {
         final String FR = "net/minecraft/client/gui/FontRenderer";
         final String SR = "net/minecraft/client/gui/ScaledResolution";
         final String BTN = "net/minecraft/client/gui/GuiButton";
+        final String ENTITY = "net/minecraft/entity/Entity";
+        final String LIVING = "net/minecraft/entity/EntityLivingBase";
+        final String WORLD = "net/minecraft/world/World";
+        final String BB = "net/minecraft/util/AxisAlignedBB";
+        final String RM = "net/minecraft/client/renderer/entity/RenderManager";
+        final String GSM = "net/minecraft/client/renderer/GlStateManager";
 
         m(MC, "getMinecraft", "func_71410_x");
         m(MC, "displayGuiScreen", "func_147108_a");
@@ -57,15 +63,27 @@ public final class McpReobf {
         m(GS, "actionPerformed", "func_146284_a");
         m(GS, "doesGuiPauseGame", "func_73868_f");
         m(GS, "mouseClicked", "func_73864_a");
+        m(GS, "handleMouseInput", "func_146274_d");
+        m(GS, "onGuiClosed", "func_146281_b");
         m(GUI, "drawRect", "func_73734_a");
+        m(GUI, "drawModalRectWithCustomSizedTexture", "func_146110_a");
         m(GUI, "drawCenteredString", "func_73732_a");
         m(GUI, "drawString", "func_73731_b");
+        m(FR, "drawString", "func_78276_b");
         m(FR, "drawStringWithShadow", "func_175063_a");
         m(FR, "getStringWidth", "func_78256_a");
         m(SR, "getScaledWidth", "func_78326_a");
         m(SR, "getScaledHeight", "func_78328_b");
+        m(SR, "getScaleFactor", "func_78325_e");
+        m(MC, "getRenderManager", "func_175598_ae");
+        m(ENTITY, "getDistanceSqToEntity", "func_70068_e");
+        m(ENTITY, "getEntityBoundingBox", "func_174813_aQ");
+        m(LIVING, "isEntityAlive", "func_70089_S");
+        m(LIVING, "getEyeHeight", "func_70047_e");
+        m(GSM, "color", "func_179131_c");
 
         f(MC, "currentScreen", "field_71462_r");
+        f(MC, "renderManager", "field_175616_W");
         f(MC, "fontRendererObj", "field_71466_p");
         f(MC, "theWorld", "field_71441_e");
         f(MC, "thePlayer", "field_71439_g");
@@ -76,10 +94,28 @@ public final class McpReobf {
         f(GS, "mc", "field_146297_k");
         f(BTN, "id", "field_146127_k");
         f(BTN, "displayString", "field_146126_j");
+        f(WORLD, "loadedEntityList", "field_72996_f");
+        f(ENTITY, "posX", "field_70165_t");
+        f(ENTITY, "posY", "field_70163_u");
+        f(ENTITY, "posZ", "field_70161_v");
+        f(ENTITY, "height", "field_70131_O");
+        f(ENTITY, "rotationYaw", "field_70177_z");
+        f(ENTITY, "rotationPitch", "field_70125_A");
+        f(BB, "minX", "field_72340_a");
+        f(BB, "minY", "field_72338_b");
+        f(BB, "minZ", "field_72339_c");
+        f(BB, "maxX", "field_72336_d");
+        f(BB, "maxY", "field_72337_e");
+        f(BB, "maxZ", "field_72334_f");
+        f(RM, "viewerPosX", "field_78725_b");
+        f(RM, "viewerPosY", "field_78726_c");
+        f(RM, "viewerPosZ", "field_78723_d");
 
         SUPER.put("GuiOpenMaverClickGui", GS);
         SUPER.put(GS, GUI);
         SUPER.put(GUI, "java/lang/Object");
+        SUPER.put(LIVING, ENTITY);
+        SUPER.put("net/minecraft/entity/player/EntityPlayer", LIVING);
     }
 
     private McpReobf() {
@@ -254,6 +290,52 @@ public final class McpReobf {
             raw[i] = r;
         }
 
+        // 本类自己声明的 override 方法也必须改名。只改引用不够：
+        // javac 产物里的方法声明仍是 MCP 名（如 drawScreen），而运行期父类是
+        // SRG 名（func_73863_a），不改声明就不会真正覆盖，结果就是 GUI 的
+        // 界面/点击/按键全部走父类空实现（只剩一个鼠标指针）。
+        byte[] body = slice(b, cpEnd, b.length);
+        int p2 = 0;
+        p2 += 2; // access_flags
+        int thisClassIndex = u2(body, p2);
+        p2 += 2;
+        String thisName = utf8[classUtf[thisClassIndex]];
+        p2 += 2; // super_class
+        int interfaceCount = u2(body, p2);
+        p2 += 2 + interfaceCount * 2;
+
+        int fieldCount = u2(body, p2);
+        p2 += 2;
+        for (int i = 0; i < fieldCount; i++) {
+            p2 += 6; // access_flags + name_index + descriptor_index
+            p2 = skipAttributes(body, p2);
+        }
+
+        int methodCount = u2(body, p2);
+        p2 += 2;
+        for (int i = 0; i < methodCount; i++) {
+            int accessFlags = u2(body, p2);
+            int nameOffset = p2 + 2;
+            int nameIndex = u2(body, nameOffset);
+            p2 += 6; // access_flags + name_index + descriptor_index
+            p2 = skipAttributes(body, p2);
+
+            String name = utf8[nameIndex];
+            if (name == null || name.startsWith("<")
+                    || (accessFlags & 0x0002) != 0   // private 不能 override
+                    || (accessFlags & 0x0008) != 0) { // static 不是 override
+                continue;
+            }
+            String srg = findSrgMethod(thisName, name);
+            if (srg == null || srg.equals(name)) {
+                continue;
+            }
+            int srgUtf = nextIndex++;
+            appended.add(utf8Entry(srg));
+            body[nameOffset] = (byte) ((srgUtf >> 8) & 0xFF);
+            body[nameOffset + 1] = (byte) (srgUtf & 0xFF);
+        }
+
         // 组装输出
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         out.write(b, 0, 8); // magic + minor + major
@@ -268,8 +350,32 @@ public final class McpReobf {
         for (byte[] entry : appended) {
             out.write(entry);
         }
-        out.write(b, cpEnd, b.length - cpEnd);
+        out.write(body);
         return out.toByteArray();
+    }
+
+    /** 沿本工程的 SUPER 链查 MCP 方法名对应的 SRG 名。 */
+    private static String findSrgMethod(String className, String methodName) {
+        String cur = className;
+        for (int guard = 0; guard < 8 && cur != null; guard++) {
+            String srg = METHODS.get(cur + "#" + methodName);
+            if (srg != null) {
+                return srg;
+            }
+            cur = SUPER.get(cur);
+        }
+        return null;
+    }
+
+    /** 跳过 attributes 表，返回下一个字段/方法/类属性的起始偏移。 */
+    private static int skipAttributes(byte[] data, int offset) {
+        int count = u2(data, offset);
+        int p = offset + 2;
+        for (int i = 0; i < count; i++) {
+            int length = (int) u4(data, p + 2);
+            p += 6 + length;
+        }
+        return p;
     }
 
     // ==================================================================

@@ -12,7 +12,8 @@
   // 移动相关模块
   "movement": {
     "autosprint": {
-      "enabled": false        // 示例模块 AutoSprint：默认关闭（链路验证时可临时改为 true）
+      "enabled": false,        // 示例模块 AutoSprint：默认关闭（链路验证时可临时改为 true）
+      "key": "V"               // 绑定键位（HUD 右侧显示，按 V 切换）
     }
   },
 
@@ -20,6 +21,7 @@
   "combat": {
     "aimassist": {
       "enabled": false,        // 瞄准辅助：默认关闭
+      "key": "C",              // 绑定键位
       "speed": 0.15,           // 平滑速度（0.0 ~ 1.0）
       "maxDistance": 6.0       // 最大作用距离（单位：方块）
     }
@@ -29,6 +31,7 @@
   "render": {
     "esp": {
       "enabled": false,        // 透视标记：默认关闭
+      "key": "X",              // 绑定键位
       "color": "#FFFFFF",      // 颜色（十六进制 RGB）
       "thickness": 1.5,        // 线宽
       "maxDistance": 64        // 最大渲染距离（单位：方块）

@@ -1,2 +1,4 @@
 package net.minecraft.world;
-public class World {}
+import java.util.ArrayList;
+import java.util.List;
+public class World { public List<Object> loadedEntityList = new ArrayList<Object>(); }

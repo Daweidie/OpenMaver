@@ -38,7 +38,7 @@ public final class OpenMaverMod {
     /** 客户端事件处理器实例（init 阶段创建并注册）。 */
     private OpenMaverClientHandler clientHandler;
 
-    /** 右下角 HUD 提示实例（init 阶段创建并注册）。 */
+    /** 右侧模块列表 HUD（init 阶段创建并注册）。 */
     private OpenMaverHud hud;
 
     /** 加载阶段最早的回调：仅注册退出钩子。 */

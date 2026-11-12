@@ -32,6 +32,7 @@
 #include <unistd.h>
 
 #include <cctype>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -502,6 +503,7 @@ void printUsage() {
         "  --options <k=v,...>  传给 Agent_OnAttach 的参数（如 jar=.../openmaver-core.jar）\n"
         "  --mcjar <path>       含游戏内 UI 类的 jar（默认 build/openmaver-mc.jar），\n"
         "                       提供后注入时会注册 HUD/ClickGUI 到 Forge 事件总线\n"
+        "  --follow [日志文件]  注入成功后保持运行；可选跟随日志文件新增内容\n"
         "  --jattach <path>     jattach 可执行文件（默认取 PATH 中的 jattach）\n"
         "  -h, --help           显示本帮助\n",
         stdout);
@@ -517,6 +519,8 @@ int main(int argc, char** argv) {
     std::string options = "";
     std::string jattach = kDefaultJattach;
     std::string mcJar = "build/openmaver-mc.jar";
+    bool follow = false;
+    std::string followLog;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -539,6 +543,11 @@ int main(int argc, char** argv) {
             mcJar = argv[++i];
         } else if (a == "--jattach" && i + 1 < argc) {
             jattach = argv[++i];
+        } else if (a == "--follow") {
+            follow = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                followLog = argv[++i];
+            }
         } else {
             std::fprintf(stderr, "[injector] 未知参数: %s\n", a.c_str());
             printUsage();
@@ -603,6 +612,45 @@ int main(int argc, char** argv) {
                    "  3) 目标须与当前用户相同，且未用 -XX:+DisableAttachMechanism 启动\n"
                    "  4) Flatpak/Snap 等沙箱命名空间下自研模式会失败，改用 --re-jattach\n"
                    "  5) 看目标进程控制台/stderr 里 [OpenMaver] agent: 开头的报错\n", stderr);
+    }
+    if (result == 0 && follow) {
+        FILE* log = nullptr;
+        off_t offset = 0;
+        if (!followLog.empty()) {
+            log = std::fopen(followLog.c_str(), "r");
+            if (log != nullptr) {
+                if (::fseeko(log, 0, SEEK_END) == 0) {
+                    offset = ::ftello(log);
+                }
+                std::fprintf(stdout, "[injector] 跟随日志: %s\n", followLog.c_str());
+            } else {
+                std::fprintf(stderr, "[injector] 无法打开日志: %s\n", followLog.c_str());
+            }
+        }
+        std::fprintf(stdout, "[injector] 持续监视 pid=%d，按 Ctrl+C 结束监视\n", static_cast<int>(pid));
+        std::fflush(stdout);
+        while (::kill(pid, 0) == 0 || errno == EPERM) {
+            if (log != nullptr) {
+                struct stat st;
+                if (::stat(followLog.c_str(), &st) == 0 && st.st_size < offset) {
+                    std::fclose(log);
+                    log = std::fopen(followLog.c_str(), "r");
+                    offset = 0;
+                }
+                if (log != nullptr) {
+                    char buffer[4096];
+                    while (std::fgets(buffer, sizeof(buffer), log) != nullptr) {
+                        std::fputs(buffer, stdout);
+                        offset = ::ftello(log);
+                    }
+                    std::fflush(stdout);
+                }
+            }
+            struct timespec delay = {0, 250000000};
+            nanosleep(&delay, nullptr);
+        }
+        if (log != nullptr) std::fclose(log);
+        std::fprintf(stdout, "[injector] 目标进程 pid=%d 已退出\n", static_cast<int>(pid));
     }
     return result == 0 ? 0 : 1;
 }

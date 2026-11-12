@@ -18,6 +18,20 @@ import java.net.URL;
  */
 public final class OpenMaverMcBridge {
 
+    private static void debug(String message) {
+        String line = "[OpenMaver] bridge: " + message;
+        System.out.println(line);
+        try {
+            java.nio.file.Files.write(java.nio.file.Paths.get("/tmp/openmaver-bridge.log"),
+                    (line + System.lineSeparator()).getBytes("UTF-8"),
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.WRITE,
+                    java.nio.file.StandardOpenOption.APPEND);
+        } catch (Throwable ignored) {
+            // Diagnostics must never affect injection.
+        }
+    }
+
     private OpenMaverMcBridge() {
         // 工具类，禁止实例化
     }
@@ -39,13 +53,13 @@ public final class OpenMaverMcBridge {
      */
     public static boolean install(String mcJar, String coreJar) {
         try {
-            System.out.println("[OpenMaver] 桥接开始: mcjar=" + mcJar);
+            debug("install begin mcjar=" + mcJar + " coreJar=" + coreJar);
             ClassLoader gameLoader = launchClassLoader();
             if (gameLoader == null) {
-                System.out.println("[OpenMaver] 桥接失败: 未找到 LaunchClassLoader（不是 Forge 客户端？）");
+                debug("LaunchClassLoader not found");
                 return false;
             }
-            System.out.println("[OpenMaver] LaunchClassLoader=" + gameLoader);
+            debug("LaunchClassLoader=" + gameLoader);
 
             addUrl(gameLoader, mcJar);
             if (coreJar != null && !coreJar.isEmpty()) {
@@ -55,18 +69,21 @@ public final class OpenMaverMcBridge {
             // 通过 LaunchClassLoader 加载（FML 转换器会对 SRG 名做映射）
             Class<?> hudClass = Class.forName("OpenMaverHud", true, gameLoader);
             Class<?> handlerClass = Class.forName("OpenMaverClientHandler", true, gameLoader);
-            System.out.println("[OpenMaver] 已加载游戏内类: " + hudClass + ", " + handlerClass);
+            debug("loaded classes hud=" + hudClass + " handler=" + handlerClass);
 
             Object bus = eventBus(gameLoader);
             Method register = bus.getClass().getMethod("register", Object.class);
             register.invoke(bus, handlerClass.getDeclaredConstructor().newInstance());
             register.invoke(bus, hudClass.getDeclaredConstructor().newInstance());
 
-            System.out.println("[OpenMaver] 已注册游戏内 UI 到 Forge 事件总线 (HUD + ClickGUI)");
+            debug("registered UI on Forge event bus");
             return true;
         } catch (Throwable t) {
             Throwable cause = (t.getCause() != null) ? t.getCause() : t;
-            System.out.println("[OpenMaver] 注册游戏内 UI 失败: " + cause);
+            debug("UI registration failed: " + cause);
+            java.io.StringWriter stack = new java.io.StringWriter();
+            t.printStackTrace(new java.io.PrintWriter(stack));
+            debug(stack.toString());
             return false;
         }
     }

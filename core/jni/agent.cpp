@@ -25,8 +25,23 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cstdarg>
+#include <unistd.h>
 
 namespace {
+
+void agentLog(const char* format, ...) {
+    char path[128];
+    std::snprintf(path, sizeof(path), "/tmp/openmaver-agent-%d.log", static_cast<int>(::getpid()));
+    FILE* file = std::fopen(path, "a");
+    if (file == nullptr) return;
+    va_list args;
+    va_start(args, format);
+    std::vfprintf(file, format, args);
+    va_end(args);
+    std::fputc('\n', file);
+    std::fclose(file);
+}
 
 // 从 options 中取 key=value 的 value，写入 out（含结尾 '\0'）。
 // 未找到返回 false。
@@ -68,10 +83,12 @@ bool optionValue(const char* options, const char* key, char* out, std::size_t ou
 // 把游戏内 UI（HUD / ClickGUI）挂到 LaunchClassLoader 并注册到 Forge 事件总线。
 // 返回是否成功。
 bool installGameUi(JNIEnv* env, const char* mcJar, const char* coreJar) {
+    agentLog("installGameUi begin mcjar=%s corejar=%s", mcJar, coreJar != nullptr ? coreJar : "");
     std::fprintf(stdout, "[OpenMaver] agent: 开始注册游戏内 UI mcjar=%.240s\n", mcJar);
     std::fflush(stdout);
     jclass bridge = env->FindClass("OpenMaverMcBridge");
     if (bridge == nullptr) {
+        agentLog("FindClass OpenMaverMcBridge failed");
         std::fputs("[OpenMaver] agent: 未找到 OpenMaverMcBridge（core jar 里应包含）\n", stderr);
         env->ExceptionClear();
         return false;
@@ -80,6 +97,7 @@ bool installGameUi(JNIEnv* env, const char* mcJar, const char* coreJar) {
     jmethodID install = env->GetStaticMethodID(
         bridge, "install", "(Ljava/lang/String;Ljava/lang/String;)Z");
     if (install == nullptr) {
+        agentLog("GetStaticMethodID OpenMaverMcBridge.install failed");
         std::fputs("[OpenMaver] agent: 未找到 OpenMaverMcBridge.install(String,String)\n", stderr);
         env->ExceptionClear();
         return false;
@@ -89,11 +107,13 @@ bool installGameUi(JNIEnv* env, const char* mcJar, const char* coreJar) {
     jstring core = env->NewStringUTF(coreJar != nullptr ? coreJar : "");
     jboolean ok = env->CallStaticBooleanMethod(bridge, install, jar, core);
     if (env->ExceptionCheck()) {
+        agentLog("OpenMaverMcBridge.install threw exception");
         std::fputs("[OpenMaver] agent: 游戏内 UI 桥接异常\n", stderr);
         env->ExceptionDescribe();
         env->ExceptionClear();
         return false;
     }
+    agentLog("installGameUi result=%s", ok == JNI_TRUE ? "true" : "false");
     return ok == JNI_TRUE;
 }
 
@@ -115,6 +135,7 @@ void fallbackDriver(JNIEnv* env) {
 
 // 在目标 JVM 内启动 OpenMaver。返回 0 表示成功。
 jint startOpenMaver(JavaVM* vm, const char* options) {
+    agentLog("Agent_OnAttach begin options=%s", options != nullptr ? options : "");
     JNIEnv* env = nullptr;
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_8) != JNI_OK) {
         if (vm->AttachCurrentThread(reinterpret_cast<void**>(&env), nullptr) != JNI_OK || env == nullptr) {
@@ -130,6 +151,7 @@ jint startOpenMaver(JavaVM* vm, const char* options) {
         if (vm->GetEnv(reinterpret_cast<void**>(&jvmti), JVMTI_VERSION_1_2) == JNI_OK && jvmti != nullptr) {
             jvmtiError err = jvmti->AddToBootstrapClassLoaderSearch(jarPath);
             if (err != JVMTI_ERROR_NONE) {
+                agentLog("AddToBootstrapClassLoaderSearch failed err=%d jar=%s", static_cast<int>(err), jarPath);
                 char buf[256];
                 std::snprintf(buf, sizeof(buf),
                               "[OpenMaver] agent: 加入 bootstrap 搜索失败 (err=%d) jar=%.180s\n",
@@ -137,6 +159,7 @@ jint startOpenMaver(JavaVM* vm, const char* options) {
                 std::fputs(buf, stderr);
             }
         } else {
+            agentLog("GetEnv JVMTI failed");
             std::fputs("[OpenMaver] agent: 未取得 JVMTI 环境，无法追加 jar\n", stderr);
         }
     } else {
@@ -145,6 +168,7 @@ jint startOpenMaver(JavaVM* vm, const char* options) {
 
     jclass clazz = env->FindClass("OpenMaver");
     if (clazz == nullptr) {
+        agentLog("FindClass OpenMaver failed");
         std::fputs("[OpenMaver] agent: 未找到 OpenMaver 类（请用 jar= 指定核心类 jar）\n", stderr);
         env->ExceptionDescribe();
         env->ExceptionClear();
@@ -158,6 +182,7 @@ jint startOpenMaver(JavaVM* vm, const char* options) {
         {const_cast<char*>("getVersion"), const_cast<char*>("()Ljava/lang/String;"), reinterpret_cast<void*>(&Java_OpenMaver_getVersion)},
     };
     if (env->RegisterNatives(clazz, methods, 3) != JNI_OK) {
+        agentLog("RegisterNatives failed");
         std::fputs("[OpenMaver] agent: RegisterNatives 失败\n", stderr);
         env->ExceptionClear();
         return JNI_ERR;
@@ -168,8 +193,10 @@ jint startOpenMaver(JavaVM* vm, const char* options) {
     const bool useDriver = !optionValue(options, "driver", driverOpt, sizeof(driverOpt))
                            || std::strcmp(driverOpt, "false") != 0;
     const char* method = useDriver ? "startWithDriver" : "start";
+    agentLog("calling OpenMaver.%s", method);
 
     if (env->ExceptionCheck()) {
+        agentLog("OpenMaver.%s threw exception", method);
         env->ExceptionClear();
     }
 
@@ -195,12 +222,15 @@ jint startOpenMaver(JavaVM* vm, const char* options) {
         const char* core = optionValue(options, "jar", coreJar, sizeof(coreJar)) ? coreJar : "";
         std::fprintf(stdout, "[OpenMaver] agent: mcjar 已提供，corejar=%.240s\n", core);
         if (!installGameUi(env, mcJar, core)) {
+            agentLog("UI install failed; enabling standalone driver");
             fallbackDriver(env);
         }
     } else {
+        agentLog("mcjar option missing");
         std::fputs("[OpenMaver] agent: 未提供 mcjar=，跳过游戏内 UI 注册\n", stderr);
     }
 
+    agentLog("Agent_OnAttach completed");
     return JNI_OK;
 }
 

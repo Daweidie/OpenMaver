@@ -41,6 +41,9 @@ public abstract class Module {
     /** 当前是否启用。 */
     protected volatile boolean enabled;
 
+    /** 绑定键位（例如 "V"、"RSHIFT"）；null 表示未绑定。 */
+    protected volatile String keybind;
+
     /**
      * 按“包名 + 模块名”约定自动推导配置路径。
      *
@@ -103,11 +106,30 @@ public abstract class Module {
         return enabled;
     }
 
+    /** 绑定键位显示名（例如 "V"）；未绑定返回 null。 */
+    public final String getKeybind() {
+        return keybind;
+    }
+
+    /** 设置绑定键位；传入 null / 空白字符串表示解除绑定。 */
+    public final void setKeybind(String value) {
+        if (value == null) {
+            this.keybind = null;
+            return;
+        }
+        String cleaned = value.trim();
+        this.keybind = cleaned.isEmpty() ? null : cleaned.toUpperCase(Locale.ROOT);
+    }
+
     /**
      * 从配置同步 enabled 状态。若状态发生变化会触发 onEnable / onDisable。
      * 注册时以及配置热重载后由 {@code ModuleManager} 调用。
      */
     public final void syncFromConfig() {
+        if (config != null) {
+            String configuredKey = config.getString(configKey + ".key", null);
+            setKeybind(configuredKey);
+        }
         boolean wanted = (config != null) && config.getBoolean(configKey + ".enabled", false);
         setEnabled(wanted);
     }

@@ -12,8 +12,10 @@ public class GuiScreen extends Gui {
     public void initGui() {}
     public void drawScreen(int mx, int my, float pt) {}
     public void drawDefaultBackground() {}
+    public void handleMouseInput() throws java.io.IOException {}
     protected void keyTyped(char c, int k) throws IOException {}
     protected void actionPerformed(GuiButton b) throws IOException {}
     protected void mouseClicked(int mx, int my, int btn) throws IOException {}
+    public void onGuiClosed() {}
     public boolean doesGuiPauseGame() { return true; }
 }

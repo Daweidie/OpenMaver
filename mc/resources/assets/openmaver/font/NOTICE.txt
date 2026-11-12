@@ -1,0 +1,8 @@
+OpenSansAtlas.png contains rasterized glyphs from:
+
+- Open Sans (Copyright 2020 The Open Sans Project Authors), and
+- Noto Sans CJK SC (Copyright Adobe and Google).
+
+Both font families are licensed under the SIL Open Font License 1.1; the full
+license text is in OFL.txt. Only the generated atlas bitmap is shipped with
+OpenMaver, not the original font files.

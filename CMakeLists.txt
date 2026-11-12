@@ -174,8 +174,10 @@ if(Java_Development_FOUND)
     add_custom_target(openmaver_mc_reobf ALL
         COMMAND "${Java_JAVA_EXECUTABLE}" -cp "${CMAKE_BINARY_DIR}/tools"
                 McpReobf "${OPENMAVER_MC_CLASSES_DIR}" "${OPENMAVER_MC_REOBF_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_SOURCE_DIR}/mc/resources" "${OPENMAVER_MC_REOBF_DIR}"
         DEPENDS openmaver_mc openmaver_reobf_tool
-        COMMENT "reobf: MCP -> SRG（运行期可用）"
+        COMMENT "reobf: MCP -> SRG（运行期可用）并复制 HUD 资源"
         VERBATIM
     )
 
