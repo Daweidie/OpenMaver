@@ -7,6 +7,11 @@
 // 模块配置路径约定（见 module.Module）：
 //   包名去掉根包 "module" + "." + 类名小写
 //   例如 module.movement.AutoSprint -> movement.autosprint
+//
+// Grim 对测 profile 不在这里，而在 config/openmaver.properties：
+//   bypass.enabled=true
+//   bypass.profile=balanced     // legit | balanced | aggressive
+//   debug.enabled=false         // 写入 logs/openmaver-debug.log
 // ---------------------------------------------------------------------------
 {
   // 移动相关模块
@@ -14,6 +19,14 @@
     "autosprint": {
       "enabled": false,        // 示例模块 AutoSprint：默认关闭（链路验证时可临时改为 true）
       "key": "V"               // 绑定键位（HUD 右侧显示，按 V 切换）
+    },
+    "scaffold": {
+      "enabled": false,        // Scaffold 自动搭路：默认关闭（按 G 切换）
+      "key": "G"               // 绑定键位（按 G 切换）
+    },
+    "godbridge": {
+      "enabled": false,        // GodBridge 神桥：默认关闭（按 B 切换）
+      "key": "B"               // 绑定键位（按 B 切换）
     }
   },
 
@@ -24,6 +37,22 @@
       "key": "C",              // 绑定键位
       "speed": 0.15,           // 平滑速度（0.0 ~ 1.0）
       "maxDistance": 6.0       // 最大作用距离（单位：方块）
+    },
+    "autoclicker": {
+      "enabled": false,        // 自动点击器：默认关闭
+      "key": "R"               // 绑定键位（按 R 切换；默认 6~10 CPS）
+    },
+    "reach": {
+      "enabled": false,        // Reach 攻击距离：默认关闭
+      "key": "K"               // 绑定键位（按 K 切换）
+    }
+  },
+
+  // 玩家相关模块
+  "player": {
+    "fastplace": {
+      "enabled": false,        // 快速右键：默认关闭
+      "key": "F"               // 绑定键位（按 F 切换）
     }
   },
 
@@ -35,6 +64,22 @@
       "color": "#FFFFFF",      // 颜色（十六进制 RGB）
       "thickness": 1.5,        // 线宽
       "maxDistance": 64        // 最大渲染距离（单位：方块）
+    },
+    "targethud": {
+      "enabled": false,        // 目标信息面板：默认关闭（按 H 切换）
+      "key": "H"               // 绑定键位
+    },
+    "playerxray": {
+      "enabled": false,        // 玩家透视：默认关闭（按 J 切换）
+      "key": "J"               // 绑定键位
+    }
+  },
+
+  // 杂项模块
+  "misc": {
+    "fakeplayer": {
+      "enabled": false,        // 假人玩家：默认关闭（按 N 生成/移除假人）
+      "key": "N"               // 绑定键位（按 N 切换）
     }
   },
 

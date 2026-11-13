@@ -2,8 +2,10 @@
 
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
-> 说明：本仓库当前仅包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接），
-> 不包含任何具体功能模块的实现。请仅在你拥有或获得明确授权的服务器上进行测试。
+> 说明：本仓库包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接）
+> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、Reach、Scaffold、GodBridge、FastPlace、FakePlayer、Target HUD、Player X-Ray）
+> 以及 `legit / balanced / aggressive` 三档 Grim 对测 profile。
+> 请仅在你拥有或获得明确授权的服务器上进行测试。
 
 ## 技术栈
 
@@ -31,7 +33,13 @@ OpenMaver/
 │   └── module/
 │       ├── Module.java            # 模块抽象基类（按包名约定推导配置路径）
 │       ├── ModuleManager.java     # 模块注册表 + 统一驱动
-│       └── movement/AutoSprint.java  # 示例模块（链路验证器）
+│       ├── movement/AutoSprint.java  # 示例模块（链路验证器）
+│       ├── movement/Scaffold.java  # 自动搭路开关（MC 侧逻辑在 OpenMaverFeatures）
+│       ├── movement/GodBridge.java # 神桥开关（MC 侧逻辑在 OpenMaverFeatures）
+│       ├── player/FastPlace.java  # 快速右键开关（MC 侧逻辑在 OpenMaverFeatures）
+│       ├── render/TargetHud.java  # 目标信息面板开关（MC 侧绘制在 mc/TargetHud）
+│       └── render/PlayerXray.java # 玩家透视开关（MC 侧绘制在 OpenMaverFeatures）
+│       └── misc/FakePlayer.java   # 假人玩家开关（MC 侧逻辑在 OpenMaverFeatures）
 ├── inject/                        # 运行期注入器（C++，可选）
 │   └── injector.cpp               # 自研注入器：--re-self / --re-jattach
 ├── mc/                            # Forge 1.8.9 集成（源码为 MCP 名，构建时 reobf 成 SRG）
@@ -109,7 +117,7 @@ mc/*.java --javac(对 MCP API)--> mc-classes --McpReobf(MCP->SRG)--> mc-classes-
    PrismLauncher 用户：右键 `1.8.9` 实例 → *Edit* → *Version* → *Install Forge* → 选 `11.15.1.2318`。
 2. 用上面的命令构建出 **`build/openmaver-mod.jar`**。
 3. 把 `openmaver-mod.jar` 放进该实例的 `mods/` 目录（`~/.minecraft/mods/` 或 Prism 实例的 `minecraft/mods/`）。
-4. 启动游戏 → 进入世界，右下角会出现「注入成功！！」。
+4. 启动游戏 → 进入世界，右下角会出现「Loaded successfully, x features enabled!」。
 
 > 用 PrismLauncher 的 vanilla 实例直接实现不了——`mc/` 的事件（`TickEvent`、`RenderGameOverlayEvent` 等）
 > 全部来自 Forge，必须先给该实例装上 Forge。
@@ -121,17 +129,25 @@ mc/*.java --javac(对 MCP API)--> mc-classes --McpReobf(MCP->SRG)--> mc-classes-
 项目可以直接启动本机已安装的 Forge 1.8.9，不会打开 Prism 启动器：
 
 ```bash
-./launch-openmaver.sh
+./launch-openmaver.sh              # mod 模式（默认）
+./launch-openmaver.sh --mod        # 显式 mod 模式
+./launch-openmaver.sh --inject     # 启动后自动运行期注入
 ```
 
-脚本先构建项目，再从 Prism 的共享缓存读取 Java、Minecraft/Forge 依赖和活动账号会话，
-把 `build/openmaver-mod.jar` 安装到目标实例的 `minecraft/mods/OpenMaver.jar`，最后直接启动
-`net.minecraft.launchwrapper.Launch`。默认实例为 `1.8.9(1)`；可用 `OPENMAVER_INSTANCE`
-指定实例名，或用 `OPENMAVER_INSTANCE_DIR` 和 `PRISM_ROOT` 指定自定义目录。
-账号会话沿用该机器已缓存的有效游戏令牌；没有活动账号时可设置 `OPENMAVER_USERNAME`
-以离线身份进入仅允许离线账号的服务器。
+两种模式互斥，避免同一实例里同时从 mod jar 和注入 jar 各加载一套 `OpenMaver` 类：
 
-仅检查启动参数和本地依赖，不打开游戏：`python3 launch-openmaver.py --dry-run`。
+- `--mod`：把 `build/openmaver-mod.jar` 安装到 `minecraft/mods/OpenMaver.jar`，
+  由 Forge 在启动时加载。
+- `--inject`：把已有的 `mods/OpenMaver.jar` 重命名为 `OpenMaver.jar.disabled`，
+  不安装 mod；启动 Forge 后等待资源加载完成，再用 `openmaver-core.jar` +
+  `openmaver-mc.jar` 注入，并通过 Forge 事件总线注册 HUD / ClickGUI。
+
+脚本先构建项目，再从 Prism 的共享缓存读取 Java、Minecraft/Forge 依赖和活动账号会话。
+默认实例为 `1.8.9(1)`；可用 `OPENMAVER_INSTANCE` 指定实例名，或用
+`OPENMAVER_INSTANCE_DIR` 和 `PRISM_ROOT` 指定自定义目录。账号会话沿用该机器已缓存的
+有效游戏令牌；没有活动账号时可设置 `OPENMAVER_USERNAME` 以离线身份进入仅允许离线账号的服务器。
+
+仅检查启动参数和本地依赖，不打开游戏：`python3 launch-openmaver.py --dry-run --inject`。
 
 ### 终端设置
 
@@ -174,10 +190,10 @@ java -Djava.library.path=build/lib \
 | 时机 | 调用 |
 |---|---|
 | Forge `preInit` | 注册 JVM 退出钩子（`OpenMaver.stop()`） |
-| 首次进入世界（`ClientTickEvent`） | `OpenMaver.start()` + 右下角弹「注入成功！！」 |
+| 首次进入世界（`ClientTickEvent`） | `OpenMaver.start()` + 右下角弹「Loaded successfully, x features enabled!」 |
 | `TickEvent.ClientTickEvent` (END) | `ModuleManager.onTick()` |
 | `RenderWorldLastEvent` | `ModuleManager.onRender()` |
-| `RenderGameOverlayEvent.Post` | `OpenMaverHud` 绘制右侧 ModuleList + 注入提示 |
+| `RenderGameOverlayEvent.Post` | `OpenMaverHud` 绘制右侧 ModuleList + 加载提示 |
 | RSHIFT（在游戏内） | 开关 `GuiOpenMaverClickGui` |
 | 模块绑定键（如 `V`） | 切换对应模块的启用状态 |
 
@@ -193,19 +209,35 @@ java -Djava.library.path=build/lib \
 
 按需求，OpenMaver 的核心**延迟到玩家真正进入世界**时才启动，并给出可视反馈：
 
-- **ModuleList** `mc/OpenMaverHud.java`：屏幕右侧垂直堆叠的模块列表。
-  每项是半透明深色圆角胶囊，左侧为青/紫/粉分类色条，右侧是圆角键帽形式的绑定键位；
-  启用项高亮并带轻微外发光，禁用项降低不透明度。模块启用时会从右侧轻微滑入并淡入，
-  同时触发一次短暂的外发光脉冲；列表首次出现时按注册顺序错峰滑入。
-  所有动画基于 `System.nanoTime()`，与帧率无关。
-- **右下角提示**：进入世界时仍会弹出「注入成功！！」胶囊，从屏幕右侧滑入、
-  停留约 2.4 秒后淡出；绘制在 `RenderGameOverlayEvent.Post`（`type == ALL`）里。
+- **ModuleList** `mc/OpenMaverHud.java`：屏幕右侧垂直堆叠的**已启用功能**列表，
+  顶部固定显示 Maver Logo。每行是透明白色圆角底板，右边缘严格对齐，宽度随文字
+  长短变化；模块名使用深色彩虹缓慢流动 + 呼吸式闪烁，右侧键位以同色弱化显示；
+  禁用功能不会出现在列表中。每行拥有独立动画状态：启用时从右侧平滑淡入，
+  禁用时先淡出再移除，剩余行平滑上移换位。所有动画基于 `System.nanoTime()`，与帧率无关。
+- **Target HUD** `mc/TargetHud.java`：准星右侧的小卡片。**只有准星真正命中
+  `EntityLivingBase` 时才显示**，移开准星立即隐藏；只保留正方形头像（玩家真实皮肤 /
+  无头像时使用 Steve）、名称与细血条，血条颜色随血量从绿到橙再到深红渐变，
+  无头像外圈。
+- **Player X-Ray** `mc/OpenMaverFeatures.renderPlayerXray`：玩家透视。只扫描
+  `EntityPlayer`，关闭深度测试后通过游戏自身的 `RenderManager` 渲染完整皮肤模型，
+  让玩家皮肤、装备和手持物品穿墙可见；模型外侧再绘制 1.5px 描边。
+  描边颜色默认按目标血量（绿 / 琥珀 / 红）变化，也可固定为橙 / 青 / 紫 / 红。
+- **右下角提示**：进入世界时弹出「Loaded successfully, x features enabled!」提示，
+  纯灰色背景 + 底部白色倒计时进度条，从屏幕右侧滑入、停留约 2.4 秒后
+  先渐变为红色，再滑出淡出；连续触发时多张提示会以**卡片栈**形式从下往上叠加，
+  每张卡片拥有独立时间线，旧卡片退场后其余卡片平滑补位。
+  游戏内启用 / 禁用功能时也会弹出「xxx enabled / xxx disabled」。
+  绘制在 `RenderGameOverlayEvent.Post`（`type == ALL`）里，ClickGUI 内也会同步显示。
 - **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关。
-  深色玻璃面板 + 青蓝描边，左侧 Combat / Movement / Render / Player / Misc 分类栏，
+  纯灰色面板 + 中性灰描边，左侧 Combat / Movement / Render / Player / Misc 分类栏，
+  以及 SYSTEM → Configs / Statistics / Settings 页面（配置概览、模块统计与客户端设置），
   顶部搜索（`Ctrl+K`）、ALL / ENABLED / DISABLED 筛选与排序；点击行展开设置在
-  `Gui.drawRect` 自绘的滑块 / 下拉 / 复选框中直接调参。模块列表来自
-  `ModuleManager`，Aim Assist 与 Player ESP 直接绑定 `OpenMaverFeatures`，
-  参数写入 `config/openmaver.properties`（拖拽结束与关闭 GUI 时落盘）。
+  `Gui.drawRect` 自绘的滑块 / 下拉 / 复选框中直接调参。分类、SYSTEM 入口、筛选页签、
+  排序、模块行、搜索框、开关与全部设置控件都有统一的悬停 / 激活 / 按压过渡，
+  滚动条与列表内容共用同一条平滑滚动值。模块列表来自
+  `ModuleManager`，Aim Assist、Player ESP、Grim Bypass、AutoSprint、AutoClicker、Reach、
+  FastPlace、Target HUD 与 Player X-Ray 的设置直接绑定 `OpenMaverFeatures`，参数写入
+  `config/openmaver.properties`（拖拽结束与关闭 GUI 时落盘）。
 - **模块键位**：`config/default.jsonc` 中的 `<分类>.<模块>.key`（如
   `movement.autosprint.key = "V"`）既会显示在 HUD 右侧，也会在游戏内绑定到该键。
 
@@ -217,12 +249,233 @@ HUD 与 ClickGUI 都在 `OpenMaverMod.init()` 里注册到 `MinecraftForge.EVENT
 if (!worldEntered) {
     worldEntered = true;
     if (!OpenMaver.isStarted()) OpenMaver.start(); // 进入世界才启动核心
-    OpenMaverHud.success("注入成功！！");            // 右下角弹提示
+    OpenMaverHud.success("Loaded successfully, "
+            + OpenMaverHud.enabledFeatureCount() + " features enabled!");
 }
 ```
 
 > 说明：HUD / ClickGUI 依赖 `net.minecraft.*`，由 Forge 的类加载器加载。
 > 除了随 mod 加载，**纯运行期注入**也能显示（见下面「注入也能显示 UI」一节）。
+
+## 功能模块
+
+模块开关与键位来自 `config/default.jsonc`，模块参数来自
+`config/openmaver.properties`（ClickGUI 中修改后自动落盘，重启保留）。
+
+### Grim 低检测面 profile（`bypass.*`）
+
+所有战斗/搭路模块共享一个 profile，默认 **BALANCED**，可在 ClickGUI 的
+**Misc → Grim Bypass** 中切换，也可直接编辑 `config/openmaver.properties`：
+
+```properties
+bypass.enabled=true
+bypass.profile=balanced     # legit | balanced | aggressive
+debug.enabled=false         # true 时写入 logs/openmaver-debug.log
+```
+
+| profile | Reach 实际上限 | Aim 单 tick 上限 | AutoClicker | FastPlace / GodBridge fastPlace | Placement rotation |
+|---|---|---|---|---|---|
+| `legit` | 3.00（Grim 扩张箱） | yaw 18° / pitch 12° | ≤8 CPS，强制抖动 | 完全不改 `rightClickDelayTimer` | 仅真实准星 |
+| `balanced`（默认） | 3.00（Grim 扩张箱） | yaw 35° / pitch 20° | ≤12 CPS，抖动+停顿 | FastPlace 最低 2 tick；GodBridge 不压 0 | 仅真实准星 |
+| `aggressive` | ≤3.30（仅对比测试） | 上限放宽 | ≤20 CPS | 允许压到 0 | 允许 auto-rotate / packetRotation |
+
+> `bypass.enabled=false` 会恢复旧的对比行为（Reach 最高 5.9），**不要**在正式
+> 对测中关闭。`aggressive` 会主动越过 Grim 的 Reach 阈值，只用于记录 flag 差异。
+
+**阈值依据（Grim 2.0，commit `f9b801a`）**
+
+- `combat/Reach`：1.8 客户端 `maxReach = 3.0`；目标 AABB 先扩张
+  `Reach.threshold(0.0005) + 1.8 hitbox(0.1) [+ movementThreshold(0.03)]`。
+  因此安全实现是“眼睛到扩张箱 ≤ 3.0”，折算回真实命中箱约 3.13 格。
+- `combat/Hitboxes`：Reach 的射线完全没命中 AABB 时触发。
+- `aim/AimDuplicateLook`：重复相同 rotation 会 flag；本项目在没有实际变化时不写
+  rotation 字段。
+- `aim/AimModulo360`：`|deltaYaw| > 320` 会 flag；所有自动 yaw 都 wrap 到
+  `[-180, 180)`，并且单 tick 限速。
+- `scaffolding/RotationPlace`：C08 使用服务端已收到的 yaw/pitch 做 ray trace；
+  因此 `legit/balanced` 下自动搭路只使用真实准星，不再“只改客户端视角”。
+- `timer/Timer`：每个 tick 包固定按 50ms 计费；本项目在安全 profile 下不额外发
+  `C05PacketPlayerLook`。
+- `multiactions/*`：使用物品时攻击/挥击、同 tick 方块+实体交互、移动中开背包都会
+  flag；AutoClicker/Reach 已加入互斥与使用物品保护。
+
+**观测**：`debug.enabled=true` 时记录 aim rotation 变化、C02 攻击、
+C08 放置、点击间隔、被抑制的 C05，以及每 100 tick 的统计。默认关闭，
+IO 失败只记录一次并自动停用 debug。
+
+完整审计、Grim commit、checks.yml 对照项与对测记录模板见
+`design/GRIM_BYPASS_HANDOFF.md`。
+
+### GodBridge 神桥
+
+- 配置路径：`movement.godbridge`，默认关闭，默认键位 **B**。
+- 使用方式：
+  1. 手持可放置方块，按住 **Shift** 蹲在方块边缘；
+  2. 视角瞄准方块边缘，并按住 **D**（右平移）；
+  3. 松开 **Shift** 立即开始神桥，模块会按当前移动方向在脚下/前方铺路；
+  4. 神桥期间可以正常跳跃，或用 **A/D** 改变铺设方向；再次按下 **Shift** 停止。
+- 触发校验：蹲下、地面站立、按住 D、视线命中方块边缘（可在 ClickGUI 关闭
+  `REQUIRE EDGE AIM` 放宽为“瞄准任意方块”）。
+- 默认 `LEGIT AIM` 开启：模块不会自动转视角，只会在你真实准星已经命中
+  可放置支撑面时右键；请保持准星在方块边缘，桥速接近正常玩家。
+- 稳定性：每 tick 最多放置一次，GUI/聊天/死亡/空手/切换物品时立即停止；
+  是否压缩 `rightClickDelayTimer` 由 profile 决定，停止时恢复原版 4 tick。
+- 设置项（ClickGUI 中展开 GodBridge）：
+  - `DELAY`：`godbridge.delayTicks`，0~4 tick，默认 `0`。
+  - `FAST PLACE`：`godbridge.fastPlace`，默认 `true`；仅在 `aggressive` profile
+    或关闭 bypass 时才会把冷却压到 0。`legit/balanced` 下等待原版冷却自然归零。
+  - `REQUIRE EDGE AIM`：`godbridge.requireEdgeAim`，默认 `true`。
+  - `AUTO ROTATE`：`godbridge.autoRotate`，默认 `true`。`legit/balanced` 下
+    自动旋转会被抑制，只使用真实准星；`aggressive` 才允许临时改视角并恢复。
+  - `LEGIT AIM`：`godbridge.legitAim`，默认 `true`，只使用玩家真实准星放置，
+    不自动转视角、不补发飞行包；对 Grim 最干净。
+  - `PACKET ROTATION`：`godbridge.packetRotation`，默认 `false`，实验性模式，
+    在 C08 前补发一次 `C05PacketPlayerLook`（不再发 placement 后的重复 C05）。
+    `legit/balanced` 下会被强制抑制；只有 `aggressive` 才实际发送。额外 flying packet
+    会被 Grim 的 `Timer` 计数，也可能触发 `AimDuplicateLook` / `AimModulo360`，仅用于对比。
+- 实现说明：`design/GODBRIDGE_HANDOFF.md` 记录了状态机、放置顺序与反射/SRG 名称。
+- Grim 对测结论：C05 补发包虽然能让服务端在 C08 前看到旋转，但会直接触发
+  `Timer`，并可能触发 `AimDuplicateLook` / `AimModulo360`，因此默认关闭；
+  `legit/balanced` 建议保持 `LEGIT AIM`。
+
+### Scaffold 自动搭路
+
+- 配置路径：`movement.scaffold`，默认关闭，默认键位 **G**。
+- 行为：手持可放置方块且未打开任何界面时，自动检查脚下/运动方向前方的空气格，
+  在六个相邻面中寻找安全可见的实心支撑面。`legit/balanced` 下只使用玩家真实准星：
+  通过 `EntityRenderer.getMouseOver(1.0F)` 刷新 `objectMouseOver`，只有命中位置和
+  `sideHit` 完全匹配时才通过游戏自身的 `rightClickMouse` 放置。
+- 稳定性：每个 tick 最多放置一次，失败不补发；打开背包、聊天、ESC 菜单、
+  关闭模块、死亡、空手或左键挖掘时立即停止并重置冷却。放置结束后无论
+  `AUTO ROTATE` 如何都会恢复临时 rotation 与 `objectMouseOver`。
+- 设置项（ClickGUI 中展开 Scaffold）：
+  - `DELAY`：`scaffold.delayTicks`，1~10 tick，默认 `2`。
+  - `REQUIRE BACKWARD`：`scaffold.requireBackward`，默认 `true`，只向后移动时工作。
+  - `AUTO JUMP`：`scaffold.autoJump`，默认 `false`，脚前有可跨越障碍时跳跃。
+  - `AUTO ROTATE`：`scaffold.autoRotate`，默认 `true`；`legit/balanced` 下被抑制，
+    `aggressive` 下才允许临时转向目标面并在放置后恢复。
+  - `LEGIT AIM`：`scaffold.legitAim`，默认 `true`，只用真实准星放置，
+    不自动转视角、不补发飞行包。`legit/balanced` 下即使关闭也会被强制回退到此路径。
+  - `PACKET ROTATION`：`scaffold.packetRotation`，默认 `false`，实验性 C05 补发；
+    `legit/balanced` 下被强制抑制，会触发 Grim `Timer` / `Aim` 类检查。
+- 实现说明：`design/SCAFFOLD_HANDOFF.md` 记录了反射/SRG 名称与实现约束。
+
+### Target HUD 目标信息面板
+
+- 配置路径：`render.targethud`，默认关闭，默认键位 **H**。
+- 行为：**仅在准星命中生物时显示**（玩家、怪物、动物均可），准星移开立即隐藏；
+  不再自动索敌，也不保留历史目标。
+- 卡片内容（极简版）：
+  - 准星右侧的小卡片，只保留正方形头像、名称、细血条三样信息。
+  - 头像：玩家读取 `AbstractClientPlayer#getLocationSkin` 绘制真实皮肤头；
+    非玩家生物或读取不到皮肤时统一使用 Steve 头像。
+  - 血条：颜色随血量从绿（满血）过渡到橙、再到深红（低血），无刻度、无发光；
+    深色纯色底 + 1px 描边，整体随 GUI 缩放设置缩放。
+  - 头像不绘制外圈，保持干净的正方形皮肤/Steve 头像。
+- 设置项（ClickGUI 中展开 Target HUD）：
+  - `RANGE`：`targethud.range`，8~64 格，默认 `32`。
+  - `SCALE`：`targethud.scale`，0.7~1.4，默认 `1.0`。
+  - `PLAYERS ONLY`：`targethud.playersOnly`，默认 `false`，关闭时所有生物都显示。
+- 实现说明：绘制在 `mc/TargetHud.java`，由 `OpenMaverHud` 在
+  `RenderGameOverlayEvent.Post` 中调用；对 MC 成员的访问同时兼容 MCP / SRG
+  运行期名称，失败时只停用该面板，不影响 ModuleList 与 ClickGUI。
+  设计稿见 `design/targethud.html` / `design/targethud-4k.png`（完整版视觉参考）。
+
+### Player X-Ray 玩家透视
+
+- 配置路径：`render.playerxray`，默认关闭，默认键位 **J**。
+- 行为：每帧扫描 `World.loadedEntityList` 中的其他 `EntityPlayer`（排除自己与死亡玩家），
+  在 `range` 内关闭深度测试，通过 `RenderManager.renderEntitySimple` 渲染完整玩家模型，
+  因此可以穿墙看到玩家皮肤、装备和手持物品；模型外侧绘制 1.5px 描边。
+- 颜色：描边颜色 `COLOR = Health`（默认）时按目标血量在绿 / 琥珀 / 红之间切换；
+  也可固定为 Orange / Cyan / Violet / Red。皮肤模型本身保持原版材质颜色。
+- 设置项（ClickGUI 中展开 Player X-Ray）：
+  - `RANGE`：`playerxray.range`，8~128 格，默认 `64`。
+  - `COLOR`：`playerxray.color`，Health / Orange / Cyan / Violet / Red，默认 `Health`。
+- 与既有 **Player ESP** 的区别：Player ESP 是通用生物线框（可包含怪物/动物）；
+  Player X-Ray 只处理玩家，并额外提供穿墙皮肤模型与血量配色描边。
+- 实现说明：`mc/OpenMaverFeatures.renderPlayerXray()`，开关模块为
+  `java/module/render/PlayerXray.java`。
+
+### FastPlace 快速右键
+
+- 配置路径：`player.fastplace`，默认关闭，默认键位 **F**。
+- 通过限制 `Minecraft.rightClickDelayTimer` 加快右键放置/使用物品；
+  关闭模块、打开 GUI、玩家死亡或切换到非方块物品时恢复原版延迟。
+- profile 行为：
+  - `legit`：完全不修改 `rightClickDelayTimer`。
+  - `balanced`：允许加速，但最低保留 **2 tick** 冷却。与 Scaffold/GodBridge
+    同时启用时会让位（不修改 timer），避免把 timer 卡在 2 导致搭路永远等不到 0。
+  - `aggressive` / 关闭 bypass：按 `DELAY` 设置，允许压到 0。
+- 设置项（ClickGUI 中展开 FastPlace）：
+  - `DELAY`：`fastplace.delayTicks`，0~4 tick，默认 `2`。
+  - `ONLY BLOCKS`：`fastplace.onlyBlocks`，默认 `true`，仅在手持方块时生效。
+
+### Reach 攻击距离
+
+- 配置路径：`combat.reach`，默认关闭，默认键位 **K**，位于 ClickGUI 的 **Combat** 分类。
+- 行为：每次**新的攻击/挥击**按 `CHANCE` 掷一次随机数。命中几率时，本次挥击会在
+  profile 允许的距离内做自定义视线射线检测，找到最近且可见的生物后通过
+  `PlayerControllerMP.attackEntity` 发送 `C02PacketUseEntity`；
+  未命中几率时，本次挥击完全使用原版距离。
+- 设置项（ClickGUI 中展开 Reach）：
+  - `EXTRA`：`reach.extra`，0.0~0.5 格，默认 `0.0`。它是“在 3.0 基础上的额外量”，
+    但会被 profile 硬上限截断；`legit/balanced` 下最终都是 3.00。
+  - `CHANCE`：`reach.chance`，1~100 %，默认 `100`。
+- 距离上限（Grim 扩张箱度量）：
+  - `legit/balanced`：**3.00**。Grim `Reach` 对 1.8 客户端使用
+    `maxReach=3.0`，并把目标 AABB 扩张 `0.0005 + 0.1 [+ 0.03]`；因此
+    眼睛到扩张箱 ≤ 3.0 时不会 flag，折算回真实命中箱约 3.13 格。
+  - `aggressive`：最高 3.30，会主动越过 Grim 阈值，仅用于记录 flag 差异。
+  - `bypass.enabled=false`：保留旧的 5.9 上限，仅作历史对比。
+- 实现说明（已核对实际 1.8.9 字节码与 Grim 2.0）：
+  - `EntityRenderer.getMouseOver` 在生存模式会把 `getBlockReachDistance()`（4.5）
+    用作射线长度，但只要实体距离超过 3 格就会丢弃目标；这是原版实体瞄准的硬限制。
+  - `PlayerControllerMP.getBlockReachDistance()` 在 1.8.9 是根据 GameType
+    **动态返回** 4.5 / 5.0 的方法，并不存在可反射修改的 `blockReachDistance` 字段。
+  - Reach 使用精确 eye position + 目标 AABB + `canEntityBeSeen`，只在真实挥击时
+    触发；若检测不到 animation，会先补 `swingItem()`，保证 1.8 的
+    `PacketOrderB`（ANIMATION → INTERACT_ENTITY）顺序。
+  - 使用物品或本 tick 已有右键动作时不做自定义攻击，避免 `MultiActionsA/F`。
+  - 方块交互距离保持原版（生存 4.5 格），**本模块只扩展实体攻击/挥击距离**。
+
+### Aim Assist 平滑瞄准
+
+- 设置路径：`config/openmaver.properties` 的 `aim.*`，ClickGUI 中位于 Combat。
+- 每 tick 的 `ClientTickEvent.START` 只负责选择目标和重置步长预算；实际 rotation
+  在每个渲染帧按真实帧间隔平滑更新，避免 20 TPS 下“每 tick 跳一下”的卡顿感。
+  每 tick 的 rotation delta 仍限制在 profile 上限内，服务端看到的步长不变。
+- `GCD QUANTIZE`（`aim.gcd`，默认 `true`）：按当前鼠标灵敏度计算
+  `(sens*0.6+0.2)^3 * 1.2` 度并量化步长，未走完的零头跨帧累积，保证每 tick
+  总 delta 仍是 GCD 的倍数。
+- `MAX STEP`（`aim.maxStep`，默认 `35°`）：单 tick 最大 yaw 步长；`legit` 进一步
+  收紧到 18°/12°（yaw/pitch），`balanced` 为 35°/20°。yaw 始终 wrap 到
+  `[-180,180)`，不发送额外 C05。
+- 没有实际 rotation 变化时不写字段，避免 `AimDuplicateLook`。
+
+### AutoClicker 自动点击
+
+- 设置路径：`config/openmaver.properties` 的 `autoclicker.*`，ClickGUI 中位于 Combat。
+- 默认 `6~10 CPS`，`HUMANIZE` 默认开启：每次点击有 ±12% 间隔抖动，
+  2% 概率追加 120~350ms 停顿。
+- `legit` 上限 8 CPS，`balanced` 上限 12 CPS，`aggressive` 上限 20 CPS。
+- 同一 tick 左右键互斥；使用物品时完全停止；`legit/balanced` 下连续 MISS 空挥超过
+  6 次会暂停 250~500ms。打开 GUI/背包/聊天或死亡时重置计时器，不补发点击。
+
+### FakePlayer 假人玩家
+
+- 配置路径：`misc.fakeplayer`，默认关闭，默认键位 **N**。
+- 行为：开启后在本机客户端世界、玩家前方生成指定数量的 `EntityOtherPlayerMP`。
+  假人只存在于本地，不会向服务端发送玩家生成/移动数据包，服务端与其他玩家都看不到，
+  因此适合测试 **Aim Assist / Player ESP / Target HUD** 等依赖玩家实体的模块。
+- 假人默认面向玩家、停留在生成位置（`EntityOtherPlayerMP` 自身不施加重力），
+  修改 `COUNT` / `DISTANCE` 会立即重建假人；切换世界、关闭模块时自动回收。
+- 设置项（ClickGUI 中展开 Fake Player）：
+  - `COUNT`：`fakeplayer.count`，1~5，默认 `1`。
+  - `DISTANCE`：`fakeplayer.distance`，2~10 格，默认 `4`。
+  - `NAME TAG`：`fakeplayer.showName`，默认 `true`，是否显示头顶名字。
+- 实现说明：通过 `WorldClient.addEntityToWorld` 注入客户端实体，使用随机 UUID 的
+  `GameProfile`（默认 Steve/Alex 皮肤）；实体 ID 从 `1000000000` 起递增，避开服务端真实实体。
 
 ## 运行期注入（不重启、不改启动参数）
 
@@ -234,7 +487,20 @@ attach 时它会在目标进程内：
 
 ### 注入也能显示 UI（无需装 mod）
 
-前提：目标是**装了 Forge 的 MC 1.8.9**（Java 8）。一条命令搞定：
+前提：目标是**装了 Forge 的 MC 1.8.9**（Java 8），且该实例**没有**加载
+`mods/OpenMaver.jar`。mod 模式和注入模式会各自加载一套 `OpenMaver` 类，同时存在会触发
+`LinkageError`（`Module` / `ModuleManager` 来自不同 `ClassLoader`）。
+
+推荐直接使用注入脚本：它会先构建，自动把 `mods/OpenMaver.jar` 重命名为
+`OpenMaver.jar.disabled`，并检查目标进程是否已经加载 mod 或已经注入过：
+
+```bash
+./inject-prism.sh --find      # 只嗅探，不改实例
+./inject-prism.sh             # 构建并注入已运行的干净 Forge 实例
+./inject-prism.sh --pid 12345 # 指定 PID
+```
+
+也可以手动执行底层命令：
 
 ```bash
 cd /home/zty/OpenMaver
@@ -248,7 +514,7 @@ cd /home/zty/OpenMaver
 ```
 
 成功后：目标进程控制台出现 `[OpenMaver] 已注册游戏内 UI 到 Forge 事件总线`，
-**进入世界后右下角弹出「注入成功！！」，按 RSHIFT 打开 ClickGUI。**
+**进入世界后右下角弹出「Loaded successfully, x features enabled!」，按 RSHIFT 打开 ClickGUI。**
 `--follow` 会让注入器在注入成功后继续运行；指定日志文件时从当前文件末尾开始跟随新增行，目标游戏退出后监视结束。按 Ctrl+C 只结束注入器的监视，不影响游戏进程。未提供日志文件时只显示目标进程存活状态。
 
 > 原理：`OpenMaverMcBridge`（在 core jar 里）用 JVMTI 找到游戏的 `LaunchClassLoader`，
@@ -425,6 +691,7 @@ public final class Example extends Module {
 |---|---|
 | `module.movement.AutoSprint` | `movement.autosprint` |
 | `module.combat.AimAssist` | `combat.aimassist` |
+| `module.combat.Reach` | `combat.reach` |
 | `module.render.Esp` | `render.esp` |
 | `module.tools.Logger` | `tools.logger` |
 

@@ -53,6 +53,12 @@ public final class McpReobf {
         final String BB = "net/minecraft/util/AxisAlignedBB";
         final String RM = "net/minecraft/client/renderer/entity/RenderManager";
         final String GSM = "net/minecraft/client/renderer/GlStateManager";
+        final String MOP = "net/minecraft/util/MovingObjectPosition";
+        final String ACP = "net/minecraft/client/entity/AbstractClientPlayer";
+        final String EOPMP = "net/minecraft/client/entity/EntityOtherPlayerMP";
+        final String WCLIENT = "net/minecraft/client/multiplayer/WorldClient";
+        final String TM = "net/minecraft/client/renderer/texture/TextureManager";
+        final String STACK = "net/minecraft/item/ItemStack";
 
         m(MC, "getMinecraft", "func_71410_x");
         m(MC, "displayGuiScreen", "func_147108_a");
@@ -77,9 +83,31 @@ public final class McpReobf {
         m(SR, "getScaleFactor", "func_78325_e");
         m(MC, "getRenderManager", "func_175598_ae");
         m(ENTITY, "getDistanceSqToEntity", "func_70068_e");
+        m(ENTITY, "getDistanceToEntity", "func_70032_d");
+        m(ENTITY, "getName", "func_70005_c_");
         m(ENTITY, "getEntityBoundingBox", "func_174813_aQ");
+        m(ENTITY, "getEntityId", "func_145782_y");
+        m(ENTITY, "setEntityId", "func_145769_d");
+        m(ENTITY, "setLocationAndAngles", "func_70012_b");
+        m(ENTITY, "setCustomNameTag", "func_96094_a");
+        m(ENTITY, "setAlwaysRenderNameTag", "func_174805_g");
+        m(WCLIENT, "addEntityToWorld", "func_73027_a");
+        m(WCLIENT, "removeEntityFromWorld", "func_73028_b");
         m(LIVING, "isEntityAlive", "func_70089_S");
         m(LIVING, "getEyeHeight", "func_70047_e");
+        m(LIVING, "getHealth", "func_110143_aJ");
+        m(LIVING, "setHealth", "func_70606_j");
+        m(LIVING, "getMaxHealth", "func_110138_aP");
+        m(LIVING, "getTotalArmorValue", "func_70658_aO");
+        m(LIVING, "getHeldItem", "func_70694_bm");
+        m(LIVING, "canEntityBeSeen", "func_70685_l");
+        m(MC, "getTextureManager", "func_110434_K");
+        m(ACP, "getLocationSkin", "func_110311_f");
+        m(TM, "bindTexture", "func_110577_a");
+        m(STACK, "getDisplayName", "func_82833_r");
+        m(STACK, "getUnlocalizedName", "func_77977_a");
+        m(STACK, "getMaxDamage", "func_77658_a");
+        m(STACK, "getItemDamage", "func_77960_j");
         m(GSM, "color", "func_179131_c");
 
         f(MC, "currentScreen", "field_71462_r");
@@ -87,6 +115,7 @@ public final class McpReobf {
         f(MC, "fontRendererObj", "field_71466_p");
         f(MC, "theWorld", "field_71441_e");
         f(MC, "thePlayer", "field_71439_g");
+        f(MC, "objectMouseOver", "field_71476_x");
         f(GS, "fontRendererObj", "field_146289_q");
         f(GS, "buttonList", "field_146292_n");
         f(GS, "width", "field_146294_l");
@@ -110,12 +139,17 @@ public final class McpReobf {
         f(RM, "viewerPosX", "field_78725_b");
         f(RM, "viewerPosY", "field_78726_c");
         f(RM, "viewerPosZ", "field_78723_d");
+        f(MOP, "typeOfHit", "field_72313_a");
+        f(MOP, "entityHit", "field_72308_g");
 
         SUPER.put("GuiOpenMaverClickGui", GS);
         SUPER.put(GS, GUI);
         SUPER.put(GUI, "java/lang/Object");
         SUPER.put(LIVING, ENTITY);
         SUPER.put("net/minecraft/entity/player/EntityPlayer", LIVING);
+        SUPER.put(ACP, "net/minecraft/entity/player/EntityPlayer");
+        SUPER.put(EOPMP, ACP);
+        SUPER.put(WCLIENT, WORLD);
     }
 
     private McpReobf() {

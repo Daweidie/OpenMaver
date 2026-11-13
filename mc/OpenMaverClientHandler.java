@@ -20,7 +20,7 @@ import java.util.List;
 
 /**
  * 客户端事件桥接：把 Minecraft 1.8.9 的 tick / 渲染事件转发给 {@link ModuleManager}，
- * 并负责「进入世界后启动核心 + 右下角注入成功提示」、ClickGUI 开关以及模块绑定键位。
+ * 并负责「进入世界后启动核心 + 右下角加载成功提示」、ClickGUI 开关以及模块绑定键位。
  *
  * <p><b>健壮性</b>：所有逻辑都包在 try/catch 里。运行期注入时若某个成员名/签名不匹配
  * （NoSuchFieldError/NoSuchMethodError），只记录一次并停用，**绝不让异常冒泡导致游戏崩溃**。
@@ -38,6 +38,7 @@ public final class OpenMaverClientHandler {
     /** 出错后停用，避免每帧刷屏 / 反复抛异常。 */
     private boolean failed = false;
     private boolean keyFailed = false;
+    private boolean renderTickFailed = false;
     private boolean tickSeen = false;
     private boolean renderSeen = false;
 
@@ -59,17 +60,25 @@ public final class OpenMaverClientHandler {
 
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
-        if (failed || event.phase != TickEvent.Phase.END) {
+        if (failed) {
             return;
-        }
-        if (!tickSeen) {
-            tickSeen = true;
-            debug("first client tick", null);
         }
         try {
             Minecraft mc = Minecraft.getMinecraft();
             if (mc == null) {
                 return;
+            }
+            // START：在 vanilla 发送 C03 之前应用 aim / sprint。
+            if (event.phase == TickEvent.Phase.START) {
+                OpenMaverFeatures.onTickStart(mc);
+                return;
+            }
+            if (event.phase != TickEvent.Phase.END) {
+                return;
+            }
+            if (!tickSeen) {
+                tickSeen = true;
+                debug("first client tick", null);
             }
             OpenMaverFeatures.onTick(mc);
             if (readField(mc, "theWorld", "field_71441_e") == null
@@ -93,7 +102,9 @@ public final class OpenMaverClientHandler {
         if (!OpenMaver.isStarted()) {
             OpenMaver.start();
         }
-        OpenMaverHud.success("注入成功！！");
+        int enabled = OpenMaverHud.enabledFeatureCount();
+        OpenMaverHud.success("Loaded successfully, " + enabled
+                + (enabled == 1 ? " feature enabled!" : " features enabled!"));
     }
 
     /**
@@ -149,7 +160,9 @@ public final class OpenMaverClientHandler {
             Module module = modules.get(i);
             String bound = module.getKeybind();
             if (bound != null && bound.equalsIgnoreCase(keyName)) {
-                module.setEnabled(!module.isEnabled());
+                boolean enable = !module.isEnabled();
+                module.setEnabled(enable);
+                OpenMaverHud.notifyToggle(module.getName(), enable);
                 debug("module " + module.getName() + " toggled by key " + keyName, null);
             }
         }
@@ -187,6 +200,26 @@ public final class OpenMaverClientHandler {
     /** 暂停菜单的类名在 MCP/SRG 下一致，用字符串判断可避免额外的 stub/import。 */
     private static boolean isPauseMenu(GuiScreen screen) {
         return "net.minecraft.client.gui.GuiIngameMenu".equals(screen.getClass().getName());
+    }
+
+    /**
+     * 渲染帧开始：在 vanilla 处理鼠标输入和更新相机之前应用 aim，
+     * 这样本帧的相机 / getMouseOver / 下一次 C03 都使用同一个 rotation。
+     */
+    @SubscribeEvent
+    public void onRenderTick(TickEvent.RenderTickEvent event) {
+        if (failed || renderTickFailed) {
+            return;
+        }
+        if (event.phase != TickEvent.Phase.START) {
+            return;
+        }
+        try {
+            OpenMaverFeatures.onRenderTick();
+        } catch (Throwable t) {
+            renderTickFailed = true;
+            debug("render tick bridge disabled: " + t, t);
+        }
     }
 
     @SubscribeEvent

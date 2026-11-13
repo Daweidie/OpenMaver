@@ -166,6 +166,9 @@ public final class OpenSansFont {
         GL11.glDisableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
         GL11.glDisable(GL11.GL_CULL_FACE);
         GL11.glEnable(GL11.GL_TEXTURE_2D);
+        // Some world renderers leave a REPLACE/COMBINE texture env behind. With an
+        // alpha-only font atlas that can turn every glyph black; force MODULATE.
+        GL11.glTexEnvi(GL11.GL_TEXTURE_ENV, GL11.GL_TEXTURE_ENV_MODE, GL11.GL_MODULATE);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         GL11.glDisable(GL11.GL_DEPTH_TEST);

@@ -1,7 +1,15 @@
 import config.Config;
 import module.Module;
 import module.ModuleManager;
+import module.combat.AutoClicker;
+import module.combat.Reach;
 import module.movement.AutoSprint;
+import module.movement.GodBridge;
+import module.movement.Scaffold;
+import module.misc.FakePlayer;
+import module.player.FastPlace;
+import module.render.PlayerXray;
+import module.render.TargetHud;
 import util.Logger;
 
 import java.io.File;
@@ -275,6 +283,30 @@ public final class OpenMaver {
     private static void registerModules() {
         // 示例模块：AutoSprint（配置路径 movement.autosprint）
         ModuleManager.register(new AutoSprint());
+
+        // 战斗模块：AutoClicker（配置路径 combat.autoclicker）
+        ModuleManager.register(new AutoClicker());
+
+        // 战斗模块：Reach 攻击距离（配置路径 combat.reach；MC 侧逻辑在 OpenMaverFeatures）
+        ModuleManager.register(new Reach());
+
+        // 移动模块：Scaffold 自动搭路（配置路径 movement.scaffold；MC 侧逻辑在 OpenMaverFeatures）
+        ModuleManager.register(new Scaffold());
+
+        // 移动模块：GodBridge 神桥（配置路径 movement.godbridge；MC 侧逻辑在 OpenMaverFeatures）
+        ModuleManager.register(new GodBridge());
+
+        // 玩家模块：FastPlace 快速右键（配置路径 player.fastplace）
+        ModuleManager.register(new FastPlace());
+
+        // 杂项模块：FakePlayer 假人玩家（配置路径 misc.fakeplayer；MC 侧逻辑在 OpenMaverFeatures）
+        ModuleManager.register(new FakePlayer());
+
+        // 渲染模块：Target HUD 目标信息面板（配置路径 render.targethud；MC 侧绘制在 mc/TargetHud）
+        ModuleManager.register(new TargetHud());
+
+        // 渲染模块：Player X-Ray 玩家透视（配置路径 render.playerxray；MC 侧绘制在 OpenMaverFeatures）
+        ModuleManager.register(new PlayerXray());
 
         // 后续模块在此继续注册，例如：
         //   ModuleManager.register(new CombatExample());

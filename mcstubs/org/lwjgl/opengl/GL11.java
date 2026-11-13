@@ -11,14 +11,25 @@ public class GL11 {
     public static final int GL_COLOR_BUFFER_BIT = 0x00004000;
     public static final int GL_TEXTURE_BIT = 0x00040000;
     public static final int GL_LINE_BIT = 0x00000004;
+    public static final int GL_LIGHTING_BIT = 0x00000040;
     public static final int GL_DEPTH_BUFFER_BIT = 0x00000100;
     public static final int GL_DEPTH_TEST = 0x0B71;
     public static final int GL_LIGHTING = 0x0B50;
     public static final int GL_LINES = 1;
+    public static final int GL_LINE_LOOP = 2;
+    public static final int GL_LINE_STRIP = 3;
+    public static final int GL_TRIANGLES = 4;
+    public static final int GL_TRIANGLE_FAN = 6;
+    public static final int GL_LINE_SMOOTH = 0x0B20;
+    public static final int GL_LINE_SMOOTH_HINT = 0x0C52;
+    public static final int GL_NICEST = 0x1102;
     public static final int GL_ALPHA = 0x1906;
     public static final int GL_RGBA = 0x1908;
     public static final int GL_UNSIGNED_BYTE = 0x1401;
     public static final int GL_UNPACK_ALIGNMENT = 0x0CF5;
+    public static final int GL_TEXTURE_ENV = 0x2300;
+    public static final int GL_TEXTURE_ENV_MODE = 0x2200;
+    public static final int GL_MODULATE = 0x2100;
     public static final int GL_TEXTURE_MIN_FILTER = 0x2801;
     public static final int GL_TEXTURE_MAG_FILTER = 0x2800;
     public static final int GL_TEXTURE_WRAP_S = 0x2802;
@@ -36,6 +47,7 @@ public class GL11 {
     public static void glPushMatrix() {}
     public static void glPopMatrix() {}
     public static void glTranslatef(float x, float y, float z) {}
+    public static void glScalef(float x, float y, float z) {}
     public static void glScissor(int x, int y, int width, int height) {}
     public static void glEnable(int c) {}
     public static void glDisable(int c) {}
@@ -49,10 +61,12 @@ public class GL11 {
     public static int glGenTextures() { return 0; }
     public static void glBindTexture(int target, int texture) {}
     public static void glTexParameteri(int target, int pname, int param) {}
+    public static void glTexEnvi(int target, int pname, int param) {}
     public static int glGetInteger(int pname) { return 4; }
     public static void glPixelStorei(int pname, int param) {}
     public static void glTexImage2D(int target, int level, int internalFormat, int width, int height,
             int border, int format, int type, java.nio.ByteBuffer pixels) {}
     public static void glLineWidth(float width) {}
+    public static void glHint(int target, int mode) {}
     public static void glEnd() {}
 }

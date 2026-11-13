@@ -17,6 +17,11 @@ public final class GlColor {
 
     /** Sets the current color in both OpenGL and Minecraft's state cache. */
     public static void set(float red, float green, float blue, float alpha) {
+        // Invalidate the cache first. If another renderer changed the raw GL color behind
+        // GlStateManager's back, a plain color(...) call can be skipped when the requested
+        // color happens to equal the cached value, leaving text black. The sentinel forces
+        // the requested color to reach the driver in every case.
+        GlStateManager.color(0.0F, 0.0F, 0.0F, 1.0F);
         GlStateManager.color(red, green, blue, alpha);
     }
 
