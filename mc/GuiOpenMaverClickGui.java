@@ -994,8 +994,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         Gui.drawRect(x + 12, y + 1, x + w - 12, y + 2, withAlpha(0xFFFFFF, 0x12));
 
         int titleY = y + (cardH - 26) / 2;
-        os(font, "default", x + 14, titleY, TEXT);
-        os(font, ".jsonc", x + 14 + osWidth(font, "default"), titleY, FAINT);
+        os(font, "Default", x + 14, titleY, TEXT);
+        os(font, ".jsonc", x + 14 + osWidth(font, "Default"), titleY, FAINT);
 
         int barW = w - 28;
         int barY = y + cardH - 22;
@@ -2113,33 +2113,29 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     // 文本
     // ==================================================================
 
-    /** 界面中的所有文本统一小写，包括模块名、分类、设置标签与键帽。 */
-    private static String lower(String text) {
-        return text == null ? null : text.toLowerCase(Locale.ROOT);
-    }
-
+    /** 正文 / 模块名：保留原始大小写（模块名由 prettyName 统一成词首大写）。 */
     private static void os(FontRenderer font, String text, int x, int y, int color) {
-        OpenSansFont.drawString(font, lower(text), x, y, color, 0.92F);
+        OpenSansFont.drawString(font, text, x, y, color, 1.02F);
     }
 
     private static void osBold(FontRenderer font, String text, int x, int y, int color) {
-        OpenSansFont.drawString(font, "\u00a7l" + lower(text), x, y, color, 1.32F);
+        OpenSansFont.drawString(font, "\u00a7l" + text, x, y, color, 1.44F);
     }
 
     private static int osWidth(FontRenderer font, String text) {
-        return OpenSansFont.getStringWidth(font, lower(text), 0.92F);
+        return OpenSansFont.getStringWidth(font, text, 1.02F);
     }
 
     private static int osBoldWidth(FontRenderer font, String text) {
-        return OpenSansFont.getStringWidth(font, "\u00a7l" + lower(text), 1.32F);
+        return OpenSansFont.getStringWidth(font, "\u00a7l" + text, 1.44F);
     }
 
     private static void micro(FontRenderer font, String text, int x, int y, int color) {
-        OpenSansFont.drawString(font, lower(text), x, y, color, 0.72F);
+        OpenSansFont.drawString(font, text, x, y, color, 0.80F);
     }
 
     private static int microWidth(FontRenderer font, String text) {
-        return OpenSansFont.getStringWidth(font, lower(text), 0.72F);
+        return OpenSansFont.getStringWidth(font, text, 0.80F);
     }
 
     private static String ellipsizeMicro(FontRenderer font, String text, int maxWidth) {
