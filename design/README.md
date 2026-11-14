@@ -41,7 +41,7 @@
 | 分类强调 | Combat `#5CE1FF` · Movement `#6E9BFF` · Render `#B18CFF` · Player `#5BF0B0` · Misc `#FFC46B` |
 | 开启态绿 | `#5BF0B0` |
 
-字体：`Noto Sans`（UI）+ `JetBrains Mono`（数值 / 键位）。导出机器缺少字体时会回退到系统无衬线 / 等宽字体。
+字体：`Noto Sans`（UI）+ `JetBrains Mono`（数值 / 键位）。导出机器缺少字体时会回退到系统无衬线 / 等宽字体。游戏内实际渲染使用打包的 Lucida Sans Typewriter 位图图集（由 `tools/GenerateHudFontAtlas.py` 生成，见 `mc/HudFont.java`）。
 
 ## Target HUD · 规格
 

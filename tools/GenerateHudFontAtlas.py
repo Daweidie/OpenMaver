@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Generate OpenMaver's packed font atlases using Pillow.
 
-Latin glyphs come from the bundled OpenSans.ttf. Open Sans has no CJK
-coverage, so every non-ASCII character used by the UI (currently Chinese) is
-rendered with a CJK fallback font instead. The generated PNG/metrics are the
-only runtime dependencies; the CJK font itself is not shipped.
+Latin glyphs come from tools/fonts/LucidaTypewriter.ttf (Lucida Sans
+Typewriter). It has no CJK coverage, so every non-ASCII character used by the
+UI (currently Chinese) is rendered with a CJK fallback font instead. The
+generated PNG/metrics are the only runtime dependencies; the Latin/CJK font
+files themselves are not shipped in the mod jar.
 
 One atlas is generated per Minecraft GUI scale (1x..8x). The runtime picks the
 atlas matching the current GUI scale, so a glyph texel maps to exactly one
@@ -27,7 +28,10 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 FONT_DIR = ROOT / "mc/resources/assets/openmaver/font"
-LATIN_FONT = FONT_DIR / "OpenSans.ttf"
+# Kept outside mc/resources so the proprietary Lucida font file is not packaged
+# into the mod jar; only the generated atlas bitmaps ship.
+LATIN_FONT = Path(os.environ.get("OPENMAVER_LATIN_FONT",
+                                 ROOT / "tools/fonts/LucidaTypewriter.ttf"))
 SOURCE_DIR = ROOT / "mc"
 
 FIRST_CHAR = 32
@@ -64,6 +68,14 @@ def ui_characters():
     return characters
 
 
+def load_latin_font(size):
+    if not LATIN_FONT.is_file():
+        raise SystemExit(
+            "找不到拉丁字体 {}；请把 Lucida Console 的 lucon.ttf 放到该路径，"
+            "或用 OPENMAVER_LATIN_FONT 指定一个 TTF 文件".format(LATIN_FONT))
+    return ImageFont.truetype(str(LATIN_FONT), size)
+
+
 def load_cjk_font(size):
     for candidate in CJK_CANDIDATES:
         if not candidate:
@@ -90,11 +102,11 @@ def load_cjk_font(size):
 
 
 def atlas_paths(scale):
-    """Runtime resource names. The 1x atlas keeps the historical file names."""
+    """Runtime resource names; the 1x atlas has no scale suffix."""
     if scale == 1:
-        return FONT_DIR / "OpenSansAtlas.png", FONT_DIR / "OpenSansMetrics.txt"
-    return (FONT_DIR / "OpenSansAtlas@{}x.png".format(scale),
-            FONT_DIR / "OpenSansMetrics@{}x.txt".format(scale))
+        return FONT_DIR / "HudFontAtlas.png", FONT_DIR / "HudFontMetrics.txt"
+    return (FONT_DIR / "HudFontAtlas@{}x.png".format(scale),
+            FONT_DIR / "HudFontMetrics@{}x.txt".format(scale))
 
 
 def render_atlas(scale, characters, widths1x, needs_cjk):
@@ -102,7 +114,7 @@ def render_atlas(scale, characters, widths1x, needs_cjk):
     size = SIZE * scale
     cell = CELL * scale
     pad = PAD * scale
-    latin = ImageFont.truetype(str(LATIN_FONT), size)
+    latin = load_latin_font(size)
     cjk = load_cjk_font(size) if needs_cjk else None
 
     latin_ascent, latin_descent = latin.getmetrics()
@@ -143,7 +155,7 @@ def render_atlas(scale, characters, widths1x, needs_cjk):
 
 
 def main():
-    latin1x = ImageFont.truetype(str(LATIN_FONT), SIZE)
+    latin1x = load_latin_font(SIZE)
     characters = sorted(
         {chr(code) for code in range(FIRST_CHAR, LAST_CHAR + 1)} | ui_characters(),
         key=ord)

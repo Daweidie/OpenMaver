@@ -457,6 +457,27 @@ IO 失败只记录一次并自动停用 debug。
 - 设置路径：`config/openmaver.properties` 的 `autoclicker.*`，ClickGUI 中位于 Combat。
 - 默认 `6~10 CPS`，`HUMANIZE` 默认开启：每次点击有 ±12% 间隔抖动，
   2% 概率追加 120~350ms 停顿。
+- `REQUIRE HOLD` 默认开启：只有按住对应鼠标键时才连点，模块开启本身不会
+  在玩家没有输入时继续点击。v3 配置会自动把旧版被强制迁移成 `false` 的值恢复为 `true`。
+- `WAIT FOR HURT` 默认开启：准星在实体上时，等目标的受击无敌帧结束再发送真正的
+  `C02` 攻击。无敌帧内仍按配置 CPS 发挥手动画（`C0A`）并计入 CPS HUD，
+  所以 16~18 CPS 看起来和点起来都是 16~18；但只有能结算伤害的那次才发攻击包。
+  1.8.9 中 `hurtResistantTime > maxHurtResistantTime / 2` 的 C02 会被服务端忽略，
+  高速连点会把大量无效攻击发给服务端，在 CCBlueX 测试假人上表现为
+  “预期伤害”和“实际伤害”对不上。关闭后每次 CPS 都发完整 `clickMouse`。
+- 模块绑定键（默认 `R`）只在按下边沿触发一次；按住不会因为系统键盘重复而
+  反复开关 AutoClicker。
+- 在 CCBlueX 测试服的 `latest(26.3)` 上，1.8.9 客户端仍会受到服务端 1.9+
+  攻击冷却影响；`WAIT FOR HURT` 只能保证不再往无敌帧里刷 C02。要对比 1.8
+  的满伤害与连点行为，请先 `/server legacy`；留在 `latest` 时把 CPS 降到
+  武器攻速附近（剑约 1.6 CPS）才能让每一刀都按满蓄力结算。
+- 注入点击前会清掉原版 `leftClickCounter` / `rightClickDelayTimer`，
+  否则 1.8.9 会在 MISS 后把点击吞掉 500ms、右键每次使用后强制冷却 4 tick，
+  高 CPS 设置实际只剩约 2~4 CPS。
+- 自动点击放在 `ClientTickEvent.START`（vanilla C03 移动包之前）注入，
+  避免 Grim 的 `Post` 检查把 `C02/C08` 判成“移动包之后才发送”而拒绝；
+  放到 tick END 会表现为“按住鼠标时正常、自动点击打不中”。
+- 左上角 CPS HUD 同时统计 AutoClicker 注入的点击，不再只统计物理鼠标边沿。
 - `legit` 上限 8 CPS，`balanced` 上限 12 CPS，`aggressive` 上限 20 CPS。
 - 同一 tick 左右键互斥；使用物品时完全停止；`legit/balanced` 下连续 MISS 空挥超过
   6 次会暂停 250~500ms。打开 GUI/背包/聊天或死亡时重置计时器，不补发点击。

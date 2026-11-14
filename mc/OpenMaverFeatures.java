@@ -119,8 +119,25 @@ public final class OpenMaverFeatures {
     private static int autoclickerCpsMax = 10;
     private static boolean autoclickerLeft = true;
     private static boolean autoclickerRight = false;
+    /**
+     * 默认要求按住鼠标：模块只负责“按住时连点”，不会在玩家没有输入时
+     * 继续向服务端发送点击。v2 曾把默认值迁移成 false，结果按一次 R
+     * 后即使不碰鼠标也会一直攻击，这里恢复安全默认值。
+     */
     private static boolean autoclickerRequireHold = true;
+    /**
+     * 准星在实体上时，等目标的受击无敌帧结束再发送真正的攻击。
+     *
+     * <p>1.8.9 的 {@code EntityLivingBase.hurtResistantTime} 会让 10 tick 内的
+     * 重复攻击不造成伤害；高速连点会把大量“无效 C02”发给服务端，测试假人
+     * 上就会表现为“预期伤害”和“实际伤害”对不上。开启后无敌帧内只发挥手
+     * 动画（C0A），CPS 仍按配置保持；只有真正能造成伤害时才发 C02。
+     */
+    private static boolean autoclickerWaitForHurt = true;
     private static boolean autoclickerHumanize = true;
+
+    /** openmaver.properties 的结构版本，用于迁移旧默认值。 */
+    private static final int SETTINGS_VERSION = 3;
 
     /** 下一次允许点击的时间（System.nanoTime）；0 表示尚未排程。 */
     private static long autoclickerLeftNextNanos;
@@ -132,6 +149,8 @@ public final class OpenMaverFeatures {
     /** 本 tick 是否已经产生过一次点击，避免左右键同 tick 多动作。 */
     private static boolean autoclickerClickedThisTick;
     private static long autoclickerLastClickNanos;
+    /** 上一次真正攻击到实体的时间；用于 WAIT FOR HURT 的 10 tick 兜底间隔。 */
+    private static long autoclickerLastEntityAttackNanos;
     private static final Random AUTOCLICKER_RANDOM = new Random();
 
     // Reach（攻击距离）
@@ -228,17 +247,26 @@ public final class OpenMaverFeatures {
     }
 
     /**
-     * tick 开始阶段：选一次 aim 目标并重置本 tick 的步长预算，同时处理 sprint。
-     * rotation 的平滑放在渲染帧里；本 tick 的 C03 使用上一窗口的帧步进结果，
-     * END 阶段的 C02/C08 仍然看到同一 rotation，保持客户端/服务端一致。
+     * tick 开始阶段：在 vanilla 处理鼠标输入和发送 C03 移动包之前执行
+     * AutoClicker / AutoSprint / Aim。
+     *
+     * <p>rotation 的平滑放在渲染帧里；本 tick 的 C03 使用上一窗口的帧步进结果，
+     * 本阶段注入的 C02/C08 也出现在同一条 C03 之前，满足 Grim Post 的顺序要求。
      */
     public static void onTickStart(Minecraft mc) {
+        // 先重置本 tick 的鼠标动作状态。AutoClicker 必须在 vanilla 发送 C03
+        // 移动包之前执行：Grim 的 Post 检查要求 C02/C08 出现在移动包之前，
+        // 放到 END 阶段注入会被服务端以 “failed Post: attack/place” 拒绝。
+        rightClickUsedThisTick = false;
+        autoclickerClickedThisTick = false;
         if (tickStartFailed) {
+            updateAutoClicker(mc);
             return;
         }
         try {
             refreshSettings();
             clientTick++;
+            updateAutoClicker(mc);
             boolean screenOpen = read(mc, "currentScreen", "field_71462_r", null) != null;
             if (screenOpen) {
                 aimHasTarget = false;
@@ -257,12 +285,8 @@ public final class OpenMaverFeatures {
     }
 
     public static void onTick(Minecraft mc) {
-        rightClickUsedThisTick = false;
-        autoclickerClickedThisTick = false;
         updateFakePlayers(mc);
-        // AutoSprint 与 Aim 已在 onTickStart 处理；这里保留其余 END 阶段行为。
-        // 即使 GUI 打开也要调用：确保自动点击计时器被重置，关闭 GUI 后不会补发点击。
-        updateAutoClicker(mc);
+        // AutoSprint / Aim / AutoClicker 已在 onTickStart 处理。
         updateFastPlace(mc);
         // GodBridge 放置成功后会置位 rightClickUsedThisTick，避免同 tick 重复右键。
         updateGodBridge(mc);
@@ -398,12 +422,88 @@ public final class OpenMaverFeatures {
         } else {
             autoclickerMissStreak = 0;
         }
+        // 目标还在受击无敌帧里时，原版 clickMouse 仍会发 C02，但服务端会忽略
+        // 这次伤害。测试假人的“预期伤害/实际伤害”不一致，主要就是这种
+        // 无效连点造成的：这里只发挥击动画（C0A），等无敌帧结束再发真正的
+        // C02 攻击。这样 CPS 仍按配置保持 16~18，但每次攻击都能结算伤害。
+        boolean entityHit = !miss && isEntityHit(hit);
         long interval = clickIntervalMillis(now);
+        if (autoclickerWaitForHurt && entityHit) {
+            // 即使客户端读不到目标的 hurtResistantTime（假人/映射差异），也至少
+            // 按 1.8.9 的 10 tick 无敌窗口限制实体攻击频率，避免无意义刷 C02。
+            if (now - autoclickerLastEntityAttackNanos < 500_000_000L
+                    || !targetReadyForDamage(hit)) {
+                Object player = read(mc, "thePlayer", "field_71439_g", null);
+                if (player != null && callVoid(player, "swingItem", "func_71038_i", null)) {
+                    StatsHud.recordAutoClick(true, now);
+                    OpenMaverDebug.click("swing", interval, effectiveCpsMax(),
+                            Mouse.isButtonDown(0), autoclickerMissStreak);
+                    autoclickerLastClickNanos = now;
+                    return true;
+                }
+                OpenMaverDebug.noticeOnce("autoclicker.hurtWait",
+                        "autoclicker waits for target hurtResistantTime");
+                return false;
+            }
+        }
+        // 1.8.9 的 clickMouse() 在 MISS 时会把 leftClickCounter 设为 10，
+        // 之后 10 tick 内的自动点击会被原版完全吞掉（10 CPS 实际只剩约 2 CPS）。
+        // 自动点击器要按配置 CPS 工作，必须在每次注入点击前清掉这个原版节流。
+        if (!writeIntField(mc, "leftClickCounter", "field_71429_W", 0)) {
+            OpenMaverDebug.noticeOnce("autoclicker.leftCounter",
+                    "cannot reset leftClickCounter; clicks may be throttled by vanilla");
+        }
         call(mc, "clickMouse", "func_147116_af", null);
+        StatsHud.recordAutoClick(true, now);
         OpenMaverDebug.click("left", interval, effectiveCpsMax(),
                 Mouse.isButtonDown(0), autoclickerMissStreak);
+        if (entityHit) {
+            autoclickerLastEntityAttackNanos = now;
+        }
         autoclickerLastClickNanos = now;
         return true;
+    }
+
+    /**
+     * 目标是否已经脱离受击无敌帧，下一次攻击能真正结算伤害。
+     *
+     * <p>1.8.9 的判定是 {@code hurtResistantTime > maxHurtResistantTime / 2} 时
+     * 忽略伤害；玩家默认 max=20，也就是 10 tick（约 0.5 秒）窗口。高速连点
+     * 时大部分 C02 都落在这个窗口里，服务端只计算第一下，测试假人就会显示
+     * “预期伤害”和“实际伤害”不一致。读取不到字段时保持原版行为，避免让
+     * 自动点击器因映射差异完全失效。
+     */
+    private static boolean targetReadyForDamage(Object hit) {
+        Object entity = read(hit, "entityHit", "field_72308_g", null);
+        if (entity == null) {
+            return true;
+        }
+        return entityReadyForDamage(entity);
+    }
+
+    /** 实体是否已经脱离受击无敌帧，下一次攻击能真正结算伤害。 */
+    private static boolean entityReadyForDamage(Object entity) {
+        if (entity == null) {
+            return true;
+        }
+        if (!alive(entity)) {
+            return false;
+        }
+        int maxHurt = (int) number(entity, "maxHurtResistantTime", "field_70738_aO");
+        if (maxHurt <= 0) {
+            maxHurt = 20;
+        }
+        int hurt = (int) number(entity, "hurtResistantTime", "field_70737_aN");
+        return hurt <= maxHurt / 2;
+    }
+
+    /** 当前准星目标是否为实体（而不是方块 / MISS）。 */
+    private static boolean isEntityHit(Object hit) {
+        if (hit == null) {
+            return false;
+        }
+        Object type = read(hit, "typeOfHit", "field_72313_a", null);
+        return type != null && "ENTITY".equals(String.valueOf(type));
     }
 
     private static boolean tryAutoRightClick(Minecraft mc, long now) {
@@ -413,8 +513,16 @@ public final class OpenMaverFeatures {
             return false;
         }
         long interval = clickIntervalMillis(now);
+        // rightClickMouse() 每次调用后都会把 rightClickDelayTimer 设为 4；
+        // 原版只在“按住右键”的分支里递减该值，直接注入时不清零就会被吞掉，
+        // 表现为高 CPS 设置下右键实际只有约 4 CPS。
+        if (!writeIntField(mc, "rightClickDelayTimer", "field_71467_ac", 0)) {
+            OpenMaverDebug.noticeOnce("autoclicker.rightTimer",
+                    "cannot reset rightClickDelayTimer; clicks may be throttled by vanilla");
+        }
         call(mc, "rightClickMouse", "func_147121_ag", "ax");
         rightClickUsedThisTick = true;
+        StatsHud.recordAutoClick(false, now);
         OpenMaverDebug.click("right", interval, effectiveCpsMax(),
                 Mouse.isButtonDown(1), autoclickerMissStreak);
         autoclickerLastClickNanos = now;
@@ -480,6 +588,7 @@ public final class OpenMaverFeatures {
         autoclickerMissStreak = 0;
         autoclickerClickedThisTick = false;
         autoclickerLastClickNanos = 0L;
+        autoclickerLastEntityAttackNanos = 0L;
     }
 
     // ==================================================================
@@ -665,6 +774,15 @@ public final class OpenMaverFeatures {
             bestTarget = living;
         }
         if (bestTarget == null) {
+            return;
+        }
+
+        // 目标还在受击无敌帧里时，服务端会丢弃这次 C02；Reach 在每次挥击都
+        // 尝试补刀，如果不判断就会把大量无效攻击发给服务端，导致测试假人
+        // 的预期伤害/实际伤害不一致。
+        if (!entityReadyForDamage(bestTarget)) {
+            OpenMaverDebug.noticeOnce("reach.hurtWait",
+                    "reach attack waits for target hurtResistantTime");
             return;
         }
 
@@ -1698,6 +1816,7 @@ public final class OpenMaverFeatures {
                 return;
             }
         }
+        int settingsVersion = readInt(values, "settings.version", 1, 999);
         aimEnabled = readBoolean(values, "aim", false);
         espEnabled = readBoolean(values, "esp", false);
         bypassEnabled = readBoolean(values, "bypass.enabled", true);
@@ -1735,6 +1854,15 @@ public final class OpenMaverFeatures {
         autoclickerLeft = readBoolean(values, "autoclicker.left", true);
         autoclickerRight = readBoolean(values, "autoclicker.right", false);
         autoclickerRequireHold = readBoolean(values, "autoclicker.requireHold", true);
+        autoclickerWaitForHurt = readBoolean(values, "autoclicker.waitForHurt", true);
+        if (settingsVersion < 3) {
+            // v2 为了“模块一开就点击”强制把 requireHold 写成 false，导致
+            // 玩家不碰鼠标也会持续攻击（按一次 R 后尤其明显）。v3 恢复
+            // 按住才连点；同时默认等待目标的受击无敌帧，避免无效 C02。
+            autoclickerRequireHold = true;
+            autoclickerWaitForHurt = true;
+            settingsDirty = true;
+        }
         autoclickerHumanize = readBoolean(values, "autoclicker.humanize", true);
         reachExtra = clamp(readFloat(values, "reach.extra", 0.0F), 0.0F, 0.5F);
         reachChance = clamp(readFloat(values, "reach.chance", 100.0F), 1.0F, 100.0F);
@@ -1954,6 +2082,13 @@ public final class OpenMaverFeatures {
         markDirty();
     }
 
+    public static boolean isAutoClickerWaitForHurt() { return autoclickerWaitForHurt; }
+    public static void setAutoClickerWaitForHurt(boolean value) {
+        autoclickerWaitForHurt = value;
+        resetAutoClickerTimers();
+        markDirty();
+    }
+
     public static boolean isAutoClickerHumanize() { return autoclickerHumanize; }
     public static void setAutoClickerHumanize(boolean value) {
         autoclickerHumanize = value;
@@ -2143,7 +2278,8 @@ public final class OpenMaverFeatures {
             parent.mkdirs();
         }
         try (FileOutputStream out = new FileOutputStream(file)) {
-            out.write(("aim=" + aimEnabled
+            out.write(("settings.version=" + SETTINGS_VERSION
+                    + "\naim=" + aimEnabled
                     + "\nesp=" + espEnabled
                     + "\nbypass.enabled=" + bypassEnabled
                     + "\nbypass.profile=" + PROFILE_KEYS[clamp(bypassProfile, PROFILE_LEGIT, PROFILE_AGGRESSIVE)]
@@ -2174,6 +2310,7 @@ public final class OpenMaverFeatures {
                     + "\nautoclicker.left=" + autoclickerLeft
                     + "\nautoclicker.right=" + autoclickerRight
                     + "\nautoclicker.requireHold=" + autoclickerRequireHold
+                    + "\nautoclicker.waitForHurt=" + autoclickerWaitForHurt
                     + "\nautoclicker.humanize=" + autoclickerHumanize
                     + "\nreach.extra=" + reachExtra
                     + "\nreach.chance=" + Math.round(reachChance)

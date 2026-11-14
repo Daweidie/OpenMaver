@@ -364,7 +364,7 @@ public final class TargetHud {
         if (value == null || value.isEmpty()) {
             return;
         }
-        OpenSansFont.drawString(font, value, x, y, color(rgb, alpha), size);
+        HudFont.drawString(font, value, x, y, color(rgb, alpha), size);
         GL11.glDisable(GL11.GL_TEXTURE_2D);
     }
 
@@ -461,13 +461,13 @@ public final class TargetHud {
         if (text == null) {
             return "";
         }
-        if (OpenSansFont.getStringWidth(font, text, size) <= maxWidth) {
+        if (HudFont.getStringWidth(font, text, size) <= maxWidth) {
             return text;
         }
         String suffix = "..";
         int end = text.length();
         while (end > 0
-                && OpenSansFont.getStringWidth(font, text.substring(0, end) + suffix, size)
+                && HudFont.getStringWidth(font, text.substring(0, end) + suffix, size)
                         > maxWidth) {
             end--;
         }

@@ -1,8 +1,10 @@
-OpenSansAtlas.png contains rasterized glyphs from:
+HudFontAtlas*.png contain rasterized glyphs from:
 
-- Open Sans (Copyright 2020 The Open Sans Project Authors), and
+- Lucida Sans Typewriter (Lucida is a registered trademark or trademark of
+  Bigelow & Holmes in the U.S. and other countries), and
 - Noto Sans CJK SC (Copyright Adobe and Google).
 
-Both font families are licensed under the SIL Open Font License 1.1; the full
-license text is in OFL.txt. Only the generated atlas bitmap is shipped with
-OpenMaver, not the original font files.
+Noto Sans CJK is licensed under the SIL Open Font License 1.1; the full license
+text is in OFL.txt. Only the generated atlas bitmaps are packaged into the mod
+jar, not the original font files. The Lucida TTF used to regenerate the atlases
+lives in tools/fonts/ and is intentionally kept out of mc/resources.

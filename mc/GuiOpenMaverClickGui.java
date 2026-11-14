@@ -30,7 +30,7 @@ import java.util.Set;
  * 顶部搜索与筛选、模块行 + 可展开设置区。全部由 {@link Gui#drawRect} 与立即模式
  * 线段自绘，不依赖 GuiButton / 纹理资源，因此运行期注入也能用。
  *
- * <p>字体：模块名 / 分类名用打包的 Open Sans（{@link OpenSansFont}），
+ * <p>字体：模块名 / 分类名用打包的 Lucida Sans Typewriter（{@link HudFont}），
  * 微型标签、数值、键帽用 Minecraft 自带字体，形成第二层级（数值天然接近等宽）。
  *
  * <p>真实数据：模块来自 {@link ModuleManager}，Aim Assist / Player ESP 来自
@@ -523,6 +523,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             public double get() { return OpenMaverFeatures.isAutoClickerRequireHold() ? 1.0D : 0.0D; }
             public void set(double value) { OpenMaverFeatures.setAutoClickerRequireHold(value > 0.5D); }
         }));
+        entry.settings.add(Setting.check("WAIT FOR HURT", new Binding() {
+            public double get() { return OpenMaverFeatures.isAutoClickerWaitForHurt() ? 1.0D : 0.0D; }
+            public void set(double value) { OpenMaverFeatures.setAutoClickerWaitForHurt(value > 0.5D); }
+        }));
         entry.settings.add(Setting.check("HUMANIZE", new Binding() {
             public double get() { return OpenMaverFeatures.isAutoClickerHumanize() ? 1.0D : 0.0D; }
             public void set(double value) { OpenMaverFeatures.setAutoClickerHumanize(value > 0.5D); }
@@ -780,7 +784,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             drawCategoryIcon(cat.id, x + 22, itemY + 8, iconColor);
             int textColor = blendColor(TEXT_2, 0xFFF4FBFF, on);
             textColor = blendColor(textColor, 0xFFE4EBF6, hover * 0.65F);
-            os(font, cat.name, x + 40, itemY + 8, textColor);
+            hud(font, cat.name, x + 40, itemY + 8, textColor);
 
             int count = countCategory(cat.id);
             String countText = count < 10 ? "0" + count : String.valueOf(count);
@@ -828,7 +832,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 drawSystemIcon(item.id, x + 22, itemY + 7, iconColor);
                 int textColor = blendColor(0xFF98A3B4, 0xFFF4FBFF, on);
                 textColor = blendColor(textColor, 0xFFE4EBF6, hover * 0.65F);
-                os(font, item.name, x + 40, itemY + 7, textColor);
+                hud(font, item.name, x + 40, itemY + 7, textColor);
             }
         }
 
@@ -846,8 +850,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int y = panelY;
 
         String title = cat.name;
-        osBold(font, title, x, y + 21, TEXT);
-        int titleW = osBoldWidth(font, title);
+        hudBold(font, title, x, y + 21, TEXT);
+        int titleW = hudBoldWidth(font, title);
         int chipX = x + titleW + 9;
         int count = countCategory(cat.id);
         String countText = String.valueOf(count);
@@ -909,7 +913,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int x = mainX + 18;
         int y = panelY;
 
-        osBold(font, item.name, x, y + 21, TEXT);
+        hudBold(font, item.name, x, y + 21, TEXT);
     }
 
     private void drawSystemPage(FontRenderer font) {
@@ -946,7 +950,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             }
             roundRect(x, ry, w, rowH, 7, withAlpha(0xFFFFFF, 0x06));
             drawCategoryIcon(cat.id, x + 10, ry + rowH / 2 - 5, cat.color);
-            os(font, cat.name, x + 27, ry + (rowH - 9) / 2, TEXT_2);
+            hud(font, cat.name, x + 27, ry + (rowH - 9) / 2, TEXT_2);
 
             int enabled = countCategoryEnabled(cat.id);
             int total = countCategory(cat.id);
@@ -976,7 +980,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         Gui.drawRect(x + 9, y + 1, x + w - 9, y + 2, withAlpha(0xFFFFFF, 0x12));
 
         micro(font, ellipsizeMicro(font, label, w - 24), x + 12, y + 14, FAINT);
-        osBold(font, String.valueOf(value), x + 12, y + 28, TEXT);
+        hudBold(font, String.valueOf(value), x + 12, y + 28, TEXT);
 
         if (w >= 90) {
             int ringX = x + w - 24;
@@ -994,8 +998,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         Gui.drawRect(x + 12, y + 1, x + w - 12, y + 2, withAlpha(0xFFFFFF, 0x12));
 
         int titleY = y + (cardH - 26) / 2;
-        os(font, "Default", x + 14, titleY, TEXT);
-        os(font, ".jsonc", x + 14 + osWidth(font, "Default"), titleY, FAINT);
+        hud(font, "Default", x + 14, titleY, TEXT);
+        hud(font, ".jsonc", x + 14 + hudWidth(font, "Default"), titleY, FAINT);
 
         int barW = w - 28;
         int barY = y + cardH - 22;
@@ -1019,7 +1023,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private void drawConfigFile(FontRenderer font, int x, int y, int w, int h, String name) {
         roundRect(x, y, w, h, 8, withAlpha(0xFFFFFF, 0x07));
         roundRect(x, y + 2, 2, h - 4, 1, withAlpha(ACCENT, 0x66));
-        os(font, name, x + 12, y + (h - 11) / 2 + 1, TEXT);
+        hud(font, name, x + 12, y + (h - 11) / 2 + 1, TEXT);
     }
 
     private int systemSettingsRowH() {
@@ -1053,7 +1057,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             roundRect(x, y, w, rowH, 8,
                     withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
         }
-        os(font, label, x + 14, y + (rowH - 11) / 2 + 2,
+        hud(font, label, x + 14, y + (rowH - 11) / 2 + 2,
                 blendColor(TEXT, 0xFFFFFFFF, hover * 0.6F));
 
         int right = x + w - 14;
@@ -1302,7 +1306,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             fillCircle(dotX, dotY, 2, withAlpha(0xFFFFFF, Math.round(0x32 * off)));
         }
 
-        os(font, ellipsizeOs(font, entry.name, w - 100), x + 32, y + 13,
+        hud(font, ellipsizeHud(font, entry.name, w - 100), x + 32, y + 13,
                 on ? TEXT : 0xFFB3BCCB);
 
         // 键帽
@@ -2114,28 +2118,28 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     // ==================================================================
 
     /** 正文 / 模块名：保留原始大小写（模块名由 prettyName 统一成词首大写）。 */
-    private static void os(FontRenderer font, String text, int x, int y, int color) {
-        OpenSansFont.drawString(font, text, x, y, color, 1.02F);
+    private static void hud(FontRenderer font, String text, int x, int y, int color) {
+        HudFont.drawString(font, text, x, y, color, 1.02F);
     }
 
-    private static void osBold(FontRenderer font, String text, int x, int y, int color) {
-        OpenSansFont.drawString(font, "\u00a7l" + text, x, y, color, 1.44F);
+    private static void hudBold(FontRenderer font, String text, int x, int y, int color) {
+        HudFont.drawString(font, "\u00a7l" + text, x, y, color, 1.44F);
     }
 
-    private static int osWidth(FontRenderer font, String text) {
-        return OpenSansFont.getStringWidth(font, text, 1.02F);
+    private static int hudWidth(FontRenderer font, String text) {
+        return HudFont.getStringWidth(font, text, 1.02F);
     }
 
-    private static int osBoldWidth(FontRenderer font, String text) {
-        return OpenSansFont.getStringWidth(font, "\u00a7l" + text, 1.44F);
+    private static int hudBoldWidth(FontRenderer font, String text) {
+        return HudFont.getStringWidth(font, "\u00a7l" + text, 1.44F);
     }
 
     private static void micro(FontRenderer font, String text, int x, int y, int color) {
-        OpenSansFont.drawString(font, text, x, y, color, 0.80F);
+        HudFont.drawString(font, text, x, y, color, 0.80F);
     }
 
     private static int microWidth(FontRenderer font, String text) {
-        return OpenSansFont.getStringWidth(font, text, 0.80F);
+        return HudFont.getStringWidth(font, text, 0.80F);
     }
 
     private static String ellipsizeMicro(FontRenderer font, String text, int maxWidth) {
@@ -2149,12 +2153,12 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         return value + "...";
     }
 
-    private static String ellipsizeOs(FontRenderer font, String text, int maxWidth) {
-        if (text == null || osWidth(font, text) <= maxWidth) {
+    private static String ellipsizeHud(FontRenderer font, String text, int maxWidth) {
+        if (text == null || hudWidth(font, text) <= maxWidth) {
             return text;
         }
         String value = text;
-        while (value.length() > 3 && osWidth(font, value + "...") > maxWidth) {
+        while (value.length() > 3 && hudWidth(font, value + "...") > maxWidth) {
             value = value.substring(0, value.length() - 1);
         }
         return value + "...";

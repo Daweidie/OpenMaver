@@ -16,7 +16,10 @@ import java.lang.reflect.Field;
 import java.io.FileOutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 客户端事件桥接：把 Minecraft 1.8.9 的 tick / 渲染事件转发给 {@link ModuleManager}，
@@ -31,6 +34,15 @@ public final class OpenMaverClientHandler {
     /** tick 轮询用的 RSHIFT 边沿状态（键盘事件之外的第二条路径）。 */
     private boolean rightShiftDown = false;
     private long lastToggleNanos = 0L;
+
+    /**
+     * 已经按下、尚未收到释放事件的按键。
+     *
+     * <p>Forge 的 {@code InputEvent.KeyInputEvent} 在按住按键时会随系统键盘重复
+     * 逐次触发。之前每一条重复事件都会执行一次模块 toggle，按住 R 时会看到
+     * AutoClicker 被反复开关。这里只在一次物理按下时处理，释放后才允许下一次。
+     */
+    private final Set<Integer> heldKeys = new HashSet<Integer>();
 
     /** 是否已经处理过「首次进入世界」。 */
     private boolean worldEntered = false;
@@ -70,6 +82,7 @@ public final class OpenMaverClientHandler {
             }
             // START：在 vanilla 发送 C03 之前应用 aim / sprint。
             if (event.phase == TickEvent.Phase.START) {
+                syncHeldKeys();
                 OpenMaverFeatures.onTickStart(mc);
                 return;
             }
@@ -123,10 +136,16 @@ public final class OpenMaverClientHandler {
             return;
         }
         try {
+            int key = Keyboard.getEventKey();
             if (!Keyboard.getEventKeyState()) {
+                heldKeys.remove(Integer.valueOf(key));
                 return;
             }
-            int key = Keyboard.getEventKey();
+            // 同一次物理按下只处理一次：忽略系统键盘重复事件，避免按住 R
+            // 时 AutoClicker 被反复开关。
+            if (!heldKeys.add(Integer.valueOf(key))) {
+                return;
+            }
             if (key == Keyboard.KEY_RSHIFT) {
                 toggleClickGui("event");
                 return;
@@ -135,6 +154,21 @@ public final class OpenMaverClientHandler {
         } catch (Throwable t) {
             keyFailed = true;
             debug("key bridge disabled: " + t, t);
+        }
+    }
+
+    /** 清理丢失释放事件的按键，防止窗口失焦后某个键永远无法再次触发。 */
+    private void syncHeldKeys() {
+        try {
+            Iterator<Integer> iterator = heldKeys.iterator();
+            while (iterator.hasNext()) {
+                Integer key = iterator.next();
+                if (key == null || !Keyboard.isKeyDown(key.intValue())) {
+                    iterator.remove();
+                }
+            }
+        } catch (Throwable ignored) {
+            // A broken LWJGL state must not break the tick bridge.
         }
     }
 

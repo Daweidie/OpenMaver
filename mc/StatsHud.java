@@ -52,7 +52,7 @@ public final class StatsHud {
     private static final int PANEL_SHADOW_ALPHA = 0x38;
     private static final int PANEL_HIGHLIGHT_ALPHA = 0x14;
 
-    /** OpenSansFont 用 ARGB，最高位必须是不透明的 0xFF，否则整段文字会被跳过。 */
+    /** HudFont 用 ARGB，最高位必须是不透明的 0xFF，否则整段文字会被跳过。 */
     private static final int FPS_TEXT = 0xFFFFFFFF;
     private static final int CPS_LABEL = 0xFFD8D8D8;
     private static final int CPS_VALUE = 0xFFFFFFFF;
@@ -155,6 +155,25 @@ public final class StatsHud {
         prune(RIGHT_CLICKS, now);
     }
 
+    /**
+     * 记录一次由 AutoClicker 注入的点击。
+     *
+     * <p>CPS HUD 以前只轮询物理鼠标边沿，自动点击器工作时界面仍然是 L 0 / R 0，
+     * 很容易被误判成“模块没触发”。这里让 HUD 同时统计注入点击。
+     */
+    public static void recordAutoClick(boolean left, long now) {
+        if (failed || !isModuleEnabled("CPS")) {
+            return;
+        }
+        if (left) {
+            LEFT_CLICKS.add(now);
+        } else {
+            RIGHT_CLICKS.add(now);
+        }
+        prune(LEFT_CLICKS, now);
+        prune(RIGHT_CLICKS, now);
+    }
+
     private static void prune(List<Long> clicks, long now) {
         long cutoff = now - FPS_WINDOW_NANOS;
         while (!clicks.isEmpty() && clicks.get(0) < cutoff) {
@@ -199,7 +218,7 @@ public final class StatsHud {
         }
         if (fpsEnabled) {
             String label = fpsLabel();
-            int textW = OpenSansFont.getStringWidth(font, label, FPS_TEXT_SIZE);
+            int textW = HudFont.getStringWidth(font, label, FPS_TEXT_SIZE);
             fpsW = Math.max(FPS_MIN_W, textW + FPS_PAD_X * 2);
             fpsX = x;
             fpsW = Math.min(fpsW, Math.max(FPS_MIN_W, resolution.getScaledWidth() - fpsX - MARGIN));
@@ -231,9 +250,9 @@ public final class StatsHud {
         }
         if (fpsX >= 0) {
             String label = fpsLabel();
-            int textX = fpsX + (fpsW - OpenSansFont.getStringWidth(font, label, FPS_TEXT_SIZE)) / 2;
+            int textX = fpsX + (fpsW - HudFont.getStringWidth(font, label, FPS_TEXT_SIZE)) / 2;
             int textY = y + (PANEL_H - 10) / 2;
-            OpenSansFont.drawString(font, label, textX, textY, FPS_TEXT, FPS_TEXT_SIZE);
+            HudFont.drawString(font, label, textX, textY, FPS_TEXT, FPS_TEXT_SIZE);
         }
     }
 
@@ -257,18 +276,18 @@ public final class StatsHud {
     }
 
     private static void drawCpsRow(FontRenderer font, String text, int x, int y) {
-        int textW = OpenSansFont.getStringWidth(font, text, CPS_TEXT_SIZE);
+        int textW = HudFont.getStringWidth(font, text, CPS_TEXT_SIZE);
         int textX = x + (CPS_SIZE - textW) / 2;
         // 字母标签稍暗、数值更亮，两行仍然保持紧凑。
         int split = text.indexOf(' ');
         if (split > 0) {
             String label = text.substring(0, split);
             String value = text.substring(split);
-            int labelW = OpenSansFont.getStringWidth(font, label, CPS_TEXT_SIZE);
-            OpenSansFont.drawString(font, label, textX, y, CPS_LABEL, CPS_TEXT_SIZE);
-            OpenSansFont.drawString(font, value, textX + labelW, y, CPS_VALUE, CPS_TEXT_SIZE);
+            int labelW = HudFont.getStringWidth(font, label, CPS_TEXT_SIZE);
+            HudFont.drawString(font, label, textX, y, CPS_LABEL, CPS_TEXT_SIZE);
+            HudFont.drawString(font, value, textX + labelW, y, CPS_VALUE, CPS_TEXT_SIZE);
         } else {
-            OpenSansFont.drawString(font, text, textX, y, CPS_VALUE, CPS_TEXT_SIZE);
+            HudFont.drawString(font, text, textX, y, CPS_VALUE, CPS_TEXT_SIZE);
         }
     }
 

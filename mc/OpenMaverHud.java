@@ -27,7 +27,7 @@ import java.util.Set;
  * <p>视觉稿：
  * <ul>
  *   <li>每个启用功能是一枚独立的深灰色圆角卡片，右对齐垂直堆叠，卡片之间留出细缝</li>
- *   <li>模块名使用白色 Open Sans 字体，右侧是一枚短白色竖条作为启用指示</li>
+ *   <li>模块名使用白色 Lucida Sans Typewriter 字体，右侧是一枚短白色竖条作为启用指示</li>
  *   <li>键位绑定以较淡的白色显示在竖条左侧；没有绑定键位时只保留竖条</li>
  *   <li>卡片带轻微投影与顶部高光，启用/关闭时从右侧滑入或淡出</li>
  * </ul>
@@ -84,6 +84,12 @@ public final class OpenMaverHud {
     private static final int TOAST_RADIUS = 5;
     private static final int TOAST_PAD_X = 12;
     private static final int TOAST_TEXT_Y = 9;
+    /** 左侧状态图标：勾 / 叉，仅用于模块开关提示。 */
+    private static final int TOAST_ICON_SIZE = 10;
+    private static final int TOAST_ICON_GAP = 8;
+    private static final int TOAST_ICON_NONE = 0;
+    private static final int TOAST_ICON_CHECK = 1;
+    private static final int TOAST_ICON_CROSS = 2;
     private static final int TOAST_BAR_H = 3;
     private static final int TOAST_BAR_INSET = 10;
     private static final int TOAST_BAR_BOTTOM = 7;
@@ -116,19 +122,24 @@ public final class OpenMaverHud {
 
     /** 触发一次右下角成功提示。新提示会与尚未消失的提示叠成卡片栈。 */
     public static void success(String text) {
+        pushToast(text, TOAST_ICON_NONE);
+    }
+
+    /** 功能开关时弹出「xxx enabled / disabled」提示，并在左侧显示勾 / 叉。 */
+    public static void notifyToggle(String name, boolean enabled) {
+        pushToast(name + (enabled ? " enabled" : " disabled"),
+                enabled ? TOAST_ICON_CHECK : TOAST_ICON_CROSS);
+    }
+
+    private static void pushToast(String text, int icon) {
         if (text == null || text.isEmpty()) {
             return;
         }
         long now = System.nanoTime();
-        TOASTS.add(new Toast(text, now));
+        TOASTS.add(new Toast(text, now, icon));
         while (TOASTS.size() > TOAST_MAX) {
             TOASTS.remove(0);
         }
-    }
-
-    /** 功能开关时弹出「xxx enabled / disabled」提示。 */
-    public static void notifyToggle(String name, boolean enabled) {
-        success(name + (enabled ? " enabled" : " disabled"));
     }
 
     /** 当前启用的功能数量（模块 + 内置 Aim / ESP），用于加载完成提示。 */
@@ -323,9 +334,9 @@ public final class OpenMaverHud {
             int rowRight = right + slide;
 
             // 右边缘固定对齐，每行宽度由自身文字决定，形成参考图里的阶梯感。
-            int nameW = OpenSansFont.getStringWidth(font, labels[i], ROW_TEXT_SIZE);
+            int nameW = HudFont.getStringWidth(font, labels[i], ROW_TEXT_SIZE);
             int keyW = hasKey(keys[i])
-                    ? OpenSansFont.getStringWidth(font, keys[i], ROW_TEXT_SIZE) : 0;
+                    ? HudFont.getStringWidth(font, keys[i], ROW_TEXT_SIZE) : 0;
             int rowWidth = nameW + ROW_PAD_LEFT
                     + (keyW > 0 ? KEY_GAP + keyW : 0) + ROW_PAD_RIGHT;
             int rowX = rowRight - rowWidth;
@@ -488,8 +499,9 @@ public final class OpenMaverHud {
                 alpha = 1.0f - easeInCubic(t);
             }
 
-            int labelW = OpenSansFont.getStringWidth(font, toast.text);
-            int width = Math.max(180, TOAST_PAD_X * 2 + labelW);
+            int iconW = toast.icon == TOAST_ICON_NONE ? 0 : TOAST_ICON_SIZE + TOAST_ICON_GAP;
+            int labelW = HudFont.getStringWidth(font, toast.text);
+            int width = Math.max(180, TOAST_PAD_X * 2 + iconW + labelW);
             width = Math.min(width, screenW - MARGIN * 2);
             int targetX = screenW - MARGIN - width;
             int x = Math.round(screenW + (targetX - screenW) * progress);
@@ -517,7 +529,17 @@ public final class OpenMaverHud {
                         withAlpha(0xFFFFFF, a));
             }
 
-            texts.add(new TextDraw(toast.text, x + TOAST_PAD_X, y + TOAST_TEXT_Y,
+            // 开关提示左侧的勾 / 叉；普通提示没有图标，文字从左边距开始。
+            int textX = x + TOAST_PAD_X;
+            if (toast.icon != TOAST_ICON_NONE) {
+                int iconX = x + TOAST_PAD_X;
+                int iconY = y + TOAST_TEXT_Y;
+                drawToastIcon(toast.icon, iconX, iconY, TOAST_ICON_SIZE,
+                        withAlpha(TOAST_TEXT, a));
+                textX = iconX + TOAST_ICON_SIZE + TOAST_ICON_GAP;
+            }
+
+            texts.add(new TextDraw(toast.text, textX, y + TOAST_TEXT_Y,
                     withAlpha(TOAST_TEXT, clamp255((int) (alpha * 255.0f)))));
         }
 
@@ -536,9 +558,44 @@ public final class OpenMaverHud {
     private static void drawTexts(FontRenderer font, List<TextDraw> texts) {
         for (int i = 0; i < texts.size(); i++) {
             TextDraw text = texts.get(i);
-            OpenSansFont.drawString(font, text.text, text.x, text.y, text.color,
+            HudFont.drawString(font, text.text, text.x, text.y, text.color,
                     text.size);
         }
+    }
+
+    private static void drawToastIcon(int icon, int x, int y, int size, int argb) {
+        float thin = 2.0F;
+        if (icon == TOAST_ICON_CHECK) {
+            drawSegment(x + 1.2F, y + size * 0.52F,
+                    x + size * 0.40F, y + size * 0.84F, thin, argb);
+            drawSegment(x + size * 0.40F, y + size * 0.84F,
+                    x + size * 0.92F, y + size * 0.18F, thin, argb);
+        } else if (icon == TOAST_ICON_CROSS) {
+            drawSegment(x + size * 0.20F, y + size * 0.20F,
+                    x + size * 0.80F, y + size * 0.80F, thin, argb);
+            drawSegment(x + size * 0.80F, y + size * 0.20F,
+                    x + size * 0.20F, y + size * 0.80F, thin, argb);
+        }
+    }
+
+    /** 绘制一条有宽度的线段，用于提示卡左侧的勾 / 叉。 */
+    private static void drawSegment(float x1, float y1, float x2, float y2,
+            float thickness, int argb) {
+        float dx = x2 - x1;
+        float dy = y2 - y1;
+        float length = (float) Math.sqrt(dx * dx + dy * dy);
+        if (length < 0.0001F) {
+            return;
+        }
+        float nx = -dy / length * thickness * 0.5F;
+        float ny = dx / length * thickness * 0.5F;
+        setColor(argb);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2f(x1 + nx, y1 + ny);
+        GL11.glVertex2f(x2 + nx, y2 + ny);
+        GL11.glVertex2f(x2 - nx, y2 - ny);
+        GL11.glVertex2f(x1 - nx, y1 - ny);
+        GL11.glEnd();
     }
 
     private static void roundRect(int x, int y, int w, int h, int radius, int argb) {
@@ -656,13 +713,15 @@ public final class OpenMaverHud {
     /** 一张右下角提示卡片的独立时间线与堆叠位置。 */
     private static final class Toast {
         final String text;
+        final int icon;
         final long startNanos;
         long lastNanos;
         float y = Float.NaN;
         boolean inStack = true;
 
-        Toast(String text, long startNanos) {
+        Toast(String text, long startNanos, int icon) {
             this.text = text;
+            this.icon = icon;
             this.startNanos = startNanos;
             this.lastNanos = startNanos;
         }

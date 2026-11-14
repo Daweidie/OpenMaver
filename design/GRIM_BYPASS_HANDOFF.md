@@ -99,8 +99,8 @@ debug.enabled=false
 ## 3. 关键实现位置
 
 - `mc/OpenMaverFeatures.java`
-  - `onTickStart`：aim / sprint（vanilla C03 之前）
-  - `onTick`：autoclicker / fastplace / godbridge / scaffold / reach
+  - `onTickStart`：autoclicker / aim / sprint（均需在 vanilla C03 之前）
+  - `onTick`：fastplace / godbridge / scaffold / reach
   - `updateReach` / `attackNearestEntityInReach`：Grim 扩张箱 ray trace
   - `aimAtNearest` / `stepAim` / `mouseGcd`：GCD + 限速
   - `updateAutoClicker`：CPS 上限、抖动、停顿、同 tick 互斥、MISS 保护
