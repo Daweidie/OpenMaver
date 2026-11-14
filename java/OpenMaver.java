@@ -5,9 +5,10 @@ import module.combat.AutoClicker;
 import module.combat.Reach;
 import module.movement.AutoSprint;
 import module.movement.GodBridge;
-import module.movement.Scaffold;
 import module.misc.FakePlayer;
 import module.player.FastPlace;
+import module.render.Cps;
+import module.render.Fps;
 import module.render.PlayerXray;
 import module.render.TargetHud;
 import util.Logger;
@@ -290,9 +291,6 @@ public final class OpenMaver {
         // 战斗模块：Reach 攻击距离（配置路径 combat.reach；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new Reach());
 
-        // 移动模块：Scaffold 自动搭路（配置路径 movement.scaffold；MC 侧逻辑在 OpenMaverFeatures）
-        ModuleManager.register(new Scaffold());
-
         // 移动模块：GodBridge 神桥（配置路径 movement.godbridge；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new GodBridge());
 
@@ -307,6 +305,10 @@ public final class OpenMaver {
 
         // 渲染模块：Player X-Ray 玩家透视（配置路径 render.playerxray；MC 侧绘制在 OpenMaverFeatures）
         ModuleManager.register(new PlayerXray());
+
+        // 渲染模块：左上角 FPS / CPS 统计（配置路径 render.fps / render.cps；MC 侧绘制在 mc/StatsHud）
+        ModuleManager.register(new Fps());
+        ModuleManager.register(new Cps());
 
         // 后续模块在此继续注册，例如：
         //   ModuleManager.register(new CombatExample());

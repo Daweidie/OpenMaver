@@ -154,16 +154,6 @@ public final class OpenMaverFeatures {
     private static Class<?> itemBlockType;
     private static boolean itemBlockLookupFailed;
 
-    // Scaffold
-    private static int scaffoldDelayTicks = 2;
-    private static boolean scaffoldRequireBackward = true;
-    private static boolean scaffoldAutoJump = false;
-    private static boolean scaffoldAutoRotate = true;
-    private static boolean scaffoldPacketRotation;
-    private static boolean scaffoldLegitAim = true;
-    private static int scaffoldCooldownTicks = 2;
-    private static boolean scaffoldFailed;
-    private static long scaffoldLastJumpNanos;
     /** 本 tick 是否已经有右键动作（AutoClicker），避免同一 tick 连续放置。 */
     private static boolean rightClickUsedThisTick;
     /** 上次成功放置的 tick，用于 debug 中的放置间隔。 */
@@ -274,10 +264,8 @@ public final class OpenMaverFeatures {
         // 即使 GUI 打开也要调用：确保自动点击计时器被重置，关闭 GUI 后不会补发点击。
         updateAutoClicker(mc);
         updateFastPlace(mc);
-        // GodBridge 优先：它成功放置后会置位 rightClickUsedThisTick，Scaffold 本 tick 便不会再抢右键。
+        // GodBridge 放置成功后会置位 rightClickUsedThisTick，避免同 tick 重复右键。
         updateGodBridge(mc);
-        // Scaffold 放在最后：先让 FastPlace / GodBridge 调整右键冷却，再决定本 tick 是否放置。
-        updateScaffold(mc);
         // Reach 放在最后：AutoClicker 可能在本 tick 内产生新的挥击，需要立即识别。
         updateReach(mc);
         OpenMaverDebug.tickSummary();
@@ -804,7 +792,7 @@ public final class OpenMaverFeatures {
                 } else if (bypassProfile == PROFILE_BALANCED) {
                     // BALANCED：允许加速，但不压到 0；保留 2 tick 冷却。
                     limit = Math.max(2, limit);
-                    // Scaffold/GodBridge 需要等待 timer 自然归零；FastPlace 与它们
+                    // GodBridge 需要等待 timer 自然归零；FastPlace 与它
                     // 同时开启时会把 timer 卡在 2，导致永远无法放置。
                     if (placementModuleEnabled()) {
                         active = false;
@@ -843,12 +831,10 @@ public final class OpenMaverFeatures {
         }
     }
 
-    /** Scaffold / GodBridge 是否启用；balanced 下 FastPlace 需要让位。 */
+    /** GodBridge 是否启用；balanced 下 FastPlace 需要让位。 */
     private static boolean placementModuleEnabled() {
-        Module scaffold = ModuleManager.getModule("Scaffold");
         Module godBridge = ModuleManager.getModule("GodBridge");
-        return (scaffold != null && scaffold.isEnabled())
-                || (godBridge != null && godBridge.isEnabled());
+        return godBridge != null && godBridge.isEnabled();
     }
 
     private static Integer readIntField(Object target, String mcp, String srg) {        Field field = findField(target, runtimeCandidates(mcp, srg));
@@ -1292,14 +1278,6 @@ public final class OpenMaverFeatures {
                 + (error == null ? "" : " (" + error + ")"));
     }
 
-    private static void failFeature(boolean godBridge, String reason, Throwable error) {
-        if (godBridge) {
-            failGodBridge(reason, error);
-        } else {
-            failScaffold(reason, error);
-        }
-    }
-
     /**
      * 发送一个仅改变视角的 C05PacketPlayerLook，不改变客户端 position。
      *
@@ -1308,7 +1286,7 @@ public final class OpenMaverFeatures {
      * 这里只在 C08 **之前**发一次 C05，让服务端先更新到用于 ray trace 的视角；
      * 不再发 placement 后的重复 C05，避免 AimDuplicateLook/Timer 额外的检测面。
      *
-     * <p>Scaffold 与 GodBridge 共用这段逻辑；调用方根据自身设置决定是否发送。
+     * <p>放置逻辑在发送前调用这里；是否发送由调用方的设置决定。
      */
     private static boolean sendPlacementLook(Object player, float yaw, float pitch) {
         try {
@@ -1332,143 +1310,6 @@ public final class OpenMaverFeatures {
         }
     }
 
-    // ==================================================================
-    // Scaffold（自动搭路）
-    // ==================================================================
-
-    /**
-     * 基础 Scaffold：只在安全状态下，尝试把方块放到脚下或运动方向前方，
-     * 通过游戏自身的 {@code rightClickMouse} 完成放置。
-     *
-     * <p>稳定优先：每个 tick 最多放置一次，失败不补发；GUI/聊天/死亡/关闭模块
-     * 或切换物品时立即清空冷却。所有反射错误只记录一次并静默停用。
-     */
-    private static void updateScaffold(Minecraft mc) {
-        if (scaffoldFailed) {
-            return;
-        }
-        try {
-            Module scaffold = ModuleManager.getModule("Scaffold");
-            if (scaffold == null || !scaffold.isEnabled()) {
-                resetScaffoldState();
-                return;
-            }
-            // 神桥进行中时由 GodBridge 独占右键，避免两个模块朝不同目标抢放置。
-            if (godBridgeActive) {
-                resetScaffoldState();
-                return;
-            }
-            Object player = read(mc, "thePlayer", "field_71439_g", null);
-            Object world = read(mc, "theWorld", "field_71441_e", null);
-            boolean active = read(mc, "currentScreen", "field_71462_r", null) == null
-                    && player != null
-                    && world != null
-                    && alive(player)
-                    && holdingBlock(player);
-            // 左键按住通常是在挖掘/攻击，此时不抢右键；GUI/聊天/死亡/空手都立即清冷却。
-            if (!active || Mouse.isButtonDown(0)) {
-                resetScaffoldState();
-                return;
-            }
-            if (rightClickUsedThisTick) {
-                return;
-            }
-            if (scaffoldCooldownTicks > 0) {
-                scaffoldCooldownTicks--;
-                return;
-            }
-
-            Object input = read(player, "movementInput", "field_71158_b", null);
-            if (input == null) {
-                resetScaffoldState();
-                return;
-            }
-            double forward = number(input, "moveForward", "field_78900_b");
-            double strafe = number(input, "moveStrafe", "field_78901_c");
-            if (scaffoldRequireBackward && forward > -0.01D) {
-                return;
-            }
-            if (Boolean.TRUE.equals(call(player, "isUsingItem", "func_71039_bw", "bS"))) {
-                return;
-            }
-
-            double posX = number(player, "posX", "field_70165_t");
-            double posY = number(player, "posY", "field_70163_u");
-            double posZ = number(player, "posZ", "field_70161_v");
-            double yaw = number(player, "rotationYaw", "field_70177_z");
-            double inputMagnitude = Math.sqrt(forward * forward + strafe * strafe);
-            double directionX = 0.0D;
-            double directionZ = 0.0D;
-            if (inputMagnitude > 0.01D) {
-                double radians = Math.toRadians(yaw);
-                double forwardX = -Math.sin(radians);
-                double forwardZ = Math.cos(radians);
-                double leftX = Math.cos(radians);
-                double leftZ = Math.sin(radians);
-                directionX = (forwardX * forward + leftX * strafe) / inputMagnitude;
-                directionZ = (forwardZ * forward + leftZ * strafe) / inputMagnitude;
-            }
-            // 没有移动输入时 direction 保持 0：只尝试脚下，不主动往身后延伸。
-
-            if (scaffoldAutoJump) {
-                maybeScaffoldJump(player, world, directionX, directionZ, posX, posY, posZ);
-                if (scaffoldFailed) {
-                    return;
-                }
-            }
-
-            Integer delayTimer = readIntField(mc, "rightClickDelayTimer", "field_71467_ac");
-            if (delayTimer == null) {
-                failScaffold("cannot read rightClickDelayTimer", null);
-                return;
-            }
-            if (delayTimer.intValue() > 0) {
-                return;
-            }
-
-            int groundY = (int) Math.floor(posY) - 1;
-            // 1.8.9 世界高度为 0..255；越界时不要构造 BlockPos 去探测。
-            if (groundY < 0 || groundY > 255) {
-                return;
-            }
-            // 目标方块必须完全位于脚部以下，避免把玩家自己封在方块里。
-            if (groundY + 1.0D > posY + 0.001D) {
-                return;
-            }
-            int currentX = (int) Math.floor(posX);
-            int currentZ = (int) Math.floor(posZ);
-            int aheadX = (int) Math.floor(posX + directionX);
-            int aheadZ = (int) Math.floor(posZ + directionZ);
-
-            float originalYaw = (float) yaw;
-            float originalPitch = (float) number(player, "rotationPitch", "field_70125_A");
-            Object originalHit = read(mc, "objectMouseOver", "field_71476_x", null);
-
-            boolean placed = false;
-            if (aheadX != currentX || aheadZ != currentZ) {
-                placed = tryScaffoldPlacement(mc, player, world, aheadX, groundY, aheadZ,
-                        originalYaw, originalPitch, originalHit);
-            }
-            if (!placed) {
-                placed = tryScaffoldPlacement(mc, player, world, currentX, groundY, currentZ,
-                        originalYaw, originalPitch, originalHit);
-            }
-            if (placed) {
-                scaffoldCooldownTicks = clamp(scaffoldDelayTicks, 1, 10);
-                rightClickUsedThisTick = true;
-            }
-        } catch (Throwable error) {
-            failScaffold("update failed", error);
-        }
-    }
-
-    private static boolean tryScaffoldPlacement(Minecraft mc, Object player, Object world,
-            int targetX, int targetY, int targetZ,
-            float originalYaw, float originalPitch, Object originalHit) {
-        return tryPlaceBlock(mc, player, world, targetX, targetY, targetZ,
-                originalYaw, originalPitch, originalHit, scaffoldAutoRotate, false);
-    }
-
     private static boolean tryGodBridgePlacement(Minecraft mc, Object player, Object world,
             int targetX, int targetY, int targetZ,
             float originalYaw, float originalPitch, Object originalHit) {
@@ -1480,8 +1321,8 @@ public final class OpenMaverFeatures {
      * 尝试在指定空气格放置方块。会依次检查六个相邻支撑面，只点击从眼睛方向
      * 真正可见、且 {@code objectMouseOver} 校验通过的面。
      *
-     * <p>Scaffold 与 GodBridge 共用这段放置逻辑；{@code godBridge} 只决定失败时
-     * 停用哪个功能，{@code autoRotate} 决定是否允许临时转向目标面。安全 profile
+     * <p>{@code godBridge} 用于区分搭桥的放置角度细节，{@code autoRotate}
+     * 决定是否允许临时转向目标面。安全 profile
      * 或 {@code autoRotate=false} 时一律回退为真实准星放置。
      */
     private static boolean tryPlaceBlock(Minecraft mc, Object player, Object world,
@@ -1494,7 +1335,7 @@ public final class OpenMaverFeatures {
         }
         Boolean targetAir = scaffoldAir(world, targetPos);
         if (targetAir == null) {
-            failFeature(godBridge, "cannot read target block", null);
+            failGodBridge("cannot read target block", null);
             return false;
         }
         if (!targetAir.booleanValue()) {
@@ -1505,7 +1346,7 @@ public final class OpenMaverFeatures {
         if (facings == null) {
             return false;
         }
-        boolean legitAim = godBridge ? godBridgeLegitAim : scaffoldLegitAim;
+        boolean legitAim = godBridgeLegitAim;
         if (!legitAim && (safeProfile() || !autoRotate)) {
             // legit/balanced 下不允许“只改客户端 rotation 再 C08”的路径：
             // 服务端看到的 yaw 仍是上一 tick 的，RotationPlace 会直接失败。
@@ -1538,7 +1379,7 @@ public final class OpenMaverFeatures {
             }
             Boolean support = scaffoldSupport(world, supportPos);
             if (support == null) {
-                failFeature(godBridge, "cannot read support block", null);
+                failGodBridge("cannot read support block", null);
                 return false;
             }
             if (!support.booleanValue()) {
@@ -1576,7 +1417,7 @@ public final class OpenMaverFeatures {
 
         Object renderer = read(mc, "entityRenderer", "field_71460_t", null);
         if (renderer == null) {
-            failFeature(godBridge, "cannot read entityRenderer", null);
+            failGodBridge("cannot read entityRenderer", null);
             return false;
         }
 
@@ -1620,22 +1461,20 @@ public final class OpenMaverFeatures {
                 }
                 Boolean stillAir = scaffoldAir(world, targetPos);
                 if (stillAir == null) {
-                    failFeature(godBridge, "cannot re-read target block", null);
+                    failGodBridge("cannot re-read target block", null);
                     return false;
                 }
                 if (!stillAir.booleanValue()) {
                     continue;
                 }
-                boolean packetRotation = godBridge
-                        ? godBridgePacketRotation
-                        : scaffoldPacketRotation;
+                boolean packetRotation = godBridgePacketRotation;
                 if (packetRotation && safeProfile()) {
                     packetRotation = false;
                     OpenMaverDebug.noticeOnce("placement-c05-suppressed",
                             "placement C05 packet rotation suppressed by " + profileName() + " profile");
                 }
                 if (packetRotation && !sendPlacementLook(player, yaw, pitch)) {
-                    failFeature(godBridge, "cannot send pre-placement rotation packet", null);
+                    failGodBridge("cannot send pre-placement rotation packet", null);
                     return false;
                 }
                 call(mc, "rightClickMouse", "func_147121_ag", "ax");
@@ -1666,7 +1505,7 @@ public final class OpenMaverFeatures {
             boolean godBridge) {
         Object renderer = read(mc, "entityRenderer", "field_71460_t", null);
         if (renderer == null) {
-            failFeature(godBridge, "cannot read entityRenderer", null);
+            failGodBridge("cannot read entityRenderer", null);
             return false;
         }
         // 用当前真实 rotation 刷新 objectMouseOver。
@@ -1682,7 +1521,7 @@ public final class OpenMaverFeatures {
             }
             Boolean stillAir = scaffoldAir(world, targetPos);
             if (stillAir == null) {
-                failFeature(godBridge, "cannot re-read target block", null);
+                failGodBridge("cannot re-read target block", null);
                 return false;
             }
             if (!stillAir.booleanValue()) {
@@ -1707,54 +1546,6 @@ public final class OpenMaverFeatures {
                 legitAim, packetRotation, (int) Math.max(0L, interval));
     }
 
-    /** 自动跳跃只在脚前方是实心方块、上方为空气时触发，作为可选的前进辅助。 */
-    private static void maybeScaffoldJump(Object player, Object world,
-            double directionX, double directionZ, double posX, double posY, double posZ) {
-        if (!scaffoldOnGround(player)) {
-            return;
-        }
-        if (Boolean.TRUE.equals(call(player, "isSneaking", "func_70093_af", "av"))) {
-            return;
-        }
-        long now = System.nanoTime();
-        if (now - scaffoldLastJumpNanos < 350_000_000L) {
-            return;
-        }
-        int bodyY = (int) Math.floor(posY);
-        int stepX = (int) Math.floor(posX + directionX);
-        int stepZ = (int) Math.floor(posZ + directionZ);
-        Object stepPos = scaffoldBlockPos(stepX, bodyY, stepZ);
-        if (stepPos == null) {
-            return;
-        }
-        Boolean stepAir = scaffoldAir(world, stepPos);
-        if (stepAir == null) {
-            failScaffold("cannot read jump block", null);
-            return;
-        }
-        if (stepAir.booleanValue()) {
-            return;
-        }
-        Object abovePos = scaffoldBlockPos(stepX, bodyY + 1, stepZ);
-        if (abovePos == null) {
-            return;
-        }
-        Boolean aboveAir = scaffoldAir(world, abovePos);
-        if (aboveAir == null) {
-            failScaffold("cannot read jump headroom", null);
-            return;
-        }
-        if (!aboveAir.booleanValue()) {
-            return;
-        }
-        call(player, "jump", "func_70664_aZ", "bF");
-        scaffoldLastJumpNanos = now;
-    }
-
-    private static Object scaffoldBlockPos(int x, int y, int z) {
-        return scaffoldBlockPos(x, y, z, false);
-    }
-
     private static Object scaffoldBlockPos(int x, int y, int z, boolean godBridge) {
         try {
             if (scaffoldBlockPosConstructor == null) {
@@ -1767,14 +1558,9 @@ public final class OpenMaverFeatures {
             return scaffoldBlockPosConstructor.newInstance(
                     Integer.valueOf(x), Integer.valueOf(y), Integer.valueOf(z));
         } catch (Throwable error) {
-            failFeature(godBridge, "cannot create BlockPos", error);
+            failGodBridge("cannot create BlockPos", error);
             return null;
         }
-    }
-
-    /** 六个方向的 EnumFacing 常量，顺序与 {@link #SCAFFOLD_FACING_OFFSETS} 一致。 */
-    private static Object[] scaffoldFacings() {
-        return scaffoldFacings(false);
     }
 
     private static Object[] scaffoldFacings(boolean godBridge) {
@@ -1806,8 +1592,7 @@ public final class OpenMaverFeatures {
                     }
                 }
                 if (found == null) {
-                    failFeature(godBridge,
-                            "cannot resolve EnumFacing." + SCAFFOLD_FACING_NAMES[i], null);
+                    failGodBridge("cannot resolve EnumFacing." + SCAFFOLD_FACING_NAMES[i], null);
                     return null;
                 }
                 ordered[i] = found;
@@ -1815,7 +1600,7 @@ public final class OpenMaverFeatures {
             scaffoldFacings = ordered;
             return ordered;
         } catch (Throwable error) {
-            failFeature(godBridge, "cannot load EnumFacing", error);
+            failGodBridge("cannot load EnumFacing", error);
             return null;
         }
     }
@@ -1887,22 +1672,6 @@ public final class OpenMaverFeatures {
         }
     }
 
-    private static void resetScaffoldState() {
-        // 置为“尚未就绪”，而不是 0：关闭 GUI/重新启用后不会立刻补发一次放置。
-        scaffoldCooldownTicks = clamp(scaffoldDelayTicks, 1, 10);
-        scaffoldLastJumpNanos = 0L;
-    }
-
-    private static void failScaffold(String reason, Throwable error) {
-        if (scaffoldFailed) {
-            return;
-        }
-        scaffoldFailed = true;
-        scaffoldCooldownTicks = 0;
-        System.err.println("[OpenMaver] Scaffold disabled: " + reason
-                + (error == null ? "" : " (" + error + ")"));
-    }
-
     private static void refreshSettings() {
         if (settingsCheckTicks++ < 20) {
             return;
@@ -1971,12 +1740,6 @@ public final class OpenMaverFeatures {
         reachChance = clamp(readFloat(values, "reach.chance", 100.0F), 1.0F, 100.0F);
         fastPlaceDelayTicks = clamp(readInt(values, "fastplace.delayTicks", 2, 4), 0, 4);
         fastPlaceOnlyBlocks = readBoolean(values, "fastplace.onlyBlocks", true);
-        scaffoldDelayTicks = clamp(readInt(values, "scaffold.delayTicks", 2, 10), 1, 10);
-        scaffoldRequireBackward = readBoolean(values, "scaffold.requireBackward", true);
-        scaffoldAutoJump = readBoolean(values, "scaffold.autoJump", false);
-        scaffoldAutoRotate = readBoolean(values, "scaffold.autoRotate", true);
-        scaffoldPacketRotation = readBoolean(values, "scaffold.packetRotation", false);
-        scaffoldLegitAim = readBoolean(values, "scaffold.legitAim", true);
         godBridgeDelayTicks = clamp(readInt(values, "godbridge.delayTicks", 0, 4), 0, 4);
         godBridgeFastPlace = readBoolean(values, "godbridge.fastPlace", true);
         godBridgeRequireEdgeAim = readBoolean(values, "godbridge.requireEdgeAim", true);
@@ -1987,7 +1750,6 @@ public final class OpenMaverFeatures {
         fakePlayerDistance = clamp(readFloat(values, "fakeplayer.distance", 4.0F), 2.0F, 10.0F);
         fakePlayerShowName = readBoolean(values, "fakeplayer.showName", true);
         resetAutoClickerTimers();
-        resetScaffoldState();
         resetGodBridgeState();
     }
 
@@ -2223,44 +1985,6 @@ public final class OpenMaverFeatures {
         markDirty();
     }
 
-    public static int getScaffoldDelayTicks() { return scaffoldDelayTicks; }
-    public static void setScaffoldDelayTicks(int value) {
-        scaffoldDelayTicks = clamp(value, 1, 10);
-        resetScaffoldState();
-        markDirty();
-    }
-
-    public static boolean isScaffoldRequireBackward() { return scaffoldRequireBackward; }
-    public static void setScaffoldRequireBackward(boolean value) {
-        scaffoldRequireBackward = value;
-        resetScaffoldState();
-        markDirty();
-    }
-
-    public static boolean isScaffoldAutoJump() { return scaffoldAutoJump; }
-    public static void setScaffoldAutoJump(boolean value) {
-        scaffoldAutoJump = value;
-        markDirty();
-    }
-
-    public static boolean isScaffoldAutoRotate() { return scaffoldAutoRotate; }
-    public static void setScaffoldAutoRotate(boolean value) {
-        scaffoldAutoRotate = value;
-        markDirty();
-    }
-
-    public static boolean isScaffoldPacketRotation() { return scaffoldPacketRotation; }
-    public static void setScaffoldPacketRotation(boolean value) {
-        scaffoldPacketRotation = value;
-        markDirty();
-    }
-
-    public static boolean isScaffoldLegitAim() { return scaffoldLegitAim; }
-    public static void setScaffoldLegitAim(boolean value) {
-        scaffoldLegitAim = value;
-        markDirty();
-    }
-
     public static int getGodBridgeDelayTicks() { return godBridgeDelayTicks; }
     public static void setGodBridgeDelayTicks(int value) {
         godBridgeDelayTicks = clamp(value, 0, 4);
@@ -2333,7 +2057,6 @@ public final class OpenMaverFeatures {
         espEnabled = false;
         resetAutoClickerTimers();
         resetReachState();
-        resetScaffoldState();
         resetGodBridgeState();
         rightClickUsedThisTick = false;
         autoclickerClickedThisTick = false;
@@ -2456,12 +2179,6 @@ public final class OpenMaverFeatures {
                     + "\nreach.chance=" + Math.round(reachChance)
                     + "\nfastplace.delayTicks=" + fastPlaceDelayTicks
                     + "\nfastplace.onlyBlocks=" + fastPlaceOnlyBlocks
-                    + "\nscaffold.delayTicks=" + scaffoldDelayTicks
-                    + "\nscaffold.requireBackward=" + scaffoldRequireBackward
-                    + "\nscaffold.autoJump=" + scaffoldAutoJump
-                    + "\nscaffold.autoRotate=" + scaffoldAutoRotate
-                    + "\nscaffold.packetRotation=" + scaffoldPacketRotation
-                    + "\nscaffold.legitAim=" + scaffoldLegitAim
                     + "\ngodbridge.delayTicks=" + godBridgeDelayTicks
                     + "\ngodbridge.fastPlace=" + godBridgeFastPlace
                     + "\ngodbridge.requireEdgeAim=" + godBridgeRequireEdgeAim

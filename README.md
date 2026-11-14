@@ -3,7 +3,7 @@
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
 > 说明：本仓库包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接）
-> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、Reach、Scaffold、GodBridge、FastPlace、FakePlayer、Target HUD、Player X-Ray）
+> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、Reach、GodBridge、FastPlace、FakePlayer、Target HUD、Player X-Ray、FPS / CPS 统计）
 > 以及 `legit / balanced / aggressive` 三档 Grim 对测 profile。
 > 请仅在你拥有或获得明确授权的服务器上进行测试。
 
@@ -34,11 +34,12 @@ OpenMaver/
 │       ├── Module.java            # 模块抽象基类（按包名约定推导配置路径）
 │       ├── ModuleManager.java     # 模块注册表 + 统一驱动
 │       ├── movement/AutoSprint.java  # 示例模块（链路验证器）
-│       ├── movement/Scaffold.java  # 自动搭路开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── movement/GodBridge.java # 神桥开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── player/FastPlace.java  # 快速右键开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── render/TargetHud.java  # 目标信息面板开关（MC 侧绘制在 mc/TargetHud）
-│       └── render/PlayerXray.java # 玩家透视开关（MC 侧绘制在 OpenMaverFeatures）
+│       ├── render/PlayerXray.java # 玩家透视开关（MC 侧绘制在 OpenMaverFeatures）
+│       ├── render/Fps.java        # 左上角 FPS 显示开关（MC 侧绘制在 mc/StatsHud）
+│       ├── render/Cps.java        # 左上角 CPS 显示开关（MC 侧绘制在 mc/StatsHud）
 │       └── misc/FakePlayer.java   # 假人玩家开关（MC 侧逻辑在 OpenMaverFeatures）
 ├── inject/                        # 运行期注入器（C++，可选）
 │   └── injector.cpp               # 自研注入器：--re-self / --re-jattach
@@ -47,6 +48,7 @@ OpenMaver/
 │   ├── OpenMaverMod.java          # @Mod 入口
 │   ├── OpenMaverClientHandler.java# 客户端 tick / 渲染事件桥接 + 进入世界启动
 │   ├── OpenMaverHud.java          # 右侧 ModuleList（胶囊列表 + 键位 + 启用动效）
+│   ├── StatsHud.java              # 左上角 FPS 胶囊 + CPS 小方块（灰色毛玻璃）
 │   └── GuiOpenMaverClickGui.java  # 游戏内 ClickGUI（分类 / 搜索 / 展开设置）
 ├── mcstubs/                       # 编译 mc/ 用的 API stub（仅编译期，不进 jar）
 ├── tools/McpReobf.java            # MCP -> SRG reobf（Forge 1.8.9 运行期需要）
@@ -209,29 +211,36 @@ java -Djava.library.path=build/lib \
 
 按需求，OpenMaver 的核心**延迟到玩家真正进入世界**时才启动，并给出可视反馈：
 
-- **ModuleList** `mc/OpenMaverHud.java`：屏幕右侧垂直堆叠的**已启用功能**列表，
-  顶部固定显示 Maver Logo。每行是透明白色圆角底板，右边缘严格对齐，宽度随文字
-  长短变化；模块名使用深色彩虹缓慢流动 + 呼吸式闪烁，右侧键位以同色弱化显示；
-  禁用功能不会出现在列表中。每行拥有独立动画状态：启用时从右侧平滑淡入，
-  禁用时先淡出再移除，剩余行平滑上移换位。所有动画基于 `System.nanoTime()`，与帧率无关。
+- **ModuleList** `mc/OpenMaverHud.java`：屏幕右侧垂直堆叠的**已启用功能**列表。
+  每行是深色毛玻璃圆角卡片，右边缘严格对齐，宽度随文字长短变化；模块名与键位统一使用
+  白色（键位更淡），右侧是一枚白色竖条；禁用功能不会出现在列表中。每行拥有独立
+  动画状态：启用时从右侧平滑淡入，禁用时先淡出再移除，剩余行平滑上移换位。
+  所有动画基于 `System.nanoTime()`，与帧率无关。ClickGUI 打开时隐藏该列表，
+  避免被全屏毛玻璃糊成一层残影。
 - **Target HUD** `mc/TargetHud.java`：准星右侧的小卡片。**只有准星真正命中
   `EntityLivingBase` 时才显示**，移开准星立即隐藏；只保留正方形头像（玩家真实皮肤 /
-  无头像时使用 Steve）、名称与细血条，血条颜色随血量从绿到橙再到深红渐变，
-  无头像外圈。
+  无头像时使用 Steve）、名称与细血条，卡片背景使用与功能栏相同的局部毛玻璃，
+  血条颜色随血量从绿到橙再到深红渐变，无头像外圈。
+- **FPS / CPS 统计** `mc/StatsHud.java`：默认显示在**屏幕左上角**。
+  最左侧是灰色毛玻璃的小正方形 CPS 面板（上下两行分别显示左键 / 右键最近 1 秒的 CPS），
+  右侧紧挨一枚同样灰色毛玻璃的圆角 FPS 胶囊。两者都模糊自身覆盖的画面，
+  与 ModuleList / 右下角提示共用 `GuiBlur`；由 `render.fps` 与 `render.cps`
+  两个模块控制，默认都开启。
 - **Player X-Ray** `mc/OpenMaverFeatures.renderPlayerXray`：玩家透视。只扫描
   `EntityPlayer`，关闭深度测试后通过游戏自身的 `RenderManager` 渲染完整皮肤模型，
   让玩家皮肤、装备和手持物品穿墙可见；模型外侧再绘制 1.5px 描边。
   描边颜色默认按目标血量（绿 / 琥珀 / 红）变化，也可固定为橙 / 青 / 紫 / 红。
 - **右下角提示**：进入世界时弹出「Loaded successfully, x features enabled!」提示，
-  纯灰色背景 + 底部白色倒计时进度条，从屏幕右侧滑入、停留约 2.4 秒后
-  先渐变为红色，再滑出淡出；连续触发时多张提示会以**卡片栈**形式从下往上叠加，
-  每张卡片拥有独立时间线，旧卡片退场后其余卡片平滑补位。
+  灰色透明毛玻璃卡片（只模糊卡片自身覆盖的那块画面）+ 底部白色倒计时进度条，
+  从屏幕右侧滑入、停留约 2.4 秒后滑出淡出；连续触发时多张提示会以**卡片栈**形式
+  从下往上叠加，每张卡片拥有独立时间线，旧卡片退场后其余卡片平滑补位。
   游戏内启用 / 禁用功能时也会弹出「xxx enabled / xxx disabled」。
-  绘制在 `RenderGameOverlayEvent.Post`（`type == ALL`）里，ClickGUI 内也会同步显示。
+  绘制在 `RenderGameOverlayEvent.Post`（`type == ALL`）里，ClickGUI 内由 GUI 自己绘制。
 - **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关。
-  纯灰色面板 + 中性灰描边，左侧 Combat / Movement / Render / Player / Misc 分类栏，
-  以及 SYSTEM → Configs / Statistics / Settings 页面（配置概览、模块统计与客户端设置），
-  顶部搜索（`Ctrl+K`）、ALL / ENABLED / DISABLED 筛选与排序；点击行展开设置在
+  纯灰色面板 + 中性灰描边，全部强调色统一为白色；左侧 Combat / Movement / Render /
+  Player / Misc 分类栏，以及 SYSTEM → Configs / Statistics / Settings 页面
+  （配置概览、模块统计与客户端设置），顶部搜索（`Ctrl+K`）、ALL / ENABLED /
+  DISABLED 筛选与排序；点击行展开设置在
   `Gui.drawRect` 自绘的滑块 / 下拉 / 复选框中直接调参。分类、SYSTEM 入口、筛选页签、
   排序、模块行、搜索框、开关与全部设置控件都有统一的悬停 / 激活 / 按压过渡，
   滚动条与列表内容共用同一条平滑滚动值。模块列表来自
@@ -338,27 +347,17 @@ IO 失败只记录一次并自动停用 debug。
   `Timer`，并可能触发 `AimDuplicateLook` / `AimModulo360`，因此默认关闭；
   `legit/balanced` 建议保持 `LEGIT AIM`。
 
-### Scaffold 自动搭路
+### FPS / CPS 统计 HUD
 
-- 配置路径：`movement.scaffold`，默认关闭，默认键位 **G**。
-- 行为：手持可放置方块且未打开任何界面时，自动检查脚下/运动方向前方的空气格，
-  在六个相邻面中寻找安全可见的实心支撑面。`legit/balanced` 下只使用玩家真实准星：
-  通过 `EntityRenderer.getMouseOver(1.0F)` 刷新 `objectMouseOver`，只有命中位置和
-  `sideHit` 完全匹配时才通过游戏自身的 `rightClickMouse` 放置。
-- 稳定性：每个 tick 最多放置一次，失败不补发；打开背包、聊天、ESC 菜单、
-  关闭模块、死亡、空手或左键挖掘时立即停止并重置冷却。放置结束后无论
-  `AUTO ROTATE` 如何都会恢复临时 rotation 与 `objectMouseOver`。
-- 设置项（ClickGUI 中展开 Scaffold）：
-  - `DELAY`：`scaffold.delayTicks`，1~10 tick，默认 `2`。
-  - `REQUIRE BACKWARD`：`scaffold.requireBackward`，默认 `true`，只向后移动时工作。
-  - `AUTO JUMP`：`scaffold.autoJump`，默认 `false`，脚前有可跨越障碍时跳跃。
-  - `AUTO ROTATE`：`scaffold.autoRotate`，默认 `true`；`legit/balanced` 下被抑制，
-    `aggressive` 下才允许临时转向目标面并在放置后恢复。
-  - `LEGIT AIM`：`scaffold.legitAim`，默认 `true`，只用真实准星放置，
-    不自动转视角、不补发飞行包。`legit/balanced` 下即使关闭也会被强制回退到此路径。
-  - `PACKET ROTATION`：`scaffold.packetRotation`，默认 `false`，实验性 C05 补发；
-    `legit/balanced` 下被强制抑制，会触发 Grim `Timer` / `Aim` 类检查。
-- 实现说明：`design/SCAFFOLD_HANDOFF.md` 记录了反射/SRG 名称与实现约束。
+- 配置路径：`render.fps` / `render.cps`，**默认开启**，位置固定在左上角。
+- 布局：CPS 小正方形在最左，FPS 圆角胶囊在它右边。
+- 视觉：灰色调局部毛玻璃（与右下角提示同一套 `GuiBlur` 参数）+ 白色文字。
+- FPS：统计每秒 `RenderGameOverlayEvent.Post` 的帧数，满 1 秒结算一次；
+  首个统计窗口完成前显示 `FPS --`。
+- CPS：每帧轮询鼠标左 / 右键的按下边沿，分别显示 `L`（左键）/ `R`（右键）
+  最近 1 秒内的点击次数，数值会随时间自然回落。
+- 实现说明：绘制在 `mc/StatsHud.java`，由 `OpenMaverHud` 在
+  `RenderGameOverlayEvent.Post` 中调用；ClickGUI 打开时随其他 HUD 一起隐藏。
 
 ### Target HUD 目标信息面板
 
@@ -404,7 +403,7 @@ IO 失败只记录一次并自动停用 debug。
   关闭模块、打开 GUI、玩家死亡或切换到非方块物品时恢复原版延迟。
 - profile 行为：
   - `legit`：完全不修改 `rightClickDelayTimer`。
-  - `balanced`：允许加速，但最低保留 **2 tick** 冷却。与 Scaffold/GodBridge
+  - `balanced`：允许加速，但最低保留 **2 tick** 冷却。与 GodBridge
     同时启用时会让位（不修改 timer），避免把 timer 卡在 2 导致搭路永远等不到 0。
   - `aggressive` / 关闭 bypass：按 `DELAY` 设置，允许压到 0。
 - 设置项（ClickGUI 中展开 FastPlace）：

@@ -76,29 +76,29 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     // 配色
     // ------------------------------------------------------------------
 
-    private static final int TEXT = 0xFFF1F6FE;
+    private static final int TEXT = 0xFFFFFFFF;
     private static final int TEXT_2 = 0xFFA9B5C6;
     private static final int MUTED = 0xFF6E7A8C;
     private static final int FAINT = 0xFF525C6B;
-    private static final int CYAN = 0xFF5CE1FF;
-    private static final int GREEN = 0xFF5BF0B0;
+    /** 全界面只使用白色强调；不再出现青 / 紫 / 红 / 绿。 */
+    private static final int ACCENT = 0xFFFFFFFF;
 
     /** 中性灰色边缘，用于外框、顶部高光与轻微外发光。 */
     private static final int GLASS_EDGE = 0xFFBFBFBF;
     private static final int GLASS_EDGE_BRIGHT = 0xFFEDEDED;
 
-    /** 纯灰色面板 / 分类栏 / 卡片。 */
-    private static final int PANEL_SOLID = 0xFF2E2E2E;
-    private static final int RAIL_SOLID = 0xFF272727;
-    private static final int CARD_FILL = 0xFF383838;
-    private static final int CARD_HOVER = 0xFF444444;
-    private static final int CARD_OPEN = 0xFF3E3E3E;
-    private static final int FIELD_SOLID = 0xFF232323;
-    private static final int FIELD_HOVER = 0xFF2D2D2D;
+    /** 纯灰色面板 / 分类栏 / 卡片。面板与分类栏略带透明，让底层模糊透出来。 */
+    private static final int PANEL_SOLID = 0xC82E2E2E;
+    private static final int RAIL_SOLID = 0xD0272727;
+    private static final int CARD_FILL = 0xE6383838;
+    private static final int CARD_HOVER = 0xEA444444;
+    private static final int CARD_OPEN = 0xE83E3E3E;
+    private static final int FIELD_SOLID = 0xE6232323;
+    private static final int FIELD_HOVER = 0xEA2D2D2D;
 
 
-    private static final int SLIDER_VALUE = 0xFFA8DCEB;
-    private static final int KEYCAP_TEXT = 0xFF9FAABB;
+    private static final int SLIDER_VALUE = 0xFFFFFFFF;
+    private static final int KEYCAP_TEXT = 0xFFD5D9DF;
 
     private static final float MIN_LOGO_SCALE = 0.35F;
     private static final float MAX_LOGO_SCALE = 1.25F;
@@ -110,15 +110,15 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     private static final Category[] CATEGORIES = {
         new Category("combat", "Combat", "Target acquisition, reach and attack timing.",
-                0xFF5CE1FF, 0xFF3AB8FF),
+                ACCENT, ACCENT),
         new Category("movement", "Movement", "Velocity, sprint and travel assistance.",
-                0xFF6E9BFF, 0xFF4C7BFF),
+                ACCENT, ACCENT),
         new Category("render", "Render", "ESP, overlays and visual clarity.",
-                0xFFB18CFF, 0xFF8C6BFF),
+                ACCENT, ACCENT),
         new Category("player", "Player", "Inventory, tools and survival helpers.",
-                0xFF5BF0B0, 0xFF2FD99A),
+                ACCENT, ACCENT),
         new Category("misc", "Misc", "Utility, exploit and quality-of-life.",
-                0xFFFFC46B, 0xFFFF9F45)
+                ACCENT, ACCENT)
     };
 
     /** 左栏 SYSTEM 入口（对应设计稿的 Configs / Statistics / Settings）。 */
@@ -337,8 +337,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 addReachSettings(entry);
             } else if ("FastPlace".equals(module.getName())) {
                 addFastPlaceSettings(entry);
-            } else if ("Scaffold".equals(module.getName())) {
-                addScaffoldSettings(entry);
             } else if ("GodBridge".equals(module.getName())) {
                 addGodBridgeSettings(entry);
             } else if ("FakePlayer".equals(module.getName())) {
@@ -553,33 +551,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }));
     }
 
-    private void addScaffoldSettings(Entry entry) {
-        entry.settings.add(Setting.slider("DELAY", 1.0F, 10.0F, 1.0F, 0, "t", new Binding() {
-            public double get() { return OpenMaverFeatures.getScaffoldDelayTicks(); }
-            public void set(double value) { OpenMaverFeatures.setScaffoldDelayTicks((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.check("REQUIRE BACKWARD", new Binding() {
-            public double get() { return OpenMaverFeatures.isScaffoldRequireBackward() ? 1.0D : 0.0D; }
-            public void set(double value) { OpenMaverFeatures.setScaffoldRequireBackward(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("AUTO JUMP", new Binding() {
-            public double get() { return OpenMaverFeatures.isScaffoldAutoJump() ? 1.0D : 0.0D; }
-            public void set(double value) { OpenMaverFeatures.setScaffoldAutoJump(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("AUTO ROTATE", new Binding() {
-            public double get() { return OpenMaverFeatures.isScaffoldAutoRotate() ? 1.0D : 0.0D; }
-            public void set(double value) { OpenMaverFeatures.setScaffoldAutoRotate(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("LEGIT AIM", new Binding() {
-            public double get() { return OpenMaverFeatures.isScaffoldLegitAim() ? 1.0D : 0.0D; }
-            public void set(double value) { OpenMaverFeatures.setScaffoldLegitAim(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("PACKET ROTATION", new Binding() {
-            public double get() { return OpenMaverFeatures.isScaffoldPacketRotation() ? 1.0D : 0.0D; }
-            public void set(double value) { OpenMaverFeatures.setScaffoldPacketRotation(value > 0.5D); }
-        }));
-    }
-
     private void addGodBridgeSettings(Entry entry) {
         entry.settings.add(Setting.slider("DELAY", 0.0F, 4.0F, 1.0F, 0, "t", new Binding() {
             public double get() { return OpenMaverFeatures.getGodBridgeDelayTicks(); }
@@ -629,12 +600,15 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private void drawGui() {
         float reveal = easeOutCubic(openProgress);
         GlColor.restore();
+
+        // 背景：先抓取世界画面做高斯模糊，再叠一层轻薄的深色，形成毛玻璃景深。
+        ScaledResolution resolution = new ScaledResolution(this.mc);
+        GuiBlur.beginFrame(this.width, this.height, resolution.getScaleFactor());
+        GuiBlur.draw(0, 0, this.width, this.height, 0.0F, 0x0C0F15, 0.34F, reveal);
+
         GL11.glPushMatrix();
         GL11.glTranslatef(0.0F, (1.0F - reveal) * 7.0F, 0.0F);
 
-        // 压暗实时世界，面板本身保持干净的纯色。
-        Gui.drawRect(0, 0, this.width, this.height,
-                withAlpha(0x000000, Math.round(0x74 * reveal)));
         drawPanelShadow(reveal);
         drawPanel(reveal);
 
@@ -657,7 +631,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     // 面板
     // ------------------------------------------------------------------
 
-    /** 面板投影 + 一圈非常淡的青色外发光，让面板从世界里浮起来。 */
+    /** 面板投影 + 一圈非常淡的白色外发光，让面板从世界里浮起来。 */
     private void drawPanelShadow(float reveal) {
         roundRect(panelX + 8, panelY + 20, panelW - 16, panelH, RADIUS + 6,
                 withAlpha(0x000000, Math.round(0x12 * reveal)));
@@ -764,10 +738,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int thumbGlow = 6 + Math.round(logoHi * 2.0F);
         fillCircle(thumbX, sliderY + 2, thumbGlow, withAlpha(accent, Math.round(0x18 + 0x10 * logoHi)));
         fillCircle(thumbX, sliderY + 2, 4, withAlpha(accent, Math.round(0x40 + 0x24 * logoHi)));
-        fillCircle(thumbX, sliderY + 2, 2, 0xFFEAFBFF);
-
-        micro(font, "CATEGORIES", x + 18, y + 72, FAINT);
-        micro(font, "05", x + railW - 24, y + 72, 0xFF454E5C);
+        fillCircle(thumbX, sliderY + 2, 2, 0xFFFFFFFF);
 
         int navY = y + RAIL_NAV_Y;
         for (int i = 0; i < CATEGORIES.length; i++) {
@@ -821,7 +792,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         // SYSTEM 入口：Configs / Statistics / Settings（高度不足时省略）
         if (panelH >= RAIL_SYS_MIN_H) {
             micro(font, "SYSTEM", x + 18, y + RAIL_SYS_LABEL_Y, FAINT);
-            micro(font, "03", x + railW - 24, y + RAIL_SYS_LABEL_Y, 0xFF454E5C);
             for (int i = 0; i < SYSTEM_ITEMS.length; i++) {
                 SystemItem item = SYSTEM_ITEMS[i];
                 boolean active = item.id.equals(systemPage);
@@ -840,20 +810,20 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 }
                 if (on > 0.01F) {
                     roundRect(itemX, itemY, itemW, itemH, 7,
-                            withAlpha(CYAN, Math.round(0x24 * on)));
+                            withAlpha(ACCENT, Math.round(0x24 * on)));
                     roundRect(itemX, itemY, itemW * 3 / 4, itemH, 7,
-                            withAlpha(CYAN, Math.round(0x12 * on)));
+                            withAlpha(ACCENT, Math.round(0x12 * on)));
                     roundRect(itemX - 1, itemY + 4, 3, itemH - 8, 2,
-                            withAlpha(CYAN, Math.round(0x40 * on)));
+                            withAlpha(ACCENT, Math.round(0x40 * on)));
                     roundRect(itemX, itemY + 5, 2, itemH - 10, 1,
-                            withAlpha(CYAN, Math.round(0xF0 * on)));
+                            withAlpha(ACCENT, Math.round(0xF0 * on)));
                 }
                 if (anim.press > 0.01F) {
                     roundRect(itemX, itemY, itemW, itemH, 7,
                             withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
                 }
 
-                int iconColor = blendColor(0xFF6B7686, CYAN, on);
+                int iconColor = blendColor(0xFF6B7686, ACCENT, on);
                 iconColor = blendColor(iconColor, 0xFFB6C2D4, hover * 0.7F);
                 drawSystemIcon(item.id, x + 22, itemY + 7, iconColor);
                 int textColor = blendColor(0xFF98A3B4, 0xFFF4FBFF, on);
@@ -862,13 +832,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             }
         }
 
-        // 栏底部信息（过矮时省略，避免和 SYSTEM 入口重叠）
-        if (panelH >= 332) {
-            micro(font, "FORGE 1.8.9", x + 16, y + panelH - 12, 0xFF454E5C);
-            String build = "v2.0.0";
-            micro(font, build, x + railW - 16 - microWidth(font, build), y + panelH - 12,
-                    0xFF4A5361);
-        }
     }
 
     // ------------------------------------------------------------------
@@ -882,11 +845,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int x = mainX + 18;
         int y = panelY;
 
-        micro(font, "MODULES", x, y + 10, FAINT);
-        micro(font, "/", x + microWidth(font, "MODULES") + 6, y + 10, 0xFF39414E);
-        micro(font, cat.name.toUpperCase(Locale.ROOT),
-                x + microWidth(font, "MODULES") + 16, y + 10, 0xFF7C8798);
-
         String title = cat.name;
         osBold(font, title, x, y + 21, TEXT);
         int titleW = osBoldWidth(font, title);
@@ -899,10 +857,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         micro(font, countText, chipX + (chipW - microWidth(font, countText)) / 2,
                 y + 24, withAlpha(accent, 0xE8));
 
-        micro(font, ellipsizeMicro(font, cat.description, Math.max(80, searchX - x - 10)),
-                x, y + 40, MUTED);
-
-        // 搜索框：内凹玻璃 + 聚焦时的青色光圈
+        // 搜索框：内凹玻璃 + 聚焦时的白色光圈
         boolean focus = searchFocused;
         boolean searchHovered = isHovered(lastMouseX, lastMouseY,
                 searchX, searchY, searchW, searchH);
@@ -911,14 +866,14 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         float searchHover = searchAnim.hover * (1.0F - focusAmt);
         if (focusAmt > 0.01F) {
             roundRect(searchX - 2, searchY - 2, searchW + 4, searchH + 4, 9,
-                    withAlpha(CYAN, Math.round(0x18 * focusAmt)));
+                    withAlpha(ACCENT, Math.round(0x18 * focusAmt)));
         }
         if (searchAnim.press > 0.01F) {
             roundRect(searchX, searchY, searchW, searchH, 7,
                     withAlpha(0xFFFFFF, Math.round(0x0A * searchAnim.press)));
         }
         int searchBorder = blendColor(withAlpha(0xFFFFFF, 0x14),
-                withAlpha(CYAN, 0x5A), focusAmt);
+                withAlpha(ACCENT, 0x5A), focusAmt);
         searchBorder = blendColor(searchBorder, withAlpha(0xFFFFFF, 0x26), searchHover * 0.6F);
         roundRect(searchX, searchY, searchW, searchH, 7, searchBorder);
         roundRect(searchX + 1, searchY + 1, searchW - 2, searchH - 2, 6,
@@ -926,27 +881,22 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         Gui.drawRect(searchX + 6, searchY + 1, searchX + searchW - 6, searchY + 2,
                 withAlpha(0xFFFFFF, Math.round(0x0A + 0x0A * focusAmt + 0x04 * searchHover)));
         drawSearchIcon(searchX + 7, searchY + 7,
-                blendColor(0xFF7C8798, CYAN, focusAmt));
+                blendColor(0xFF7C8798, ACCENT, focusAmt));
 
         String shown = searchQuery;
         if (shown.isEmpty()) {
             micro(font, ellipsizeMicro(font, "Search modules...", searchW - 30),
                     searchX + 20, searchY + 7, 0xFF5E6878);
             if (focus && ((System.currentTimeMillis() - openedAt) / 500L) % 2L == 0L) {
-                Gui.drawRect(searchX + 20, searchY + 7, searchX + 21, searchY + 15, CYAN);
+                Gui.drawRect(searchX + 20, searchY + 7, searchX + 21, searchY + 15, ACCENT);
             }
         } else {
             int max = searchW - 26;
             micro(font, ellipsizeMicro(font, shown, max), searchX + 20, searchY + 7, TEXT_2);
             if (focus && ((System.currentTimeMillis() - openedAt) / 500L) % 2L == 0L) {
                 int caretX = searchX + 20 + microWidth(font, ellipsizeMicro(font, shown, max));
-                Gui.drawRect(caretX + 1, searchY + 7, caretX + 2, searchY + 15, CYAN);
+                Gui.drawRect(caretX + 1, searchY + 7, caretX + 2, searchY + 15, ACCENT);
             }
-        }
-        // 快捷键提示（空间不足时不画）
-        if (!focus && searchQuery.isEmpty() && searchW >= 176) {
-            micro(font, "CTRL K", searchX + searchW - 9 - microWidth(font, "CTRL K"),
-                    searchY + 7, 0xFF4B5461);
         }
     }
 
@@ -959,24 +909,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int x = mainX + 18;
         int y = panelY;
 
-        micro(font, "SYSTEM", x, y + 10, FAINT);
-        micro(font, "/", x + microWidth(font, "SYSTEM") + 6, y + 10, 0xFF39414E);
-        micro(font, item.name.toUpperCase(Locale.ROOT),
-                x + microWidth(font, "SYSTEM") + 16, y + 10, 0xFF7C8798);
-
         osBold(font, item.name, x, y + 21, TEXT);
-        int descMax = Math.max(60, panelX + panelW - 18 - 84 - x);
-        micro(font, ellipsizeMicro(font, item.description, descMax), x, y + 40, MUTED);
-
-        String status = "configs".equals(item.id) ? "SAVED"
-                : "stats".equals(item.id) ? "LIVE" : "READY";
-        int statusW = microWidth(font, status);
-        int pillW = statusW + 18;
-        int pillX = panelX + panelW - 18 - pillW;
-        int pillY = y + 20;
-        roundRect(pillX, pillY, pillW, 16, 6, withAlpha(CYAN, 0x18));
-        fillCircle(pillX + 7, pillY + 8, 2, withAlpha(CYAN, 0xDD));
-        micro(font, status, pillX + 12, pillY + 4, withAlpha(CYAN, 0xDD));
     }
 
     private void drawSystemPage(FontRenderer font) {
@@ -997,19 +930,12 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int gap = 10;
         int cardW = (w - gap * 2) / 3;
         int cardH = 70;
-        drawStatCard(font, "MODULES", entries.size(), "loaded",
-                x, y, cardW, cardH);
-        drawStatCard(font, "ENABLED", enabledCount(), "active now",
-                x + cardW + gap, y, cardW, cardH);
-        drawStatCard(font, "CATEGORIES", CATEGORIES.length, "in this build",
+        drawStatCard(font, "MODULES", entries.size(), x, y, cardW, cardH);
+        drawStatCard(font, "ENABLED", enabledCount(), x + cardW + gap, y, cardW, cardH);
+        drawStatCard(font, "CATEGORIES", CATEGORIES.length,
                 x + (cardW + gap) * 2, y, cardW, cardH);
 
-        int labelY = y + cardH + 16;
-        micro(font, "BY CATEGORY", x, labelY, FAINT);
-        String right = "ENABLED / TOTAL";
-        micro(font, right, x + w - microWidth(font, right), labelY, 0xFF454E5C);
-
-        int rowY = labelY + 15;
+        int rowY = y + cardH + 18;
         int stride = Math.min(30, Math.max(20, (y + h - rowY) / CATEGORIES.length));
         int rowH = stride - 4;
         for (int i = 0; i < CATEGORIES.length; i++) {
@@ -1043,22 +969,21 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
     }
 
-    private void drawStatCard(FontRenderer font, String label, int value, String note,
+    private void drawStatCard(FontRenderer font, String label, int value,
             int x, int y, int w, int h) {
         roundRect(x, y, w, h, 9, withAlpha(0xFFFFFF, 0x12));
         roundRect(x + 1, y + 1, w - 2, h - 2, 8, CARD_FILL);
         Gui.drawRect(x + 9, y + 1, x + w - 9, y + 2, withAlpha(0xFFFFFF, 0x12));
 
-        micro(font, ellipsizeMicro(font, label, w - 24), x + 12, y + 11, FAINT);
-        osBold(font, String.valueOf(value), x + 12, y + 22, TEXT);
-        micro(font, ellipsizeMicro(font, note, w - 24), x + 12, y + 47, MUTED);
+        micro(font, ellipsizeMicro(font, label, w - 24), x + 12, y + 14, FAINT);
+        osBold(font, String.valueOf(value), x + 12, y + 28, TEXT);
 
         if (w >= 90) {
             int ringX = x + w - 24;
             int ringY = y + 34;
-            fillCircle(ringX, ringY, 11, withAlpha(CYAN, 0x12));
-            ringCircle(ringX, ringY, 8, withAlpha(CYAN, 0x55));
-            fillCircle(ringX, ringY, 3, withAlpha(CYAN, 0xCC));
+            fillCircle(ringX, ringY, 11, withAlpha(ACCENT, 0x12));
+            ringCircle(ringX, ringY, 8, withAlpha(ACCENT, 0x55));
+            fillCircle(ringX, ringY, 3, withAlpha(ACCENT, 0xCC));
         }
     }
 
@@ -1068,60 +993,33 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         roundRect(x + 1, y + 1, w - 2, cardH - 2, 8, CARD_FILL);
         Gui.drawRect(x + 12, y + 1, x + w - 12, y + 2, withAlpha(0xFFFFFF, 0x12));
 
-        micro(font, "ACTIVE PROFILE", x + 14, y + 12, FAINT);
-        String saved = "SAVED";
-        int savedW = microWidth(font, saved);
-        micro(font, saved, x + w - 14 - savedW, y + 12, GREEN);
-        fillCircle(x + w - 19 - savedW, y + 15, 2, withAlpha(GREEN, 0xCC));
-
-        os(font, "default", x + 14, y + 25, TEXT);
-        os(font, ".jsonc", x + 14 + osWidth(font, "default"), y + 25, FAINT);
+        int titleY = y + (cardH - 26) / 2;
+        os(font, "default", x + 14, titleY, TEXT);
+        os(font, ".jsonc", x + 14 + osWidth(font, "default"), titleY, FAINT);
 
         int barW = w - 28;
-        int barY = y + 49;
+        int barY = y + cardH - 22;
         roundRect(x + 14, barY, barW, 5, 2, withAlpha(0xFFFFFF, 0x12));
         int enabled = enabledCount();
         int total = entries.size();
         if (enabled > 0 && total > 0) {
             int fill = Math.max(1, barW * enabled / total);
-            roundRect(x + 14, barY, fill, 5, 2, withAlpha(CYAN, 0xD8));
+            roundRect(x + 14, barY, fill, 5, 2, withAlpha(ACCENT, 0xD8));
             roundRect(x + 14, barY, fill, 2, 1, withAlpha(0xFFFFFF, 0x30));
-            fillCircle(x + 13 + fill, barY + 2, 3, withAlpha(CYAN, 0x30));
+            fillCircle(x + 13 + fill, barY + 2, 3, withAlpha(ACCENT, 0x30));
         }
-        micro(font, String.valueOf(enabled), x + 14, y + 60, 0xFFDCE7F5);
-        micro(font, "active", x + 14 + microWidth(font, String.valueOf(enabled)) + 4,
-                y + 60, MUTED);
-        String totalText = total + " total";
-        micro(font, totalText, x + w - 14 - microWidth(font, totalText), y + 60,
-                0xFF596272);
-
-        int labelY = y + cardH + 16;
-        micro(font, "STORAGE", x, labelY, FAINT);
-        String files = "2 FILES";
-        micro(font, files, x + w - microWidth(font, files), labelY, 0xFF454E5C);
 
         int rowH = h >= 250 ? 44 : 38;
         int stride = rowH + 6;
-        int rowY = labelY + 14;
-        drawConfigFile(font, x, rowY, w, rowH, "default.jsonc",
-                "Bundled defaults · loaded at launch", "JSONC");
-        drawConfigFile(font, x, rowY + stride, w, rowH, "openmaver.properties",
-                "Runtime overrides · saved by ClickGUI", "PROPS");
-        micro(font, "Edit files and relaunch to apply.", x, rowY + stride * 2, FAINT);
+        int rowY = y + cardH + 16;
+        drawConfigFile(font, x, rowY, w, rowH, "default.jsonc");
+        drawConfigFile(font, x, rowY + stride, w, rowH, "openmaver.properties");
     }
 
-    private void drawConfigFile(FontRenderer font, int x, int y, int w, int h,
-            String name, String description, String tag) {
+    private void drawConfigFile(FontRenderer font, int x, int y, int w, int h, String name) {
         roundRect(x, y, w, h, 8, withAlpha(0xFFFFFF, 0x07));
-        roundRect(x, y + 2, 2, h - 4, 1, withAlpha(CYAN, 0x66));
-        os(font, name, x + 12, y + (h >= 44 ? 9 : 7), TEXT);
-        micro(font, description, x + 12, y + (h >= 44 ? 26 : 22), MUTED);
-
-        int tagW = microWidth(font, tag) + 12;
-        int tagX = x + w - 12 - tagW;
-        int tagY = y + (h - 15) / 2;
-        roundRect(tagX, tagY, tagW, 15, 5, withAlpha(CYAN, 0x14));
-        micro(font, tag, tagX + 6, tagY + 3, withAlpha(CYAN, 0xCC));
+        roundRect(x, y + 2, 2, h - 4, 1, withAlpha(ACCENT, 0x66));
+        os(font, name, x + 12, y + (h - 11) / 2 + 1, TEXT);
     }
 
     private int systemSettingsRowH() {
@@ -1132,19 +1030,14 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private void drawSettingsPage(FontRenderer font, int x, int y, int w, int h) {
         int rowH = systemSettingsRowH();
         int gap = 8;
-        drawSettingsRow(font, x, y, w, rowH, 0, "GRIM BYPASS",
-                "Safety limits shared by combat modules");
-        drawSettingsRow(font, x, y + rowH + gap, w, rowH, 1, "DEBUG LOG",
-                "Write rotation and packet audit to logs");
-        drawSettingsRow(font, x, y + (rowH + gap) * 2, w, rowH, 2, "BYPASS PROFILE",
-                "Click to cycle LEGIT / BALANCED / AGGRESSIVE");
-        drawSettingsRow(font, x, y + (rowH + gap) * 3, w, rowH, 3, "GUI KEY",
-                "Open this menu in game");
-        micro(font, "Changes apply immediately.", x, y + (rowH + gap) * 4 + 6, FAINT);
+        drawSettingsRow(font, x, y, w, rowH, 0, "GRIM BYPASS");
+        drawSettingsRow(font, x, y + rowH + gap, w, rowH, 1, "DEBUG LOG");
+        drawSettingsRow(font, x, y + (rowH + gap) * 2, w, rowH, 2, "BYPASS PROFILE");
+        drawSettingsRow(font, x, y + (rowH + gap) * 3, w, rowH, 3, "GUI KEY");
     }
 
     private void drawSettingsRow(FontRenderer font, int x, int y, int w, int rowH,
-            int index, String label, String description) {
+            int index, String label) {
         long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
         boolean on = index == 0 ? OpenMaverFeatures.isBypassEnabled()
                 : index == 1 && OpenMaverFeatures.isDebugEnabled();
@@ -1155,14 +1048,13 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         roundRect(x, y, w, rowH, 8,
                 withAlpha(0xFFFFFF, Math.round(0x08 + 0x07 * hover)));
         roundRect(x, y + 2, 2, rowH - 4, 1,
-                withAlpha(CYAN, Math.round(0x44 + 0x40 * hover)));
+                withAlpha(ACCENT, Math.round(0x44 + 0x40 * hover)));
         if (anim.press > 0.01F) {
             roundRect(x, y, w, rowH, 8,
                     withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
         }
-        os(font, label, x + 14, y + 10, blendColor(TEXT, 0xFFFFFFFF, hover * 0.6F));
-        micro(font, ellipsizeMicro(font, description, Math.max(40, w - 28 - 80)),
-                x + 14, y + 28, blendColor(MUTED, TEXT_2, hover * 0.65F));
+        os(font, label, x + 14, y + (rowH - 11) / 2 + 2,
+                blendColor(TEXT, 0xFFFFFFFF, hover * 0.6F));
 
         int right = x + w - 14;
         int controlY = y + (rowH - 16) / 2;
@@ -1174,9 +1066,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             String name = OpenMaverFeatures.getBypassProfileName().toUpperCase(Locale.ROOT);
             int pillW = microWidth(font, name) + 16;
             roundRect(right - pillW, controlY, pillW, 16, 6,
-                    withAlpha(CYAN, Math.round(0x18 + 0x14 * hover)));
+                    withAlpha(ACCENT, Math.round(0x18 + 0x14 * hover)));
             micro(font, name, right - pillW + 8, controlY + 4,
-                    withAlpha(CYAN, Math.round(0xEE)));
+                    withAlpha(ACCENT, Math.round(0xEE)));
         } else {
             String value = "RSHIFT";
             int valueW = microWidth(font, value);
@@ -1192,14 +1084,14 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int h = 16;
         float onAmt = anim == null ? (on ? 1.0F : 0.0F) : anim.active;
         float hover = anim == null ? 0.0F : anim.hover * (1.0F - onAmt);
-        int track = blendColor(withAlpha(0xFFFFFF, 0x14), withAlpha(CYAN, 0x66), onAmt);
+        int track = blendColor(withAlpha(0xFFFFFF, 0x14), withAlpha(ACCENT, 0x66), onAmt);
         track = blendColor(track, withAlpha(0xFFFFFF, 0x30), hover * 0.6F);
-        int fill = blendColor(FIELD_SOLID, withAlpha(CYAN, 0x26), onAmt);
-        int knobColor = blendColor(0xFF8A95A6, CYAN, onAmt);
+        int fill = blendColor(FIELD_SOLID, withAlpha(ACCENT, 0x26), onAmt);
+        int knobColor = blendColor(0xFF8A95A6, ACCENT, onAmt);
         int knobX = x + Math.round(8 + (w - 16) * onAmt);
 
         fillCircle(knobX, y + 8, 6 + Math.round(onAmt * 1.0F),
-                withAlpha(CYAN, Math.round(0x18 * onAmt + 0x08 * hover)));
+                withAlpha(ACCENT, Math.round(0x18 * onAmt + 0x08 * hover)));
         roundRect(x, y, w, h, 8, track);
         roundRect(x + 1, y + 1, w - 2, h - 2, 7, fill);
         fillCircle(knobX, y + 8, 4, knobColor);
@@ -1267,7 +1159,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             tx += tabW;
         }
 
-        String sortLabel = "SORT";
         if (listW >= 380) {
             boolean sortHovered = isHovered(lastMouseX, lastMouseY,
                     listX + listW - 110, tabY - 2, 110, 18);
@@ -1281,16 +1172,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 roundRect(listX + listW - 110, tabY - 2, 110, 18, 6,
                         withAlpha(0xFFFFFF, Math.round(0x0A * sortAnim.press)));
             }
-            micro(font, sortLabel, listX + listW - 104, tabY + 7,
-                    blendColor(FAINT, TEXT_2, hover));
-            micro(font, sortAscending ? "A-Z" : "Z-A", listX + listW - 80, tabY + 7,
+            micro(font, sortAscending ? "A-Z" : "Z-A", listX + listW - 46, tabY + 7,
                     blendColor(0xFF9EAABB, TEXT, hover * 0.65F));
-            drawChevron(listX + listW - 68, tabY + 11, false,
+            drawChevron(listX + listW - 30, tabY + 11, false,
                     blendColor(MUTED, 0xFFD8E2F0, hover));
-            int visibleCount = visibleEntries().size();
-            String items = visibleCount == 1 ? "1 ITEM" : visibleCount + " ITEMS";
-            micro(font, items, listX + listW - microWidth(font, items), tabY + 7,
-                    0xFF576170);
         }
     }
 
@@ -1417,10 +1302,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             fillCircle(dotX, dotY, 2, withAlpha(0xFFFFFF, Math.round(0x32 * off)));
         }
 
-        os(font, ellipsizeOs(font, entry.name, w - 100), x + 32, y + 7,
+        os(font, ellipsizeOs(font, entry.name, w - 100), x + 32, y + 13,
                 on ? TEXT : 0xFFB3BCCB);
-        micro(font, ellipsizeMicro(font, entry.meta(), w - 100), x + 32, y + 21,
-                on ? 0xFF8FA2B6 : 0xFF6C7B8D);
 
         // 键帽
         String keybind = entry.keybind();
@@ -1459,7 +1342,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int accent = accentFor(entry);
 
         roundRect(x, y, w, panelH, 8, withAlpha(0xFFFFFF, 0x0C));
-        roundRect(x + 1, y + 1, w - 2, panelH - 2, 7, 0xFF2A2A2A);
+        roundRect(x + 1, y + 1, w - 2, panelH - 2, 7, 0xE62A2A2A);
         // 和上方开关圆点连成一条的强调色细线。
         int connectorX = x - 15;
         roundRect(connectorX, y + 2, 2, panelH - 4, 1, withAlpha(accent, 0x26));
@@ -1517,7 +1400,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     withAlpha(accent, Math.round(0x18 + 0x12 * hi)));
             fillCircle(thumbX, trackY + 2, 4,
                     withAlpha(accent, Math.round(0x40 + 0x28 * hi)));
-            fillCircle(thumbX, trackY + 2, 2, 0xFFF2FDFF);
+            fillCircle(thumbX, trackY + 2, 2, 0xFFFFFFFF);
         } else if (setting.kind == Setting.SELECT) {
             int fieldY = y + 9;
             boolean hovered = isHovered(lastMouseX, lastMouseY, x, fieldY, w, 16);
@@ -1570,9 +1453,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 roundRect(boxX, boxY, box, 4, 3,
                         withAlpha(0xFFFFFF, Math.round(0x30 * on)));
                 drawCheck(boxX + 3, boxY + 6,
-                        withAlpha(0xFF06222D, Math.round(0xFF * on)));
+                        withAlpha(0xFF151515, Math.round(0xFF * on)));
             }
-            int labelColor = blendColor(0xFFAEB9C9, 0xFFE8F3FE, on);
+            int labelColor = blendColor(0xFFAEB9C9, 0xFFFFFFFF, on);
             labelColor = blendColor(labelColor, 0xFFFFFFFF, hover * 0.6F);
             micro(font, setting.label, boxX + 17, y + 10, labelColor);
         }
@@ -1590,15 +1473,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int width = right - left;
         Gui.drawRect(left + width / 5, y, right - width / 5, y + 1,
                 withAlpha(0xFFFFFF, 0x07));
-
-        String modules = systemPage == null
-                ? String.valueOf(entries.size()) + " MODULES" : "SYSTEM";
-        micro(font, modules, left, y + 10, 0xFF545E6D);
-        int dividerX = left + microWidth(font, modules) + 6;
-        fillCircle(dividerX, y + 13, 1, withAlpha(0xFFFFFF, 0x1E));
-        String on = systemPage == null
-                ? enabledCount() + " ENABLED" : currentSystemItem().name.toUpperCase(Locale.ROOT);
-        micro(font, on, dividerX + 7, y + 10, 0xFF7E8A9C);
 
         if (systemPage != null) {
             drawHint(font, right - keycapWidth(font, "RSHIFT") - 6
@@ -1688,7 +1562,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 roundRect(x + 2, rowY + 1, w - 4, 16, 4,
                         withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
             }
-            int textColor = blendColor(TEXT_2, 0xFFEAF6FF, on);
+            int textColor = blendColor(TEXT_2, 0xFFFFFFFF, on);
             textColor = blendColor(textColor, 0xFFFFFFFF, hover * 0.6F);
             micro(font, selectSetting.options[i], x + 9, rowY + 5, textColor);
             if (on > 0.01F) {
@@ -2232,35 +2106,40 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 return CATEGORIES[i].color;
             }
         }
-        return CYAN;
+        return ACCENT;
     }
 
     // ==================================================================
     // 文本
     // ==================================================================
 
+    /** 界面中的所有文本统一小写，包括模块名、分类、设置标签与键帽。 */
+    private static String lower(String text) {
+        return text == null ? null : text.toLowerCase(Locale.ROOT);
+    }
+
     private static void os(FontRenderer font, String text, int x, int y, int color) {
-        OpenSansFont.drawString(font, text, x, y, color, 0.92F);
+        OpenSansFont.drawString(font, lower(text), x, y, color, 0.92F);
     }
 
     private static void osBold(FontRenderer font, String text, int x, int y, int color) {
-        OpenSansFont.drawString(font, "\u00a7l" + text, x, y, color, 1.32F);
+        OpenSansFont.drawString(font, "\u00a7l" + lower(text), x, y, color, 1.32F);
     }
 
     private static int osWidth(FontRenderer font, String text) {
-        return OpenSansFont.getStringWidth(font, text, 0.92F);
+        return OpenSansFont.getStringWidth(font, lower(text), 0.92F);
     }
 
     private static int osBoldWidth(FontRenderer font, String text) {
-        return OpenSansFont.getStringWidth(font, "\u00a7l" + text, 1.32F);
+        return OpenSansFont.getStringWidth(font, "\u00a7l" + lower(text), 1.32F);
     }
 
     private static void micro(FontRenderer font, String text, int x, int y, int color) {
-        OpenSansFont.drawString(font, text, x, y, color, 0.72F);
+        OpenSansFont.drawString(font, lower(text), x, y, color, 0.72F);
     }
 
     private static int microWidth(FontRenderer font, String text) {
-        return OpenSansFont.getStringWidth(font, text, 0.72F);
+        return OpenSansFont.getStringWidth(font, lower(text), 0.72F);
     }
 
     private static String ellipsizeMicro(FontRenderer font, String text, int maxWidth) {

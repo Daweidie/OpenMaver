@@ -48,6 +48,8 @@ public final class TargetHud {
     private static final int MUTED_BORDER = 0x2E333B;
     private static final int TRACK = 0x22262D;
     private static final int GLASS = 0x0D0F13;
+    private static final float GLASS_TINT_STRENGTH = 0.62F;
+    private static final float GLASS_ALPHA = 0.90F;
 
     private static final ResourceLocation STEVE_SKIN =
             new ResourceLocation("textures/entity/steve.png");
@@ -77,6 +79,15 @@ public final class TargetHud {
             reset();
             System.err.println("[OpenMaver] Target HUD disabled: " + error);
         }
+    }
+
+    /** 模块是否开启；HUD 用它决定是否提前抓取毛玻璃背景快照。 */
+    public static boolean isEnabled() {
+        if (failed) {
+            return false;
+        }
+        Module module = ModuleManager.getModule("Target HUD");
+        return module != null && module.isEnabled();
     }
 
     private static void draw(FontRenderer font, ScaledResolution resolution, long now) {
@@ -225,11 +236,13 @@ public final class TargetHud {
         GL11.glTranslatef(cardX, cardY, 0.0F);
         GL11.glScalef(scale, scale, 1.0F);
 
-        // 纯色深底 + 1px 描边
+        // 深色毛玻璃底 + 1px 描边：背景取当前世界画面做局部模糊。
         roundRect(0.0F, 0.0F, CARD_W, CARD_H, CARD_R,
                 color(MUTED_BORDER, 0.85F * alpha));
-        roundRect(1.0F, 1.0F, CARD_W - 2.0F, CARD_H - 2.0F, CARD_R - 1.0F,
-                color(GLASS, 0.92F * alpha));
+        GuiBlur.draw(Math.round(cardX + scale), Math.round(cardY + scale),
+                Math.round(drawW - scale * 2.0F), Math.round(drawH - scale * 2.0F),
+                Math.max(0.0F, (CARD_R - 1.0F) * scale), GLASS,
+                GLASS_TINT_STRENGTH, alpha * GLASS_ALPHA);
 
         drawAvatar(alpha);
 

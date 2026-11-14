@@ -1,5 +1,6 @@
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
+import net.minecraft.client.renderer.GlStateManager;
 import util.Logger;
 
 import org.lwjgl.opengl.GL11;
@@ -30,7 +31,7 @@ public final class MaverLogo {
     public static boolean draw(FontRenderer fallback, int x, int y, int maxWidth, int maxHeight,
             float scale, int fallbackColor) {
         if (!ensureLoaded()) {
-            fallback.drawStringWithShadow("Maver", x, y + 12, fallbackColor);
+            fallback.drawStringWithShadow("maver", x, y + 12, fallbackColor);
             return false;
         }
 
@@ -56,12 +57,13 @@ public final class MaverLogo {
         GL11.glDisable(GL11.GL_DEPTH_TEST);
         GL11.glDisable(GL11.GL_LIGHTING);
         GlColor.set(1.0F, 1.0F, 1.0F, 1.0F);
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId);
+        GlStateManager.bindTexture(textureId);
         int drawX = x + Math.max(0, (maxWidth - width) / 2);
         // This helper derives UVs from the destination size, so use that size
         // for the texture span as well to sample the entire logo when scaled.
         Gui.drawModalRectWithCustomSizedTexture(drawX, y, 0.0F, 0.0F, width, height,
                 width, height);
+        GlStateManager.bindTexture(0);
         GL11.glPopAttrib();
         GlColor.restore();
         return true;
@@ -100,7 +102,7 @@ public final class MaverLogo {
             int unpackAlignment = GL11.glGetInteger(GL11.GL_UNPACK_ALIGNMENT);
             GL11.glPushAttrib(GL11.GL_TEXTURE_BIT);
             textureId = GL11.glGenTextures();
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId);
+            GlStateManager.bindTexture(textureId);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL11.GL_CLAMP);
@@ -109,6 +111,7 @@ public final class MaverLogo {
             GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA, imageWidth, imageHeight,
                     0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels);
             GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, unpackAlignment);
+            GlStateManager.bindTexture(0);
             GL11.glPopAttrib();
             if (textureId == 0) {
                 throw new IllegalStateException("OpenGL did not allocate a texture for the logo");

@@ -36,6 +36,10 @@ public class GL11 {
     public static final int GL_TEXTURE_WRAP_T = 0x2803;
     public static final int GL_LINEAR = 0x2601;
     public static final int GL_CLAMP = 0x2900;
+    public static final int GL_CLAMP_TO_EDGE = 0x812F;
+    public static final int GL_VIEWPORT_BIT = 0x00000800;
+    public static final int GL_SCISSOR_BIT = 0x00001000;
+    public static final int GL_ALPHA_TEST = 0x0BC0;
     public static final int GL_VERTEX_ARRAY = 0x8074;
     public static final int GL_COLOR_ARRAY = 0x8076;
     public static final int GL_TEXTURE_COORD_ARRAY = 0x8078;
@@ -49,6 +53,11 @@ public class GL11 {
     public static void glTranslatef(float x, float y, float z) {}
     public static void glScalef(float x, float y, float z) {}
     public static void glScissor(int x, int y, int width, int height) {}
+    public static void glViewport(int x, int y, int width, int height) {}
+    public static void glCopyTexSubImage2D(int target, int level, int xoffset, int yoffset,
+            int x, int y, int width, int height) {}
+    public static void glTexParameterf(int target, int pname, float param) {}
+    public static void glDeleteTextures(int texture) {}
     public static void glEnable(int c) {}
     public static void glDisable(int c) {}
     public static void glDisableClientState(int c) {}

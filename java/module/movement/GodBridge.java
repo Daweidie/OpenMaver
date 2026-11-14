@@ -6,8 +6,8 @@ import util.Logger;
 /**
  * GodBridge（神桥）模块开关。
  *
- * <p>与 {@code Scaffold} 一样，本类位于 core，运行期注入模式下可能由 bootstrap
- * 类加载器加载，看不到 {@code net.minecraft.*}，所以这里只保存开关状态；
+ * <p>本类位于 core，运行期注入模式下可能由 bootstrap 类加载器加载，
+ * 看不到 {@code net.minecraft.*}，所以这里只保存开关状态；
  * 真正的神桥触发与放置逻辑在 MC 侧的 {@code OpenMaverFeatures.updateGodBridge()}。
  *
  * <p>配置路径由基类按包名约定推导：{@code module.movement.GodBridge -> "movement.godbridge"}，

@@ -45,6 +45,14 @@ public abstract class Module {
     protected volatile String keybind;
 
     /**
+     * 配置中未提供 {@code <路径>.enabled} 时的默认开关状态。
+     *
+     * <p>绝大多数模块默认关闭，因此基类保持 {@code false}；像左上角 FPS / CPS
+     * 这种希望「开箱即显示」的模块可在构造器里改成 {@code true}。
+     */
+    protected boolean defaultEnabled;
+
+    /**
      * 按“包名 + 模块名”约定自动推导配置路径。
      *
      * @param name 模块名，例如 "AutoSprint"
@@ -130,7 +138,9 @@ public abstract class Module {
             String configuredKey = config.getString(configKey + ".key", null);
             setKeybind(configuredKey);
         }
-        boolean wanted = (config != null) && config.getBoolean(configKey + ".enabled", false);
+        boolean wanted = (config != null)
+                ? config.getBoolean(configKey + ".enabled", defaultEnabled)
+                : defaultEnabled;
         setEnabled(wanted);
     }
 

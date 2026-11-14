@@ -18,7 +18,6 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -27,18 +26,17 @@ import java.util.Set;
  *
  * <p>视觉稿：
  * <ul>
- *   <li>每项是半透明深色圆角胶囊，右对齐堆叠，整体贴屏幕右侧</li>
- *   <li>左侧 3px 彩色竖条：颜色由模块分类决定，亮度表示启用状态</li>
- *   <li>模块名使用 Open Sans 无衬线字体（视觉稿 14px 规格），右侧是圆角小键帽形式的绑定键位</li>
- *   <li>启用项为高亮文字 + 青/紫/粉分类点缀 + 轻微外发光；禁用项整体降低不透明度</li>
- *   <li>启用时从右侧轻微滑入并淡入，同时伴随一次短暂的外发光脉冲</li>
+ *   <li>每个启用功能是一枚独立的深灰色圆角卡片，右对齐垂直堆叠，卡片之间留出细缝</li>
+ *   <li>模块名使用白色 Open Sans 字体，右侧是一枚短白色竖条作为启用指示</li>
+ *   <li>键位绑定以较淡的白色显示在竖条左侧；没有绑定键位时只保留竖条</li>
+ *   <li>卡片带轻微投影与顶部高光，启用/关闭时从右侧滑入或淡出</li>
  * </ul>
  *
  * <p>动画全部基于 {@link System#nanoTime()}，与帧率无关。列表行按注册顺序错峰出现，
  * 因此首次进入世界时是一段很轻的瀑布式滑入。
  *
  * <p>右下角仍保留加载成功的提示（由 {@link #success(String)} 触发），
- * 纯灰底、白色文字，底部白色进度条随时间收缩，结束时卡片渐变为红色并滑出淡出。
+ * 灰色透明毛玻璃底、白色文字，底部白色进度条随时间收缩，结束时滑出淡出。
  * 连续触发时提示会以卡片栈形式向上叠加，每张卡片独立计时并平滑补位。
  */
 @SideOnly(Side.CLIENT)
@@ -49,15 +47,26 @@ public final class OpenMaverHud {
     // ------------------------------------------------------------------
 
     private static final int MARGIN = 12;
-    private static final int ROW_H = 16;
-    private static final int ROW_GAP = 4;
-    private static final int ROW_PAD_X = 8;
-    private static final int ROW_RADIUS = 4;
-    /** 透明白色底板：保留白色调，但能透出游戏画面。 */
-    private static final int ROW_BG_ALPHA = 0xC0;
-    private static final int LOGO_BOX_W = 40;
-    private static final int LOGO_BOX_H = 32;
-    private static final int LOGO_GAP = 6;
+    private static final int ROW_H = 22;
+    private static final int ROW_GAP = 5;
+    private static final int ROW_PAD_LEFT = 10;
+    private static final int ROW_PAD_RIGHT = 15;
+    private static final int ROW_RADIUS = 7;
+    /** 功能列表字号：保持清晰易读，同时让卡片更有存在感。 */
+    private static final float ROW_TEXT_SIZE = 0.95F;
+    /** 深色毛玻璃卡片：模糊自身覆盖的画面，再叠一层深色保证白字可读。 */
+    private static final int ROW_TINT = 0x141418;
+    /** 色调占比压低，让背后的模糊画面透出来，毛玻璃感更明显。 */
+    private static final float ROW_TINT_STRENGTH = 0.55F;
+    private static final int ROW_BORDER = 0xFFFFFF;
+    private static final int ROW_BORDER_ALPHA = 0x2A;
+    private static final int ROW_SHADOW_ALPHA = 0x40;
+    private static final int ROW_HIGHLIGHT_ALPHA = 0x18;
+    /** 右侧白色竖条（启用指示）。 */
+    private static final int ROW_BAR_W = 3;
+    private static final int ROW_BAR_H = 11;
+    private static final int ROW_BAR_INSET = 9;
+    private static final int ROW_BAR_ALPHA = 0xF0;
     private static final int KEY_GAP = 8;
 
     // ------------------------------------------------------------------
@@ -83,17 +92,12 @@ public final class OpenMaverHud {
     private static final int TOAST_GAP = 7;
 
     // ------------------------------------------------------------------
-    // 配色：青 / 紫 / 粉三色点缀，其余为中性深色
+    // 配色：只保留中性灰与白色，不再按分类着色
     // ------------------------------------------------------------------
 
-    private static final int ACCENT_CYAN = 0x5CE1FF;
-    private static final int ACCENT_PURPLE = 0xB18CFF;
-    private static final int ACCENT_PINK = 0xFF79C6;
-    private static final int[] ACCENTS = {ACCENT_CYAN, ACCENT_PURPLE, ACCENT_PINK};
-
-    /** 右下角提示：纯灰底 + 白色倒计时进度条；退出时卡片渐变为红色。 */
-    private static final int TOAST_BG = 0x3C3C3C;
-    private static final int TOAST_EXIT_RED = 0xD7263D;
+    /** 右下角提示：灰色透明毛玻璃 + 白色倒计时进度条。 */
+    private static final int TOAST_TINT = 0x8E8E8E;
+    private static final float TOAST_TINT_STRENGTH = 0.46F;
     private static final int TOAST_TEXT = 0xFFFFFF;
 
     /** 右上角功能栏的独立状态：离开的功能会先淡出，再从列表移除。 */
@@ -156,17 +160,21 @@ public final class OpenMaverHud {
             return;
         }
         try {
-            FontRenderer font = (FontRenderer) readField(Minecraft.getMinecraft(),
+            Minecraft minecraft = Minecraft.getMinecraft();
+            if (minecraft != null && minecraft.currentScreen instanceof GuiOpenMaverClickGui) {
+                // ClickGUI 自己会绘制提示卡；此时再画一遍 HUD 会被全屏毛玻璃糊掉，
+                // 右上角的功能列表也会变成一层模糊残影。
+                return;
+            }
+            if (minecraft == null) {
+                return;
+            }
+            FontRenderer font = (FontRenderer) readField(minecraft,
                     "fontRendererObj", "field_71466_p");
             if (font == null) {
                 return;
             }
             long now = System.nanoTime();
-            try {
-                TargetHud.render(font, event.resolution, now);
-            } catch (Throwable targetError) {
-                System.err.println("[OpenMaver] Target HUD 绘制出错: " + targetError);
-            }
             List<Module> modules = ModuleManager.getModules();
             List<HudEntry> entries = new ArrayList<HudEntry>(modules.size() + 2);
             for (int i = 0; i < modules.size(); i++) {
@@ -175,13 +183,29 @@ public final class OpenMaverHud {
                     continue;
                 }
                 entries.add(new HudEntry(module.getConfigKey() + "#" + module.getName(),
-                        module.getName(), keyLabel(module), accentFor(module), true));
+                        module.getName(), keyLabel(module)));
             }
             if (OpenMaverFeatures.isAimEnabled()) {
-                entries.add(new HudEntry("feature#aim", "Aim Assist", "--", ACCENT_PINK, true));
+                entries.add(new HudEntry("feature#aim", "Aim Assist", "--"));
             }
             if (OpenMaverFeatures.isEspEnabled()) {
-                entries.add(new HudEntry("feature#esp", "Player ESP", "--", ACCENT_PURPLE, true));
+                entries.add(new HudEntry("feature#esp", "Player ESP", "--"));
+            }
+
+            // 先抓一张世界快照：功能栏卡片、提示卡都从这份快照里取背景，
+            // 避免把随后绘制的 HUD 自己也糊进去。
+            ScaledResolution resolution = event.resolution;
+            GuiBlur.beginFrame(resolution.getScaledWidth(),
+                    resolution.getScaledHeight(), resolution.getScaleFactor());
+            if (!entries.isEmpty() || !TOASTS.isEmpty() || !LIST_ENTRIES.isEmpty()
+                    || TargetHud.isEnabled() || StatsHud.isEnabled()) {
+                GuiBlur.capture();
+            }
+            StatsHud.render(font, event.resolution, now);
+            try {
+                TargetHud.render(font, event.resolution, now);
+            } catch (Throwable targetError) {
+                System.err.println("[OpenMaver] Target HUD 绘制出错: " + targetError);
             }
             int listBottom = renderModuleList(font, event.resolution, entries, now);
             renderToasts(font, event.resolution.getScaledWidth(),
@@ -230,12 +254,7 @@ public final class OpenMaverHud {
         int screenW = resolution.getScaledWidth();
         int screenH = resolution.getScaledHeight();
         int right = screenW - MARGIN;
-        int startY = MARGIN + LOGO_BOX_H + LOGO_GAP;
-
-        // 右上角 Logo 独立于功能列表绘制，即使暂时没有启用的功能也保持可见。
-        GlColor.restore();
-        MaverLogo.draw(font, right - LOGO_BOX_W, MARGIN, LOGO_BOX_W, LOGO_BOX_H,
-                1.0F, 0xFFFFFFFF);
+        int startY = MARGIN;
 
         if (LIST_ENTRIES.isEmpty()) {
             return startY;
@@ -265,8 +284,7 @@ public final class OpenMaverHud {
 
         int totalHeight = count * ROW_H + (count - 1) * ROW_GAP;
         if (startY + totalHeight > screenH - MARGIN) {
-            startY = Math.max(MARGIN + LOGO_BOX_H + LOGO_GAP,
-                    screenH - MARGIN - totalHeight);
+            startY = Math.max(MARGIN, screenH - MARGIN - totalHeight);
         }
 
         List<TextDraw> texts = new ArrayList<TextDraw>(count * 2);
@@ -286,17 +304,17 @@ public final class OpenMaverHud {
             long deltaNanos = Math.max(0L, now - anim.lastNanos);
             anim.lastNanos = now;
             float deltaMs = Math.min(50.0F, deltaNanos / 1_000_000.0F);
-            float step = deltaMs / LIST_FADE_MS;
 
             // 插入/退出：每行独立淡入淡出，互不依赖其他文字或行。
             anim.visible = approach(anim.visible,
-                    anim.targetVisible ? 1.0F : 0.0F, step);
+                    anim.targetVisible ? 1.0F : 0.0F, deltaMs / LIST_FADE_MS);
 
             int targetY = startY + i * (ROW_H + ROW_GAP);
             if (anim.y < 0.0F) {
                 anim.y = targetY;
             } else {
-                anim.y += (targetY - anim.y) * Math.min(1.0F, deltaMs / (LIST_FADE_MS * 0.85F));
+                anim.y += (targetY - anim.y)
+                        * Math.min(1.0F, deltaMs / (LIST_FADE_MS * 0.85F));
             }
 
             float alpha = clamp01(anim.visible);
@@ -304,26 +322,47 @@ public final class OpenMaverHud {
             int y = Math.round(anim.y);
             int rowRight = right + slide;
 
-            // 右边缘固定对齐，每行宽度只由自身文字决定，形成清晰的长短变化。
-            int nameW = OpenSansFont.getStringWidth(font, labels[i]);
-            int keyW = hasKey(keys[i]) ? OpenSansFont.getStringWidth(font, keys[i]) : 0;
-            int rowWidth = nameW + (keyW > 0 ? KEY_GAP + keyW : 0) + ROW_PAD_X * 2;
+            // 右边缘固定对齐，每行宽度由自身文字决定，形成参考图里的阶梯感。
+            int nameW = OpenSansFont.getStringWidth(font, labels[i], ROW_TEXT_SIZE);
+            int keyW = hasKey(keys[i])
+                    ? OpenSansFont.getStringWidth(font, keys[i], ROW_TEXT_SIZE) : 0;
+            int rowWidth = nameW + ROW_PAD_LEFT
+                    + (keyW > 0 ? KEY_GAP + keyW : 0) + ROW_PAD_RIGHT;
             int rowX = rowRight - rowWidth;
 
-            // 透明白色圆角底板；文字使用深色彩虹，保证白底上的可读性。
+            // 柔和投影 + 毛玻璃卡片 + 极淡白色描边，右侧再放一枚白色竖条。
+            roundRect(rowX + 2, y + 2, rowWidth, ROW_H, ROW_RADIUS,
+                    withAlpha(0x000000,
+                            clamp255((int) (alpha * ROW_SHADOW_ALPHA))));
             roundRect(rowX, y, rowWidth, ROW_H, ROW_RADIUS,
+                    withAlpha(ROW_BORDER,
+                            clamp255((int) (alpha * ROW_BORDER_ALPHA))));
+            GuiBlur.draw(rowX + 1, y + 1, rowWidth - 2, ROW_H - 2,
+                    Math.max(0, ROW_RADIUS - 1), ROW_TINT,
+                    ROW_TINT_STRENGTH, alpha);
+            if (rowWidth > ROW_RADIUS * 2) {
+                roundRect(rowX + ROW_RADIUS, y + 1,
+                        rowWidth - ROW_RADIUS * 2, 1, 0,
+                        withAlpha(ROW_BORDER,
+                                clamp255((int) (alpha * ROW_HIGHLIGHT_ALPHA))));
+            }
+
+            int barX = rowRight - ROW_BAR_INSET;
+            int barY = y + (ROW_H - ROW_BAR_H) / 2;
+            roundRect(barX, barY, ROW_BAR_W, ROW_BAR_H, 1,
                     withAlpha(0xFFFFFF,
-                            clamp255((int) (alpha * ROW_BG_ALPHA))));
+                            clamp255((int) (alpha * ROW_BAR_ALPHA))));
 
-            int keyX = rowRight - ROW_PAD_X - keyW;
-            int nameX = rowX + ROW_PAD_X;
-            int textY = y + 4;
-
-            texts.add(new TextDraw(labels[i], nameX, textY,
-                    shimmerColor(now, i, alpha, 1.0F)));
+            int textY = y + 7;
+            texts.add(new TextDraw(labels[i], rowX + ROW_PAD_LEFT, textY,
+                    withAlpha(0xFFFFFF, clamp255((int) (alpha * 255.0F))),
+                    ROW_TEXT_SIZE));
             if (keyW > 0) {
+                int keyX = rowRight - ROW_PAD_RIGHT - keyW;
                 texts.add(new TextDraw(keys[i], keyX, textY,
-                        shimmerColor(now, i, alpha, 0.72F)));
+                        withAlpha(0xFFFFFF,
+                                clamp255((int) (alpha * 0xB8))),
+                        ROW_TEXT_SIZE));
             }
         }
 
@@ -345,44 +384,6 @@ public final class OpenMaverHud {
         return key != null && !key.isEmpty() && !"--".equals(key);
     }
 
-    /**
-     * 深色彩虹 + 呼吸闪烁：色相缓慢流动，每行相位错开形成波浪感。
-     * 在纯白底板上使用中等明度，避免亮色文字发白看不清。
-     */
-    private static int shimmerColor(long now, int index, float alpha, float brightness) {
-        float seconds = (now % 60_000_000_000L) / 1_000_000_000.0F;
-        float hue = (seconds * 0.11F + index * 0.13F) % 1.0F;
-        float pulse = 0.84F + 0.16F * (float) Math.sin(seconds * 4.2F + index * 0.5F);
-        float value = Math.min(1.0F, 0.74F * pulse * brightness);
-        int rgb = hsvToRgb(hue, 0.82F, value);
-        int a = clamp255((int) (alpha * pulse * 255.0F));
-        return a << 24 | rgb;
-    }
-
-    private static int hsvToRgb(float hue, float saturation, float value) {
-        float h = (hue - (float) Math.floor(hue)) * 6.0F;
-        int sector = (int) h;
-        float fraction = h - sector;
-        float p = value * (1.0F - saturation);
-        float q = value * (1.0F - saturation * fraction);
-        float t = value * (1.0F - saturation * (1.0F - fraction));
-        float r;
-        float g;
-        float b;
-        switch (sector) {
-            case 0: r = value; g = t; b = p; break;
-            case 1: r = q; g = value; b = p; break;
-            case 2: r = p; g = value; b = t; break;
-            case 3: r = p; g = q; b = value; break;
-            case 4: r = t; g = p; b = value; break;
-            default: r = value; g = p; b = q; break;
-        }
-        int red = clamp255((int) (r * 255.0F));
-        int green = clamp255((int) (g * 255.0F));
-        int blue = clamp255((int) (b * 255.0F));
-        return red << 16 | green << 8 | blue;
-    }
-
     private static RowAnim rowAnim(HudEntry entry, long now) {
         RowAnim anim = ROW_ANIMS.get(entry.id);
         if (anim == null) {
@@ -397,29 +398,8 @@ public final class OpenMaverHud {
         return (key == null || key.isEmpty()) ? "--" : key;
     }
 
-    private static int accentFor(Module module) {
-        String configKey = module.getConfigKey();
-        String category = "";
-        if (configKey != null) {
-            int dot = configKey.indexOf('.');
-            category = (dot > 0 ? configKey.substring(0, dot) : configKey)
-                    .toLowerCase(Locale.ROOT);
-        }
-        if ("movement".equals(category)) {
-            return ACCENT_CYAN;
-        }
-        if ("combat".equals(category)) {
-            return ACCENT_PINK;
-        }
-        if ("render".equals(category)) {
-            return ACCENT_PURPLE;
-        }
-        int hash = category.hashCode() ^ module.getName().hashCode();
-        return ACCENTS[(hash & 0x7FFFFFFF) % ACCENTS.length];
-    }
-
     // ==================================================================
-    // 右下角提示（纯灰底 + 白色进度条，退出变红）
+    // 右下角提示（透明毛玻璃 + 白色进度条）
     // ==================================================================
 
     /** 供 GUI 等没有 RenderGameOverlayEvent 的场景复用同一套提示绘制。 */
@@ -493,7 +473,6 @@ public final class OpenMaverHud {
 
             float progress;
             float alpha;
-            float exitRed = 0.0f;
             if (elapsedMs < TOAST_IN_MS) {
                 float t = elapsedMs / (float) TOAST_IN_MS;
                 progress = easeOutCubic(t);
@@ -502,12 +481,11 @@ public final class OpenMaverHud {
                 progress = 1.0f;
                 alpha = 1.0f;
             } else {
-                // 停留结束后：卡片先快速变红，再滑出并淡出。
+                // 停留结束后只滑出并淡出，不再变色。
                 float t = clamp01((elapsedMs - TOAST_IN_MS - TOAST_HOLD_MS)
                         / (float) TOAST_OUT_MS);
                 progress = 1.0f - easeInCubic(t);
                 alpha = 1.0f - easeInCubic(t);
-                exitRed = easeOutCubic(t);
             }
 
             int labelW = OpenSansFont.getStringWidth(font, toast.text);
@@ -522,15 +500,15 @@ public final class OpenMaverHud {
             int barW = width - TOAST_BAR_INSET * 2;
             int barY = y + TOAST_H - TOAST_BAR_BOTTOM - TOAST_BAR_H;
             float remaining = 1.0f - clamp01(elapsedMs / (float) TOAST_TOTAL_MS);
-            int background = blendColor(TOAST_BG, TOAST_EXIT_RED, exitRed);
 
-            // 柔和投影 + 顶部高光，让提示更像一张独立卡片。
+            // 柔和投影 + 1px 白色描边，卡片内部是「灰色透明毛玻璃」。
             roundRect(x + 2, y + 4, width, TOAST_H, TOAST_RADIUS,
                     withAlpha(0x000000, clamp255((int) (alpha * 0x36))));
             roundRect(x, y, width, TOAST_H, TOAST_RADIUS + 1,
-                    withAlpha(0xFFFFFF, clamp255((int) (alpha * 0x16))));
-            roundRect(x + 1, y + 1, width - 2, TOAST_H - 2, TOAST_RADIUS,
-                    withAlpha(background, a));
+                    withAlpha(0xFFFFFF, clamp255((int) (alpha * 0x3A))));
+            GuiBlur.draw(x + 1, y + 1, width - 2, TOAST_H - 2,
+                    Math.max(0.0F, TOAST_RADIUS - 1.0F), TOAST_TINT,
+                    TOAST_TINT_STRENGTH, alpha);
 
             // 白色倒计时进度条（底部）
             int fillW = Math.round(barW * clamp01(remaining));
@@ -558,7 +536,8 @@ public final class OpenMaverHud {
     private static void drawTexts(FontRenderer font, List<TextDraw> texts) {
         for (int i = 0; i < texts.size(); i++) {
             TextDraw text = texts.get(i);
-            OpenSansFont.drawString(font, text.text, text.x, text.y, text.color);
+            OpenSansFont.drawString(font, text.text, text.x, text.y, text.color,
+                    text.size);
         }
     }
 
@@ -590,20 +569,8 @@ public final class OpenMaverHud {
         return (clamp255(alpha) << 24) | (rgb & 0x00FFFFFF);
     }
 
-    private static int blendColor(int from, int to, float t) {
-        t = clamp01(t);
-        int r = Math.round(((from >> 16) & 0xFF) * (1.0F - t) + ((to >> 16) & 0xFF) * t);
-        int g = Math.round(((from >> 8) & 0xFF) * (1.0F - t) + ((to >> 8) & 0xFF) * t);
-        int b = Math.round((from & 0xFF) * (1.0F - t) + (to & 0xFF) * t);
-        return r << 16 | g << 8 | b;
-    }
-
     private static int clamp255(int value) {
         return value < 0 ? 0 : (value > 255 ? 255 : value);
-    }
-
-    private static int clamp(int value, int min, int max) {
-        return value < min ? min : (value > max ? max : value);
     }
 
     // ==================================================================
@@ -659,12 +626,18 @@ public final class OpenMaverHud {
         final int x;
         final int y;
         final int color;
+        final float size;
 
         TextDraw(String text, int x, int y, int color) {
+            this(text, x, y, color, 1.0F);
+        }
+
+        TextDraw(String text, int x, int y, int color, float size) {
             this.text = text;
             this.x = x;
             this.y = y;
             this.color = color;
+            this.size = size;
         }
     }
 
@@ -672,15 +645,11 @@ public final class OpenMaverHud {
         final String id;
         final String name;
         final String key;
-        final int accent;
-        final boolean enabled;
 
-        HudEntry(String id, String name, String key, int accent, boolean enabled) {
+        HudEntry(String id, String name, String key) {
             this.id = id;
             this.name = name;
             this.key = key;
-            this.accent = accent;
-            this.enabled = enabled;
         }
     }
 

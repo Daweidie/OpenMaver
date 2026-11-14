@@ -109,6 +109,7 @@ public final class McpReobf {
         m(STACK, "getMaxDamage", "func_77658_a");
         m(STACK, "getItemDamage", "func_77960_j");
         m(GSM, "color", "func_179131_c");
+        m(GSM, "bindTexture", "func_179144_i");
 
         f(MC, "currentScreen", "field_71462_r");
         f(MC, "renderManager", "field_175616_W");

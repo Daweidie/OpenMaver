@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // OpenMaver V2.0 默认配置（JSONC：支持 // 行注释与 /* */ 块注释）
 //
-// 所有功能模块默认 enabled: false，仅日志工具默认开启。
+// 大多数功能模块默认 enabled: false；FPS / CPS 统计与日志工具默认开启。
 // 嵌套 key 通过点号访问，例如：combat.aimassist.enabled
 //
 // 模块配置路径约定（见 module.Module）：
@@ -19,10 +19,6 @@
     "autosprint": {
       "enabled": false,        // 示例模块 AutoSprint：默认关闭（链路验证时可临时改为 true）
       "key": "V"               // 绑定键位（HUD 右侧显示，按 V 切换）
-    },
-    "scaffold": {
-      "enabled": false,        // Scaffold 自动搭路：默认关闭（按 G 切换）
-      "key": "G"               // 绑定键位（按 G 切换）
     },
     "godbridge": {
       "enabled": false,        // GodBridge 神桥：默认关闭（按 B 切换）
@@ -72,6 +68,14 @@
     "playerxray": {
       "enabled": false,        // 玩家透视：默认关闭（按 J 切换）
       "key": "J"               // 绑定键位
+    },
+    "fps": {
+      "enabled": true,         // 左上角 FPS 显示：默认开启
+      "key": ""                // 可选键位；留空表示不绑定
+    },
+    "cps": {
+      "enabled": true,         // 左上角 CPS 小方块（左/右键）：默认开启
+      "key": ""                // 可选键位；留空表示不绑定
     }
   },
 
