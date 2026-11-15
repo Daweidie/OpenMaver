@@ -15,13 +15,14 @@ import org.lwjgl.opengl.GL11;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Locale;
 
 /**
  * Target HUD — 准星右侧的极简目标信息卡。
  *
- * <p>只保留三样信息：正方形头像（玩家真实皮肤 / 无皮肤时使用 Steve 头像）、名称、
- * 细血条。血条颜色随血量从绿（满血）过渡到橙、再过渡到深红（低血），无外圈、
- * 无发光、无装饰线。
+ * <p>只保留四样信息：正方形头像（玩家真实皮肤 / 无皮肤时使用 Steve 头像）、名称、
+ * 血量读数（当前血量/总血量）、细血条。血条颜色随血量从绿（满血）过渡到橙、再过渡到
+ * 深红（低血），无外圈、无发光、无装饰线。
  *
  * <p>目标来源：仅当准星真正命中 {@link EntityLivingBase} 时显示，移开准星立即隐藏；
  * 不做视野锥自动索敌，也不保留历史目标。任何生物（玩家、怪物、动物）都可显示。
@@ -29,22 +30,26 @@ import java.lang.reflect.Method;
 public final class TargetHud {
 
     private static final int CARD_W = 160;
-    private static final int CARD_H = 40;
+    private static final int CARD_H = 44;
     private static final float CARD_R = 8.0F;
 
     private static final float AVATAR_X = 8.0F;
-    private static final float AVATAR_Y = 8.0F;
+    private static final float AVATAR_Y = 10.0F;
     private static final float AVATAR_SIZE = 24.0F;
 
     private static final float CONTENT_X = 37.0F;
     private static final float CONTENT_W = 117.0F;
-    private static final float BAR_Y = 23.0F;
+    /** 血条上方的血量读数：当前血量/总血量。 */
+    private static final float HEALTH_TEXT_Y = 18.0F;
+    private static final float HEALTH_TEXT_SIZE = 0.78F;
+    private static final float BAR_Y = 30.0F;
     private static final float BAR_H = 4.0F;
 
     private static final int HEALTH_FULL = 0x4ADE80; // green
     private static final int HEALTH_MID = 0xFF9F43;  // orange
     private static final int HEALTH_LOW = 0xD7263D;  // deep red
     private static final int TEXT = 0xF2F5FA;
+    private static final int HEALTH_TEXT_MAX = 0x9AA4B2;
     private static final int MUTED_BORDER = 0x2E333B;
     private static final int TRACK = 0x22262D;
     private static final int GLASS = 0x0D0F13;
@@ -179,6 +184,15 @@ public final class TargetHud {
         return clamp01(health(entity) / max);
     }
 
+    /** 整数血量去掉小数点，半颗心等小数保留一位。 */
+    private static String formatHealth(float value) {
+        float rounded = Math.round(value);
+        if (Math.abs(value - rounded) < 0.05F) {
+            return String.valueOf((int) rounded);
+        }
+        return String.format(Locale.ROOT, "%.1f", value);
+    }
+
     private static float health(Object entity) {
         Object value = call(entity, "getHealth", "func_110143_aJ", Number.class);
         return value instanceof Number ? ((Number) value).floatValue() : 0.0F;
@@ -222,6 +236,8 @@ public final class TargetHud {
         float ratio = healthRatio(target);
         int barColor = healthColor(ratio);
         String name = trimToWidth(font, displayName(target), 0.95F, (int) CONTENT_W);
+        String healthNow = formatHealth(health(target));
+        String healthMax = "/" + formatHealth(maxHealth(target));
 
         GlColor.restore();
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_LINE_BIT);
@@ -248,7 +264,16 @@ public final class TargetHud {
 
         // 名称
         GL11.glEnable(GL11.GL_TEXTURE_2D);
-        text(font, name, (int) CONTENT_X, 7, TEXT, 0.95F, alpha);
+        text(font, name, (int) CONTENT_X, 6, TEXT, 0.95F, alpha);
+
+        // 血量读数：位于血条正上方，格式为「当前血量/总血量」。
+        int healthRight = (int) (CONTENT_X + CONTENT_W);
+        int maxWidth = HudFont.getStringWidth(font, healthMax, HEALTH_TEXT_SIZE);
+        int nowWidth = HudFont.getStringWidth(font, healthNow, HEALTH_TEXT_SIZE);
+        text(font, healthNow, healthRight - maxWidth - nowWidth, (int) HEALTH_TEXT_Y,
+                barColor, HEALTH_TEXT_SIZE, alpha);
+        text(font, healthMax, healthRight - maxWidth, (int) HEALTH_TEXT_Y,
+                HEALTH_TEXT_MAX, HEALTH_TEXT_SIZE, alpha);
 
         // 细血条：颜色随血量从绿 -> 橙 -> 深红渐变
         float barY = BAR_Y;

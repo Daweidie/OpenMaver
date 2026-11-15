@@ -3,7 +3,7 @@
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
 > 说明：本仓库包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接）
-> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、Reach、GodBridge、FastPlace、FakePlayer、Target HUD、Player X-Ray、FPS / CPS 统计）
+> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、Reach、Criticals、GodBridge、FastPlace、FakePlayer、Target HUD、Player X-Ray、FPS / CPS 统计）
 > 以及 `legit / balanced / aggressive` 三档 Grim 对测 profile。
 > 请仅在你拥有或获得明确授权的服务器上进行测试。
 
@@ -245,7 +245,7 @@ java -Djava.library.path=build/lib \
   排序、模块行、搜索框、开关与全部设置控件都有统一的悬停 / 激活 / 按压过渡，
   滚动条与列表内容共用同一条平滑滚动值。模块列表来自
   `ModuleManager`，Aim Assist、Player ESP、Grim Bypass、AutoSprint、AutoClicker、Reach、
-  FastPlace、Target HUD 与 Player X-Ray 的设置直接绑定 `OpenMaverFeatures`，参数写入
+  Criticals、FastPlace、Target HUD 与 Player X-Ray 的设置直接绑定 `OpenMaverFeatures`，参数写入
   `config/openmaver.properties`（拖拽结束与关闭 GUI 时落盘）。
 - **模块键位**：`config/default.jsonc` 中的 `<分类>.<模块>.key`（如
   `movement.autosprint.key = "V"`）既会显示在 HUD 右侧，也会在游戏内绑定到该键。
@@ -284,9 +284,9 @@ debug.enabled=false         # true 时写入 logs/openmaver-debug.log
 
 | profile | Reach 实际上限 | Aim 单 tick 上限 | AutoClicker | FastPlace / GodBridge fastPlace | Placement rotation |
 |---|---|---|---|---|---|
-| `legit` | 3.00（Grim 扩张箱） | yaw 18° / pitch 12° | ≤8 CPS，强制抖动 | 完全不改 `rightClickDelayTimer` | 仅真实准星 |
-| `balanced`（默认） | 3.00（Grim 扩张箱） | yaw 35° / pitch 20° | ≤12 CPS，抖动+停顿 | FastPlace 最低 2 tick；GodBridge 不压 0 | 仅真实准星 |
-| `aggressive` | ≤3.30（仅对比测试） | 上限放宽 | ≤20 CPS | 允许压到 0 | 允许 auto-rotate / packetRotation |
+| `legit` | 3.00（Grim 扩张箱） | yaw 18° / pitch 12° | 使用配置 CPS（1~20），抖动+停顿 | 完全不改 `rightClickDelayTimer` | 仅真实准星 |
+| `balanced`（默认） | 3.00（Grim 扩张箱） | yaw 35° / pitch 20° | 使用配置 CPS（1~20），抖动+停顿 | FastPlace / 右键点击保持原版 4 tick；GodBridge 不压 0 | 仅真实准星 |
+| `aggressive` | ≤3.30（仅对比测试） | 上限放宽 | 使用配置 CPS（1~20） | 允许压到 0 | 允许 auto-rotate / packetRotation |
 
 > `bypass.enabled=false` 会恢复旧的对比行为（Reach 最高 5.9），**不要**在正式
 > 对测中关闭。`aggressive` 会主动越过 Grim 的 Reach 阈值，只用于记录 flag 差异。
@@ -403,12 +403,15 @@ IO 失败只记录一次并自动停用 debug。
   关闭模块、打开 GUI、玩家死亡或切换到非方块物品时恢复原版延迟。
 - profile 行为：
   - `legit`：完全不修改 `rightClickDelayTimer`。
-  - `balanced`：允许加速，但最低保留 **2 tick** 冷却。与 GodBridge
-    同时启用时会让位（不修改 timer），避免把 timer 卡在 2 导致搭路永远等不到 0。
+  - `balanced`：不低于原版 **4 tick** 冷却。Matrix / Grim 的 `block.fastplace`
+    按 C08 间隔判定，2~3 tick 的连续放置会稳定吃 flag，因此默认档位不再加速。
+    与 GodBridge 同时启用时仍会让位（不修改 timer）。
   - `aggressive` / 关闭 bypass：按 `DELAY` 设置，允许压到 0。
 - 设置项（ClickGUI 中展开 FastPlace）：
-  - `DELAY`：`fastplace.delayTicks`，0~4 tick，默认 `2`。
+  - `DELAY`：`fastplace.delayTicks`，0~4 tick，默认 `4`。
   - `ONLY BLOCKS`：`fastplace.onlyBlocks`，默认 `true`，仅在手持方块时生效。
+- AutoClicker 的 `RIGHT CLICK` 在 `balanced/legit` 下也会等待这个原版冷却归零，
+  否则 10~20 CPS 的右键会以同样速度连续发 C08，单独触发 `block.fastplace`。
 
 ### Reach 攻击距离
 
@@ -460,27 +463,148 @@ IO 失败只记录一次并自动停用 debug。
 - `REQUIRE HOLD` 默认开启：只有按住对应鼠标键时才连点，模块开启本身不会
   在玩家没有输入时继续点击。v3 配置会自动把旧版被强制迁移成 `false` 的值恢复为 `true`。
 - `WAIT FOR HURT` 默认开启：准星在实体上时，等目标的受击无敌帧结束再发送真正的
-  `C02` 攻击。无敌帧内仍按配置 CPS 发挥手动画（`C0A`）并计入 CPS HUD，
-  所以 16~18 CPS 看起来和点起来都是 16~18；但只有能结算伤害的那次才发攻击包。
-  1.8.9 中 `hurtResistantTime > maxHurtResistantTime / 2` 的 C02 会被服务端忽略，
-  高速连点会把大量无效攻击发给服务端，在 CCBlueX 测试假人上表现为
-  “预期伤害”和“实际伤害”对不上。关闭后每次 CPS 都发完整 `clickMouse`。
+  `C02` 攻击。等待期间不再发送任何 `C0A`（1.19.2+ 服务端会用 swing 动画重置攻击
+  蓄力，见 MC-255058），只把这次尝试计入 CPS HUD，所以 CPS 仍显示配置值，但不会
+  为了动画把后续攻击的蓄力清空。1.8.9 中 `hurtResistantTime > maxHurtResistantTime / 2`
+  的 C02 会被服务端忽略。节流按 **11 个客户端 tick（约 550ms）** 计算，而不是刚好
+  500ms：客户端拿不到服务端 `hurtResistantTime`，恰好卡在 10 tick 边界上的攻击有
+  大半概率落在无敌帧最后一 tick 里被直接丢弃。
+- **按住左键时原版补发会被拦住**：1.8.9 的 `Minecraft.runTick` 只要左键按住且
+  `leftClickCounter == 0` 就会自己再调一次 `clickMouse()`，而命中实体时不会重置该
+  计数器，所以旧实现即使开了 `WAIT FOR HURT`，服务端仍会收到约 20 C02/s。
+  现在 AutoClicker 开启且准星指着实体时，会把这个计数器压到 `2`，让原版的
+  “按住连点”分支跳过；模块自己真正攻击前再清回 `0`。这只在准星命中实体时生效，
+  挖方块 / 右键放置不受影响。
 - 模块绑定键（默认 `R`）只在按下边沿触发一次；按住不会因为系统键盘重复而
   反复开关 AutoClicker。
+- `MODE`（`autoclicker.attackMode`）决定 C02 节奏，三档：
+  - `FULL CHARGE`（默认）：按 1.9+ 武器满蓄力等待，单次 1.0 倍。间隔为
+    剑 13 tick、镐 17、铲 20、斧 20~25（按材质）、空手 11（受击无敌帧下限）。
+  - `FASTEST`：只按 10 tick 受击无敌帧节流（约 2 次/秒），单次倍率较低，
+    但近战对拼时命中更密、击退压力更大。适合斧/重武器或想打近战的场景。
+  - `VANILLA`：旧行为，`C0A -> C02` 原版顺序 + 11 tick 节流。适合
+    `/server legacy` 1.8 战斗（没有攻击冷却；Grim 1.8 的 `PacketOrderB`
+    要求先挥手）。
+  三个模式都会在等待期间**不发 C0A**：1.9.2+ 服务端会把任何 swing 动画当成挥击
+  并清空蓄力（MC-255058）；`FULL CHARGE` / `FASTEST` 还会把 C02 放在 C0A 之前，
+  保证攻击吃到完整蓄力。`VANILLA` 保留原版顺序，只用于 1.8。
 - 在 CCBlueX 测试服的 `latest(26.3)` 上，1.8.9 客户端仍会受到服务端 1.9+
-  攻击冷却影响；`WAIT FOR HURT` 只能保证不再往无敌帧里刷 C02。要对比 1.8
-  的满伤害与连点行为，请先 `/server legacy`；留在 `latest` 时把 CPS 降到
-  武器攻速附近（剑约 1.6 CPS）才能让每一刀都按满蓄力结算。
-- 注入点击前会清掉原版 `leftClickCounter` / `rightClickDelayTimer`，
-  否则 1.8.9 会在 MISS 后把点击吞掉 500ms、右键每次使用后强制冷却 4 tick，
-  高 CPS 设置实际只剩约 2~4 CPS。
+  攻击冷却影响。**如果伤害一直显示 0.2~0.4 倍**，按顺序检查：
+  1. `MODE` 是否为 `FULL CHARGE`（默认）；
+  2. 是否在 `latest` 这类 1.9+ 子服——`/server legacy` 才是 1.8 满伤害；
+  3. 目标是否穿甲：假人同时显示两个数字时（例如 `1.00 / 0.07`），**较小的那个
+     通常是护甲减免后的实际伤害**，全套保护 IV 只剩裸伤害的 7%，不是 C02 被吞。
+- 注入点击前会清掉原版 `leftClickCounter`；右键在 `balanced/legit` 下遵守原版
+  `rightClickDelayTimer`（4 tick），`aggressive` 才压到 0。否则 1.8.9 会在 MISS 后把
+  点击吞掉 500ms，而高 CPS 右键会连续发 C08 触发 `block.fastplace`。
 - 自动点击放在 `ClientTickEvent.START`（vanilla C03 移动包之前）注入，
   避免 Grim 的 `Post` 检查把 `C02/C08` 判成“移动包之后才发送”而拒绝；
   放到 tick END 会表现为“按住鼠标时正常、自动点击打不中”。
 - 左上角 CPS HUD 同时统计 AutoClicker 注入的点击，不再只统计物理鼠标边沿。
-- `legit` 上限 8 CPS，`balanced` 上限 12 CPS，`aggressive` 上限 20 CPS。
-- 同一 tick 左右键互斥；使用物品时完全停止；`legit/balanced` 下连续 MISS 空挥超过
+- 点击节拍按“上一次计划时间 + 间隔”固定推进，而不是每次从当前时间重算。
+  20 TPS 下 14~17 CPS 的间隔是 59~71ms，旧实现会把每次点击推到下一个 tick，
+  实际只剩 6~9 CPS；现在会保留 tick 余量，1 秒窗口内可达到设置的 CPS。
+- AutoClicker 不再被 `legit/balanced` 的 8/12 CPS 上限静默截断，使用 ClickGUI 中
+  设置的 `CPS MIN ~ CPS MAX`（上限 20）。`HUMANIZE` 的 2% 长停顿仍可能让个别
+  1 秒窗口略低于设置值，需要稳定数值时关闭 `HUMANIZE`。
+- 同一 tick 左右键互斥；使用物品时完全停止；仅 `legit` 档连续 MISS 空挥超过
   6 次会暂停 250~500ms。打开 GUI/背包/聊天或死亡时重置计时器，不补发点击。
+
+### Criticals 刀暴（默认 JUMP 真实起跳暴击）
+
+- 配置路径：`combat.criticals`，默认关闭，默认不绑定按键（`key: ""`），位于 ClickGUI 的
+  **Combat** 分类。
+- 行为：AutoClicker 或 Reach 真正要发送 `C02` 之前，先让玩家满足原版暴击条件。默认
+  `JUMP` 模式只做真实跳跃：站地面时调用 `jump()`，等进入下落阶段（`fallDistance > 0 &&
+  !onGround`）再结算攻击，**不发送任何伪造的 `C03/C06` 移动包**，因此不会产生
+  `GroundSpoof` / `Simulation` / `Timer` 类 flag。
+- 设置项（ClickGUI 中展开 Criticals）：
+  - `MODE`：`ALWAYS` / `NCP` / `FALLING` / `GRIM` / `JUMP` / `LOW` / `DOWN`，默认
+    `JUMP`（写入 `criticals.mode=jump`）。`balanced`（默认档）下即使选择 packet 模式也会
+    被降级为真实起跳；`legit` 档完全跳过刀暴；只有 `aggressive` 会真正发送伪造移动包。
+  - `STOP SPRINT`：默认 `true`，写入 `criticals.stopSprint`。
+  - v6 迁移：旧配置的 `criticals.mode=packet/ncp/...` 会迁移到 `jump`，同时
+    `fastplace.delayTicks` 提升到 `4`，避免升级后继续对着 Matrix 吃
+    `ka.critical.*` / `bp.timer` / `block.fastplace`。
+- Packet 序列（`x/y/z/yaw/pitch` 均取发送前的客户端真实值，不修改客户端 position）：
+  - `ALWAYS`（LiquidBounce Legacy packet 序列）：`C04(x, y+0.0625, z, true)` ->
+    `C04(x, y, z, false)`。不再限制 `player.onGround = true`，因此站在地面、
+    跳跃上升或已经下落时都能让服务端看到一小段下落距离。
+  - `NCP`：`C04(x, y+0.11, z, false)` -> `C04(x, y+0.1100013579, z, false)` ->
+    `C04(x, y+0.0000013579, z, false)`。
+  - `FALLING`：`C04(x, y+0.0625, z, false)` -> `C04(x, y+0.0625013579, z, false)` ->
+    `C04(x, y+0.0000013579, z, false)`。
+  - `GRIM`：仅当玩家本来就在空中时发送一条 FULL 包
+    `C06(x, y-0.000001, z, yaw, pitch, false)`；玩家站在地面上时不发送任何包，也不会
+    回退到 `ALWAYS`，避免主动制造 `GroundSpoof`。
+  - `JUMP`：地面攻击先调用真实跳跃，等玩家进入下落阶段（`fallDistance > 0`）后再发送
+    `C02`；已经在下落时直接使用原版暴击判定。该模式同时适用于 AutoClicker 和 Reach，
+    不修改客户端位置，也不伪造地面状态。
+  - `LOW`（参考 LiquidBounce / 水影）：`C04(x, y+1e-9, z, false)` ->
+    `C04(x, y, z, false)`。两次位移都小于 Grim
+    `Simulation.threshold = 0.001`，同时让服务端得到 `fallDistance = 1e-9 > 0`，
+    因此比 `ALWAYS` 的 0.0625 偏移更不容易触发 `Simulation`。这里用只带位置的
+    `C04` 而不是 `C06`：两条 yaw/pitch 完全相同的 `C06` 会被 Grim 的
+    `AimDuplicateLook` 当成重复 rotation 逐条记录，而伪造下落本身不需要再发视角。
+  - `DOWN`（参考 LiquidBounce / 水影）：只发送
+    `C04(x, y-1e-9, z, false)`，包数最少。如果客户端正好贴地、
+    微型位移被地面碰撞吃掉导致不暴击，请改用 `LOW`。
+  - `LOW` / `DOWN` 的来源说明：LiquidBounce 提交 `7ea699902` 写明 `LOW` 面向
+    UpdatedNCP 地面、`DOWN` 面向关闭 `Motion (B)` 的 Vulcan，目标是“不检查重复包
+    地面状态”的 AC。Grim 会检查 `GroundSpoof` / `NoFall`，所以这两个模式能压低
+    `Simulation`，但不保证绕过 Grim 的地面状态检查；LiquidBounce 自己的 `GRIM`
+    模式也只在 `!player.onGround()` 时补包。
+- 生效条件：Criticals 模块开启；目标是 `EntityLivingBase` / `EntityPlayer` 且存活；玩家
+  不在使用物品、梯子、水面、蜘蛛网或骑乘状态；目标已脱离受击无敌帧（复用 AutoClicker
+  的 `entityReadyForDamage`）。`aggressive` 档下 `ALWAYS/NCP/FALLING/LOW/DOWN` 不检查
+  地面状态，地面与空中都会补包；`GRIM` 仍要求玩家已经离地，`JUMP` 会在地面自动起跳并
+  延迟攻击。`balanced` 会把所有 packet 模式降级为 `JUMP`，`legit` 直接跳过刀暴。
+- 1.9+ 服务端：`Player.attack` 的暴击条件额外要求 `!isSprinting()`。AutoSprint 默认会
+  保持冲刺，所以 `STOP SPRINT` 默认开启：攻击前发送 `C0B STOP_SPRINTING` 并
+  `setSprinting(false)`，攻击后再发送 `C0B START_SPRINTING` 并恢复冲刺。
+  **v5 配置迁移会把旧的 `criticals.stopSprint=false` 恢复为 `true`**：在 1.9+ 子服上
+  冲刺状态下的伪造下落既不会暴击，又只会白送 `GroundSpoof` / `Post` / `Timer`。
+  如果关闭 `STOP SPRINT`，客户端检测到玩家仍在冲刺时会**直接跳过这次刀暴**
+  （按普通攻击结算），避免发送无效移动包；`/server legacy`（1.8）不检查冲刺，
+  可以关闭它对比 1.8 行为。
+- 注入点：只接在真正发送 `C02` 的路径上——AutoClicker 的 `clickMouse()` 前、Reach 的
+  `PlayerControllerMP.attackEntity()` 前。`WAIT FOR HURT` 的 swing-only 分支没有 `C02`，
+  不会发送伪造移动包；手动点击暂未 hook，需要单独的事件/mixin，不在本模块范围内。
+- 1.9+ 的攻击冷却不会被绕过：`attackStrengthScale` 不足时依然不是满伤害，需要配合
+  `WAIT FOR HURT`、降低 CPS 或使用 legacy 服务端。
+- 所有包类都通过 `Class.forName` 反射并缓存构造器；发送失败/映射差异只记录一次并安静
+  跳过，不会抛异常或每 tick 刷屏。
+- 已知限制：Grim 对 `ALWAYS` / `NCP` / `FALLING` 的快速上下位移可能报
+  `BadPackets` / `InvalidPosition` / `Post` 类 flag。`LOW` / `DOWN` 把位移压到
+  1e-9，通常可以避开 `Simulation`，但仍可能被 `GroundSpoof` / `NoFall` /
+  `Timer` 记录。`GRIM` 不会在地面上伪造下落；需要地面暴击时优先尝试
+  `LOW`，不行再用 `ALWAYS`。
+- Matrix 实测（CCBlueX `/practice`）：`ALWAYS` 会在每次攻击后连续触发
+  `KILLAURA: critical hit without correct jumping // ground spoof`、
+  `// mini-jump (d:0.0625)`、`// modify (ver: 1.8 d: 0.0)`，以及
+  `BADPACKETS: timer`（每次攻击额外补 2~3 条 C04）。这些 flag 与攻击次数直接相关，
+  VL 会持续累积。`JUMP` 模式只使用真实跳跃/下落，没有额外移动包，因此不会出现
+  上述三类 flag；代价是每次地面攻击都要先起跳。
+- 实测 `latest(26.3)`（Grim 2.0）：
+  - `ALWAYS` / `NCP` / `FALLING`：会触发 `Simulation`（0.0625 / 0.11 等偏移）、
+    `GroundSpoof claimed false`、`NoFall`、`Timer`，以及偶发 `Post: attack v1.8`。
+    这些偏移都大于 Grim `Simulation.threshold` 默认值 `0.001`，且每次攻击额外发送
+    2~3 条 C03，`Timer` 会按每条 +50ms 计费。`ALWAYS` 的地面暴击依赖这些包，
+    无法同时做到零 flag。
+    - `Simulation (.062500)`：来自 `ALWAYS` 的 `y+0.0625` 伪造位移。
+    - `GroundSpoof (claimed false)` / `NoFall`：来自 C02 前最后一条
+      `onGround=false`，Grim 预测玩家仍在地面。
+    - `Timer`：每条额外移动包都会按一个 50ms tick 计费，CPS 越高累计越快。
+    - `Post (attack v1.8)`：C02 位于伪造移动包与真实 C03 之间的窗口，事务包
+      若在该窗口到达就会被记录。
+  - `GRIM`：地面状态不发送包；玩家已经下落时只发送 1 条
+    `C06(y-0.000001, onGround=false)`，位移远低于 `0.001` 阈值，减少
+    `Simulation` / `NoFall` / `Timer` 风险，但不能替代真实的地面起跳。
+  - 结论：任何“在地面上伪造下落”的 packet 刀暴都无法完全避免 `GroundSpoof`；只要比
+    原版多发送移动包，`Timer` 也无法完全归零。要零 flag，只能使用真实的下落/跳跃暴击，
+    或在 `/server legacy` 等检测较弱的服务端对比测试。本模块保留多种模式就是
+    为了记录这些 flag 差异；v6 起默认与 `balanced` 档都只走 `JUMP`，packet 模式仅在
+    `aggressive` 档可选。
 
 ### FakePlayer 假人玩家
 
@@ -712,6 +836,7 @@ public final class Example extends Module {
 | `module.movement.AutoSprint` | `movement.autosprint` |
 | `module.combat.AimAssist` | `combat.aimassist` |
 | `module.combat.Reach` | `combat.reach` |
+| `module.combat.Criticals` | `combat.criticals` |
 | `module.render.Esp` | `render.esp` |
 | `module.tools.Logger` | `tools.logger` |
 

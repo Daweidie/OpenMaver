@@ -45,8 +45,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     // 布局（GUI 单位，最终按屏幕缩放）
     // ------------------------------------------------------------------
 
-    private static final int PANEL_MAX_W = 880;
-    private static final int PANEL_MAX_H = 380;
+    private static final int PANEL_MAX_W = 500;
+    private static final int PANEL_MAX_H = 400;
     private static final int HEADER_H = 64;
     private static final int TOOLS_H = 32;
     private static final int FOOTER_H = 26;
@@ -69,8 +69,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final int RAIL_SYS_H = 22;
     private static final int RAIL_SYS_MIN_H = 315;
 
-    private static final int RADIUS = 14;
-    private static final int CARD_RADIUS = 9;
+    private static final int RADIUS = 22;
+    private static final int CARD_RADIUS = 13;
 
     // ------------------------------------------------------------------
     // 配色
@@ -132,7 +132,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final String[] XRAY_COLOR_NAMES = {"Health", "Orange", "Cyan", "Violet", "Red"};
     private static final String[] AIM_MODES = {"Smooth", "Instant"};
     private static final String[] AIM_TARGETS = {"Head", "Chest", "Body"};
+    private static final String[] AUTOCLICKER_MODES = {
+            "FULL CHARGE", "FASTEST", "VANILLA"};
     private static final String[] BYPASS_PROFILES = {"LEGIT", "BALANCED", "AGGRESSIVE"};
+    private static final String[] CRITICALS_MODES = {
+            "ALWAYS", "NCP", "FALLING", "GRIM", "JUMP", "LOW", "DOWN"};
 
     // ------------------------------------------------------------------
     // 状态
@@ -298,8 +302,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private void layout() {
-        panelW = Math.min(this.width - 32, PANEL_MAX_W);
-        panelH = Math.min(this.height - 32, PANEL_MAX_H);
+        // 面板保持 5:4 长宽比：先取可用空间，再以较短的一边为准收缩。
+        int availW = Math.min(this.width - 32, PANEL_MAX_W);
+        int availH = Math.min(this.height - 32, PANEL_MAX_H);
+        panelW = Math.min(availW, availH * 5 / 4);
+        panelH = panelW * 4 / 5;
         panelW = Math.max(320, panelW);
         panelH = Math.max(240, panelH);
         panelW = Math.min(panelW, this.width - 8);
@@ -335,6 +342,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 addAutoClickerSettings(entry);
             } else if ("Reach".equals(module.getName())) {
                 addReachSettings(entry);
+            } else if ("Criticals".equals(module.getName())) {
+                addCriticalsSettings(entry);
             } else if ("FastPlace".equals(module.getName())) {
                 addFastPlaceSettings(entry);
             } else if ("GodBridge".equals(module.getName())) {
@@ -527,6 +536,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             public double get() { return OpenMaverFeatures.isAutoClickerWaitForHurt() ? 1.0D : 0.0D; }
             public void set(double value) { OpenMaverFeatures.setAutoClickerWaitForHurt(value > 0.5D); }
         }));
+        entry.settings.add(Setting.select("MODE", AUTOCLICKER_MODES, new Binding() {
+            public double get() { return OpenMaverFeatures.getAutoClickerAttackMode(); }
+            public void set(double value) { OpenMaverFeatures.setAutoClickerAttackMode((int) Math.round(value)); }
+        }));
         entry.settings.add(Setting.check("HUMANIZE", new Binding() {
             public double get() { return OpenMaverFeatures.isAutoClickerHumanize() ? 1.0D : 0.0D; }
             public void set(double value) { OpenMaverFeatures.setAutoClickerHumanize(value > 0.5D); }
@@ -541,6 +554,17 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         entry.settings.add(Setting.slider("CHANCE", 1.0F, 100.0F, 1.0F, 0, " %", new Binding() {
             public double get() { return OpenMaverFeatures.getReachChance(); }
             public void set(double value) { OpenMaverFeatures.setReachChance((float) value); }
+        }));
+    }
+
+    private void addCriticalsSettings(Entry entry) {
+        entry.settings.add(Setting.select("MODE", CRITICALS_MODES, new Binding() {
+            public double get() { return OpenMaverFeatures.getCriticalsMode(); }
+            public void set(double value) { OpenMaverFeatures.setCriticalsMode((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("STOP SPRINT", new Binding() {
+            public double get() { return OpenMaverFeatures.isCriticalsStopSprint() ? 1.0D : 0.0D; }
+            public void set(double value) { OpenMaverFeatures.setCriticalsStopSprint(value > 0.5D); }
         }));
     }
 
@@ -1163,7 +1187,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             tx += tabW;
         }
 
-        if (listW >= 380) {
+        if (listW >= 330) {
             boolean sortHovered = isHovered(lastMouseX, lastMouseY,
                     listX + listW - 110, tabY - 2, 110, 18);
             ControlAnim sortAnim = control("sort", sortHovered, false, now);
@@ -2742,8 +2766,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             }
             if ("bypass".equals(featureId)) {
                 return OpenMaverFeatures.getBypassProfileName()
-                        + "  ·  REACH " + format(OpenMaverFeatures.getEffectiveReachDistance(), 2) + " m"
-                        + "  ·  CPS " + OpenMaverFeatures.getEffectiveCpsMax();
+                        + "  ·  REACH " + format(OpenMaverFeatures.getEffectiveReachDistance(), 2) + " m";
             }
             if (module != null) {
                 if ("AutoSprint".equals(module.getName())) {
@@ -2752,11 +2775,22 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 }
                 if ("AutoClicker".equals(module.getName())) {
                     return OpenMaverFeatures.getAutoClickerCpsMin() + "-"
-                            + OpenMaverFeatures.getAutoClickerCpsMax() + " CPS";
+                            + OpenMaverFeatures.getAutoClickerCpsMax() + " CPS"
+                            + "  ·  " + OpenMaverFeatures.getAutoClickerAttackModeName();
                 }
                 if ("Reach".equals(module.getName())) {
                     return "CAP " + format(OpenMaverFeatures.getEffectiveReachDistance(), 2)
                             + " m  ·  " + Math.round(OpenMaverFeatures.getReachChance()) + "%";
+                }
+                if ("Criticals".equals(module.getName())) {
+                    String mode = OpenMaverFeatures.getCriticalsModeName();
+                    if (OpenMaverFeatures.isCriticalsDisabledByProfile()) {
+                        mode += "  ·  OFF (LEGIT)";
+                    } else if (OpenMaverFeatures.isCriticalsPacketSuppressed()) {
+                        mode += "  ·  SAFE→JUMP";
+                    }
+                    return mode
+                            + (OpenMaverFeatures.isCriticalsStopSprint() ? "  ·  STOP SPRINT" : "");
                 }
                 if ("FakePlayer".equals(module.getName())) {
                     int count = OpenMaverFeatures.getFakePlayerCount();

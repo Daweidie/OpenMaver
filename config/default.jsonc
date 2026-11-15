@@ -41,6 +41,10 @@
     "reach": {
       "enabled": false,        // Reach 攻击距离：默认关闭
       "key": "K"               // 绑定键位（按 K 切换）
+    },
+    "criticals": {
+      "enabled": false,        // 刀暴/强制暴击：默认关闭（JUMP 模式：真实起跳后才暴击，不发伪造移动包）
+      "key": ""                // 默认不占用按键，玩家可自行绑定
     }
   },
 

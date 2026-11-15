@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Random;
 import java.util.UUID;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.io.File;
@@ -130,14 +131,37 @@ public final class OpenMaverFeatures {
      *
      * <p>1.8.9 的 {@code EntityLivingBase.hurtResistantTime} 会让 10 tick 内的
      * 重复攻击不造成伤害；高速连点会把大量“无效 C02”发给服务端，测试假人
-     * 上就会表现为“预期伤害”和“实际伤害”对不上。开启后无敌帧内只发挥手
-     * 动画（C0A），CPS 仍按配置保持；只有真正能造成伤害时才发 C02。
+     * 上就会表现为“预期伤害”和“实际伤害”对不上。开启后只有真正能造成伤害
+     * 时才发 C02，等待期间不再发 C0A（1.9+ 服务端会用挥击动画重置蓄力）。
      */
     private static boolean autoclickerWaitForHurt = true;
+    /**
+     * 攻击节奏模式：
+     * <ul>
+     *   <li>{@link #ATTACK_MODE_FULL_CHARGE}：按武器 1.9+ 冷却打满蓄力，单次 1.0 倍；</li>
+     *   <li>{@link #ATTACK_MODE_FASTEST}：只按 10 tick 无敌帧节流，约 2 次/秒，
+     *       单次倍率较低但近战对拼时压迫感更强；</li>
+     *   <li>{@link #ATTACK_MODE_VANILLA}：原版 C0A -> C02 顺序 + 旧版节流，
+     *       适合 1.8 `/server legacy`（没有攻击冷却，Grim 1.8 还要求先挥手）。</li>
+     * </ul>
+     */
+    private static final int ATTACK_MODE_FULL_CHARGE = 0;
+    private static final int ATTACK_MODE_FASTEST = 1;
+    private static final int ATTACK_MODE_VANILLA = 2;
+    private static final String[] ATTACK_MODE_KEYS = {"full", "fast", "vanilla"};
+    private static final String[] ATTACK_MODE_NAMES = {"FULL CHARGE", "FASTEST", "VANILLA"};
+    private static int autoclickerAttackMode = ATTACK_MODE_FULL_CHARGE;
     private static boolean autoclickerHumanize = true;
 
     /** openmaver.properties 的结构版本，用于迁移旧默认值。 */
-    private static final int SETTINGS_VERSION = 3;
+    private static final int SETTINGS_VERSION = 6;
+
+    /**
+     * 1.8.9 服务端的受击无敌窗口是 10 tick（hurtResistantTime 20 -> 10 才会结算）。
+     * 用 11 tick 作为下限，给网络 / tick 对齐留 1 tick 余量：卡在 500ms 边界上
+     * 的 C02 会有一半概率落在无敌帧最后一 tick 里被服务端直接丢弃。
+     */
+    private static final long AUTOCLICKER_HURT_TICKS = 11L;
 
     /** 下一次允许点击的时间（System.nanoTime）；0 表示尚未排程。 */
     private static long autoclickerLeftNextNanos;
@@ -151,6 +175,8 @@ public final class OpenMaverFeatures {
     private static long autoclickerLastClickNanos;
     /** 上一次真正攻击到实体的时间；用于 WAIT FOR HURT 的 10 tick 兜底间隔。 */
     private static long autoclickerLastEntityAttackNanos;
+    /** 上一次真正攻击到实体的客户端 tick；比墙上时钟更贴近服务端无敌帧。 */
+    private static long autoclickerLastEntityAttackTick = Long.MIN_VALUE;
     private static final Random AUTOCLICKER_RANDOM = new Random();
 
     // Reach（攻击距离）
@@ -165,8 +191,67 @@ public final class OpenMaverFeatures {
     /** 关闭 bypass 时保留旧的对比行为；默认 profile 下不会用到。 */
     private static final double REACH_MAX_DISTANCE = 5.9D;
 
+    // ==================================================================
+    // Criticals（ALWAYS 刀暴 / 强制暴击）
+    // ==================================================================
+
+    /** 刀暴模式：0=ALWAYS(packet), 1=NCP, 2=FALLING, 3=GRIM（仅空中）, 4=JUMP（真实跳跃）, 5=LOW, 6=DOWN。 */
+    private static final int CRITICALS_PACKET = 0;
+    private static final int CRITICALS_NCP = 1;
+    private static final int CRITICALS_FALLING = 2;
+    private static final int CRITICALS_GRIM = 3;
+    private static final int CRITICALS_JUMP = 4;
+    /** LiquidBounce（水影）的 1e-9 级微型位移模式：低于 Grim 0.001 的 Simulation 阈值。 */
+    private static final int CRITICALS_LOW = 5;
+    private static final int CRITICALS_DOWN = 6;
+    private static final int CRITICALS_LAST = CRITICALS_DOWN;
+    private static final String[] CRITICALS_MODE_KEYS = {
+            "packet", "ncp", "falling", "grim", "jump", "low", "down"};
+    private static final String[] CRITICALS_MODE_NAMES = {
+            "ALWAYS", "NCP", "FALLING", "GRIM", "JUMP", "LOW", "DOWN"};
+
+    private static final int CRITICALS_ATTACK_AUTOCLICKER = 1;
+    private static final int CRITICALS_ATTACK_REACH = 2;
+
+    /**
+     * 默认 JUMP：只有真实起跳后的下落才会暴击，不发送任何伪造移动包。
+     *
+     * <p>Matrix 的 {@code ka.critical.ground / hop / modify} 与 {@code bp.timer} 都是
+     * 由“每次攻击额外补 2~3 条 C04”直接产生的；在默认 balanced 档下这类 packet
+     * 模式会被降级为 JUMP，避免一开模块就连续吃 flag。
+     */
+    private static int criticalsMode = CRITICALS_JUMP;
+    /** 1.9+ 服务端冲刺会取消暴击：攻击前 STOP_SPRINTING，攻击后恢复。 */
+    private static boolean criticalsStopSprint = true;
+    /** 两次刀暴包之间的最小间隔；默认 0，表示每次可结算的攻击都发。 */
+    private static long criticalsDelayMs = 0L;
+    private static long criticalsLastAttackNanos;
+    /** STOP_SPRINTING 之前的冲刺状态，用于攻击后恢复。 */
+    private static boolean criticalsSprintWasActive;
+    /** JUMP 模式等待进入下落阶段的攻击状态。 */
+    private static Object criticalsJumpTarget;
+    private static int criticalsJumpAttackSource;
+    private static long criticalsJumpDeadlineNanos;
+    private static boolean criticalsAttackDeferred;
+
+    /** 反射缓存：C04 / C06 / C0B$Action，避免每个 tick 重复 Class.forName。 */
+    private static Class<?> criticalsPositionPacketType;
+    private static Constructor<?> criticalsPositionConstructor;
+    private static Class<?> criticalsPosLookPacketType;
+    private static Constructor<?> criticalsPosLookConstructor;
+    private static Class<?> criticalsEntityActionPacketType;
+    private static Constructor<?> criticalsEntityActionConstructor;
+    private static Class<?> criticalsActionType;
+    private static Object criticalsStopSprintAction;
+    private static Object criticalsStartSprintAction;
+    private static boolean criticalsPositionLookupFailed;
+    private static boolean criticalsPosLookLookupFailed;
+    private static boolean criticalsEntityActionLookupFailed;
+    /** 反射失败只记录一次，避免每 tick 刷屏。 */
+    private static boolean criticalsFailureLogged;
+
     // FastPlace
-    private static int fastPlaceDelayTicks = 2;
+    private static int fastPlaceDelayTicks = 4;
     private static boolean fastPlaceOnlyBlocks = true;
     private static boolean fastPlaceWasActive;
     private static boolean fastPlaceFailed;
@@ -260,13 +345,17 @@ public final class OpenMaverFeatures {
         rightClickUsedThisTick = false;
         autoclickerClickedThisTick = false;
         if (tickStartFailed) {
+            processPendingCriticalJump(mc);
             updateAutoClicker(mc);
+            suppressVanillaDuplicateAttack(mc);
             return;
         }
         try {
             refreshSettings();
             clientTick++;
+            processPendingCriticalJump(mc);
             updateAutoClicker(mc);
+            suppressVanillaDuplicateAttack(mc);
             boolean screenOpen = read(mc, "currentScreen", "field_71462_r", null) != null;
             if (screenOpen) {
                 aimHasTarget = false;
@@ -362,6 +451,11 @@ public final class OpenMaverFeatures {
                 }
                 autoclickerPauseUntilNanos = 0L;
             }
+            // JUMP 模式正在等待玩家进入下落阶段：此时不能再走普通点击调度，
+            // 否则会在 pending 攻击完成前反复起跳/延迟。
+            if (criticalsAttackDeferred) {
+                return;
+            }
 
             // 使用物品时攻击/挥击都会被 Grim 的 MultiActionsA/E 抓；先完全停手。
             boolean usingItem = Boolean.TRUE.equals(
@@ -379,10 +473,14 @@ public final class OpenMaverFeatures {
                 if (autoclickerLeftNextNanos == 0L) {
                     autoclickerLeftNextNanos = now + autoClickerIntervalNanos();
                 } else if (now >= autoclickerLeftNextNanos && !autoclickerClickedThisTick) {
+                    criticalsAttackDeferred = false;
                     if (tryAutoLeftClick(mc, now)) {
                         autoclickerClickedThisTick = true;
                     }
-                    autoclickerLeftNextNanos = now + autoClickerIntervalNanos();
+                    // 固定节拍：从上一次“计划时间”推进，而不是从 now 重算。
+                    // tick 只有 20Hz，14~17 CPS 的间隔（约 59~71ms）大于 50ms；
+                    // 从 now 重算会把每次点击都推到下一个 tick，实际只剩 6~10 CPS。
+                    autoclickerLeftNextNanos = nextClickDeadline(autoclickerLeftNextNanos, now);
                     return;
                 }
             }
@@ -396,7 +494,7 @@ public final class OpenMaverFeatures {
                     if (tryAutoRightClick(mc, now)) {
                         autoclickerClickedThisTick = true;
                     }
-                    autoclickerRightNextNanos = now + autoClickerIntervalNanos();
+                    autoclickerRightNextNanos = nextClickDeadline(autoclickerRightNextNanos, now);
                 }
             }
         } catch (Throwable ignored) {
@@ -405,14 +503,141 @@ public final class OpenMaverFeatures {
         }
     }
 
+    /**
+     * 拦住原版「按住左键」路径在同一 tick 额外补发的 C02。
+     *
+     * <p>1.8.9 的 {@code Minecraft.runTick} 只要左键按住且
+     * {@code leftClickCounter == 0} 就会再调一次 {@code clickMouse()}，
+     * 而 {@code clickMouse()} 命中实体时不会重置这个计数器。结果 AutoClicker
+     * 的 WAIT FOR HURT 只限制了它自己注入的点击，服务端仍然每 tick 收到一条
+     * 攻击包（约 20 CPS）。在 1.9+ 子服上这会让服务端的攻击冷却读数一直贴在
+     * 0 附近，真正结算的那一下伤害极低，看起来就像「连点伤害全无效」。
+     *
+     * <p>这里只在准星确实指着实体时把计数器抬到 2：原版递减后仍 > 0，
+     * 「按住攻击」分支会被跳过；AutoClicker 自己真正攻击前会再清回 0，
+     * 因此既不影响挖方块，也能保证每个受击窗口最多一条有效 C02。
+     */
+    private static void suppressVanillaDuplicateAttack(Minecraft mc) {
+        try {
+            Module autoClicker = ModuleManager.getModule("AutoClicker");
+            if (autoClicker == null || !autoClicker.isEnabled() || !autoclickerLeft) {
+                return;
+            }
+            if (autoclickerRequireHold && !Mouse.isButtonDown(0)) {
+                return;
+            }
+            Object hit = read(mc, "objectMouseOver", "field_71476_x", null);
+            if (hit == null || !isEntityHit(hit)) {
+                return;
+            }
+            writeIntField(mc, "leftClickCounter", "field_71429_W", 2);
+        } catch (Throwable ignored) {
+            // objectMouseOver 在切世界时可能为空，忽略即可。
+        }
+    }
+
+    /**
+     * 下一次攻击还要等多久（tick）。
+     *
+     * <p>两个约束取较大值：
+     * <ul>
+     *   <li>目标受击无敌帧：1.8.9 / 1.9 都是 10 tick，所以最少 11 tick；</li>
+     *   <li>1.9+ 攻击冷却：需要 {@code 20 / attackSpeed} tick 才能打出 1.0 倍伤害。</li>
+     * </ul>
+     * 1.8 客户端看不到 1.9 的 ATTACK_SPEED 属性，这里按原版物品类别近似。
+     */
+    private static long autoclickerAttackTicks(Object player) {
+        long ticks = AUTOCLICKER_HURT_TICKS;
+        if (autoclickerAttackMode != ATTACK_MODE_FULL_CHARGE) {
+            return ticks;
+        }
+        double speed = heldItemAttackSpeed(player);
+        if (speed > 0.0D) {
+            // 1.9 的蓄力公式带 +0.5 tick 的 partial tick，因此 ceil(period)
+            // 就能到 1.0；留 0~1 tick 的网络抖动余量即可，不必额外多等。
+            ticks = Math.max(ticks, (long) Math.ceil(20.0D / speed));
+        }
+        return ticks;
+    }
+
+    private static double heldItemAttackSpeed(Object player) {
+        try {
+            Object stack = call(player, "getHeldItem", "func_70694_bm", null);
+            Object item = stack == null ? null
+                    : call(stack, "getItem", "func_77973_b", null);
+            if (item == null) {
+                return 4.0D; // 空手
+            }
+            if (itemIs(item, "ItemSword")) {
+                return 1.6D;
+            }
+            if (itemIs(item, "ItemAxe")) {
+                // 1.9 斧攻速：木/石 0.8、铁 0.9、钻石/金 1.0。1.8 客户端看不到
+                // ATTACK_SPEED，只能用耐久近似分辨材质。
+                Object maxDamage = call(stack, "getMaxDamage", "func_77952_i", null);
+                int durability = maxDamage instanceof Number
+                        ? ((Number) maxDamage).intValue() : 0;
+                if (durability >= 1000 || (durability > 0 && durability <= 40)) {
+                    return 1.0D;
+                }
+                return durability >= 200 ? 0.9D : 0.8D;
+            }
+            if (itemIs(item, "ItemPickaxe")) {
+                return 1.2D;
+            }
+            if (itemIs(item, "ItemSpade")) {
+                return 1.0D;
+            }
+            if (itemIs(item, "ItemHoe")) {
+                return 1.0D;
+            }
+        } catch (Throwable ignored) {
+            // 映射差异时按空手处理，至少保留 11 tick 无敌帧节流。
+        }
+        return 4.0D;
+    }
+
+    private static boolean itemIs(Object item, String simpleName) {
+        for (Class<?> type = item.getClass(); type != null && type != Object.class;
+                type = type.getSuperclass()) {
+            // 运行期是 MCP 类名（ItemSword）；自定义子类会继续往父类找。
+            if (simpleName.equals(type.getSimpleName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 目标是否还处在受击无敌帧 / 1.9+ 攻击冷却内。
+     *
+     * <p>服务端的无敌帧判定是 {@code hurtResistantTime > maxHurtResistantTime / 2}：
+     * 从 20 开始每 tick 减 1，减到 10 才重新接受伤害。按 tick 计比墙上时钟更贴近
+     * 服务端；切世界后用 500ms 墙钟兜底。
+     */
+    private static boolean entityHurtWindowActive(long now, long requiredTicks) {
+        long ticks = Math.max(AUTOCLICKER_HURT_TICKS, requiredTicks);
+        if (autoclickerLastEntityAttackTick != Long.MIN_VALUE) {
+            long elapsedTicks = clientTick - autoclickerLastEntityAttackTick;
+            if (elapsedTicks >= 0L && elapsedTicks < ticks) {
+                return true;
+            }
+        }
+        long requiredNanos = Math.max(500_000_000L, ticks * 50_000_000L);
+        return autoclickerLastEntityAttackNanos != 0L
+                && now - autoclickerLastEntityAttackNanos < requiredNanos;
+    }
+
     private static boolean tryAutoLeftClick(Minecraft mc, long now) {
+        criticalsAttackDeferred = false;
         Object hit = read(mc, "objectMouseOver", "field_71476_x", null);
         Object hitType = hit == null ? null : read(hit, "typeOfHit", "field_72313_a", null);
         boolean miss = hitType == null || "MISS".equals(String.valueOf(hitType));
         if (miss) {
             autoclickerMissStreak++;
-            // legit/balanced 不刷无意义空挥：连续多次 MISS 后主动停一小段。
-            if (safeProfile() && autoclickerMissStreak > 6) {
+            // 仅 LEGIT 严格档在连续空挥后主动停一小段；BALANCED/AGGRESSIVE
+            // 保持玩家设置的 CPS，避免在打空/测试 CPS 时被暂停压到 10 以下。
+            if (bypassEnabled && bypassProfile == PROFILE_LEGIT && autoclickerMissStreak > 6) {
                 autoclickerMissStreak = 0;
                 autoclickerPauseUntilNanos = now + 250_000_000L
                         + (long) (AUTOCLICKER_RANDOM.nextDouble() * 250_000_000L);
@@ -422,29 +647,40 @@ public final class OpenMaverFeatures {
         } else {
             autoclickerMissStreak = 0;
         }
-        // 目标还在受击无敌帧里时，原版 clickMouse 仍会发 C02，但服务端会忽略
-        // 这次伤害。测试假人的“预期伤害/实际伤害”不一致，主要就是这种
-        // 无效连点造成的：这里只发挥击动画（C0A），等无敌帧结束再发真正的
-        // C02 攻击。这样 CPS 仍按配置保持 16~18，但每次攻击都能结算伤害。
+        // 目标还在受击无敌帧 / 1.9+ 攻击冷却里时，不做任何点击注入：
+        // - C02 会被服务端当作伤害无效或按低蓄力结算；
+        // - C0A 也不能发：1.9+ 服务端把任何挥击动画都当成一次攻击并重置
+        //   AttackStrengthTicker（MC-255058），等待期间的挥手会把后面的真正
+        //   C02 压到 0.2 倍伤害。CPS HUD 仍按配置显示。
         boolean entityHit = !miss && isEntityHit(hit);
         long interval = clickIntervalMillis(now);
-        if (autoclickerWaitForHurt && entityHit) {
-            // 即使客户端读不到目标的 hurtResistantTime（假人/映射差异），也至少
-            // 按 1.8.9 的 10 tick 无敌窗口限制实体攻击频率，避免无意义刷 C02。
-            if (now - autoclickerLastEntityAttackNanos < 500_000_000L
-                    || !targetReadyForDamage(hit)) {
-                Object player = read(mc, "thePlayer", "field_71439_g", null);
-                if (player != null && callVoid(player, "swingItem", "func_71038_i", null)) {
-                    StatsHud.recordAutoClick(true, now);
-                    OpenMaverDebug.click("swing", interval, effectiveCpsMax(),
-                            Mouse.isButtonDown(0), autoclickerMissStreak);
-                    autoclickerLastClickNanos = now;
-                    return true;
-                }
-                OpenMaverDebug.noticeOnce("autoclicker.hurtWait",
-                        "autoclicker waits for target hurtResistantTime");
-                return false;
+        Object player = read(mc, "thePlayer", "field_71439_g", null);
+        long waitTicks = autoclickerAttackMode == ATTACK_MODE_FULL_CHARGE
+                ? autoclickerAttackTicks(player) : AUTOCLICKER_HURT_TICKS;
+        if (entityHit
+                && (autoclickerAttackMode != ATTACK_MODE_VANILLA || autoclickerWaitForHurt)
+                && (entityHurtWindowActive(now, waitTicks)
+                        || !targetReadyForDamage(hit))) {
+            if (autoclickerAttackMode == ATTACK_MODE_VANILLA) {
+                // 1.8 服务端不会因为挥手重置蓄力，保留旧版的挥手动画与 CPS 手感。
+                callVoid(player, "swingItem", "func_71038_i", null);
             }
+            StatsHud.recordAutoClick(true, now);
+            OpenMaverDebug.click("wait", interval, autoclickerCpsMax,
+                    Mouse.isButtonDown(0), autoclickerMissStreak);
+            autoclickerLastClickNanos = now;
+            return true;
+        }
+        // Packet 刀暴必须在真正的 C02 之前发送：伪造移动包 -> clickMouse -> 恢复冲刺。
+        // 等待蓄力的分支没有 C02，因此那里不调用 Criticals。
+        Object target = entityHit ? read(hit, "entityHit", "field_72308_g", null) : null;
+        boolean criticalsStopSprintSent = false;
+        if (target instanceof EntityLivingBase && alive(target)) {
+            criticalsStopSprintSent = applyCriticals(mc, player, target,
+                    CRITICALS_ATTACK_AUTOCLICKER);
+        }
+        if (criticalsAttackDeferred) {
+            return false;
         }
         // 1.8.9 的 clickMouse() 在 MISS 时会把 leftClickCounter 设为 10，
         // 之后 10 tick 内的自动点击会被原版完全吞掉（10 CPS 实际只剩约 2 CPS）。
@@ -453,15 +689,49 @@ public final class OpenMaverFeatures {
             OpenMaverDebug.noticeOnce("autoclicker.leftCounter",
                     "cannot reset leftClickCounter; clicks may be throttled by vanilla");
         }
-        call(mc, "clickMouse", "func_147116_af", null);
+        // 现代服务端（1.19.2+）收到任何挥击动画都会清空 AttackStrengthTicker
+        // （MC-255058）。1.8 的 clickMouse 顺序是 C0A -> C02，导致 C02 结算时
+        // 蓄力永远是 0，只能打出 0.2~0.4 倍伤害。FULL CHARGE / FASTEST 模式下改为先发
+        // C02、再补 C0A，保证攻击吃到完整蓄力。
+        boolean attacked = autoclickerAttackMode != ATTACK_MODE_VANILLA
+                && target instanceof EntityLivingBase
+                && attackEntityFirst(mc, player, target);
+        if (!attacked) {
+            call(mc, "clickMouse", "func_147116_af", null);
+        }
+        restoreCriticalsSprint(player, criticalsStopSprintSent);
         StatsHud.recordAutoClick(true, now);
-        OpenMaverDebug.click("left", interval, effectiveCpsMax(),
+        OpenMaverDebug.click("left", interval, autoclickerCpsMax,
                 Mouse.isButtonDown(0), autoclickerMissStreak);
         if (entityHit) {
             autoclickerLastEntityAttackNanos = now;
+            autoclickerLastEntityAttackTick = clientTick;
         }
         autoclickerLastClickNanos = now;
         return true;
+    }
+
+    /**
+     * 先发 C02 再发 C0A。
+     *
+     * <p>1.8 的 {@code clickMouse()} 顺序是 {@code swingItem()} -> {@code attackEntity()}。
+     * 在 1.19.2+ 服务端上，任何 swing 动画都会重置攻击蓄力（MC-255058），
+     * 于是紧随其后的 C02 只能按 0 蓄力结算（约 0.2~0.4 倍伤害）。
+     * 反过来发送可以让 C02 吃到完整蓄力，代价是不符合 Grim 1.8 的
+     * {@code PacketOrderB}（ANIMATION -> INTERACT_ENTITY），所以只在
+     * FULL CHARGE / FASTEST 模式下使用，VANILLA 模式仍走原版顺序。
+     */
+    private static boolean attackEntityFirst(Minecraft mc, Object player, Object target) {
+        Object controller = read(mc, "playerController", "field_71442_b", null);
+        if (controller == null || player == null || target == null) {
+            return false;
+        }
+        boolean sent = callVoid(controller, "attackEntity", "func_78764_a", "a",
+                player, target);
+        if (sent) {
+            callVoid(player, "swingItem", "func_71038_i", null);
+        }
+        return sent;
     }
 
     /**
@@ -513,17 +783,32 @@ public final class OpenMaverFeatures {
             return false;
         }
         long interval = clickIntervalMillis(now);
-        // rightClickMouse() 每次调用后都会把 rightClickDelayTimer 设为 4；
-        // 原版只在“按住右键”的分支里递减该值，直接注入时不清零就会被吞掉，
-        // 表现为高 CPS 设置下右键实际只有约 4 CPS。
-        if (!writeIntField(mc, "rightClickDelayTimer", "field_71467_ac", 0)) {
-            OpenMaverDebug.noticeOnce("autoclicker.rightTimer",
-                    "cannot reset rightClickDelayTimer; clicks may be throttled by vanilla");
+        boolean aggressive = !bypassEnabled || bypassProfile == PROFILE_AGGRESSIVE;
+        if (aggressive) {
+            // rightClickMouse() 每次调用后都会把 rightClickDelayTimer 设为 4；
+            // aggressive 档位直接压到 0，按配置 CPS 注入右键。
+            if (!writeIntField(mc, "rightClickDelayTimer", "field_71467_ac", 0)) {
+                OpenMaverDebug.noticeOnce("autoclicker.rightTimer",
+                        "cannot reset rightClickDelayTimer; clicks may be throttled by vanilla");
+            }
+        } else {
+            // balanced/legit：右键放置交还原版 4 tick 冷却。直接按 CPS 调用
+            // rightClickMouse() 会以 10~20 个/秒连续发 C08，矩阵的
+            // block.fastplace 正是按这个间隔判定的。
+            Integer timer = readIntField(mc, "rightClickDelayTimer", "field_71467_ac");
+            if (timer == null) {
+                OpenMaverDebug.noticeOnce("autoclicker.rightTimerRead",
+                        "cannot read rightClickDelayTimer; right clicks throttled");
+                return false;
+            }
+            if (timer.intValue() > 0) {
+                return false;
+            }
         }
         call(mc, "rightClickMouse", "func_147121_ag", "ax");
         rightClickUsedThisTick = true;
         StatsHud.recordAutoClick(false, now);
-        OpenMaverDebug.click("right", interval, effectiveCpsMax(),
+        OpenMaverDebug.click("right", interval, autoclickerCpsMax,
                 Mouse.isButtonDown(1), autoclickerMissStreak);
         autoclickerLastClickNanos = now;
         return true;
@@ -531,11 +816,15 @@ public final class OpenMaverFeatures {
 
     /**
      * 人类化点击间隔：均匀 CPS + 抖动 + 低概率停顿。
-     * 下一次截止时间始终从“当前时间”重算，卡顿后不会补发积压点击。
+     * 截止时间由 {@link #nextClickDeadline(long, long)} 按固定节拍推进，
+     * 不因 tick 量化而丢掉余量；卡顿后只丢弃积压，不补发爆发点击。
      */
     private static long autoClickerIntervalNanos() {
         int min = autoclickerCpsMin;
-        int max = Math.min(autoclickerCpsMax, effectiveCpsMax());
+        // 点击器使用玩家在 ClickGUI 里设置的 CPS，不再被 Grim Bypass profile
+        // 静默截断。balance 默认曾把 14~17 CPS 压到 12 CPS，再叠加 20Hz tick
+        // 调度后实际只剩 6~9 CPS，看起来像模块失效。
+        int max = autoclickerCpsMax;
         if (min > max) {
             int swap = min;
             min = max;
@@ -552,8 +841,26 @@ public final class OpenMaverFeatures {
                 base += 120_000_000D + AUTOCLICKER_RANDOM.nextDouble() * 230_000_000D;
             }
         }
-        long minInterval = minClickIntervalNanos();
-        return Math.max(minInterval, (long) base);
+        // 上限 20 CPS（50ms）；GUI 的 CPS MAX 也限制在 20。
+        return Math.max(45_000_000L, (long) base);
+    }
+
+    /**
+     * 按固定节拍推进下一次点击时间。
+     *
+     * <p>上一次实现是 {@code now + interval}。在 20 TPS 下，14~17 CPS 的目标
+     * 间隔（59~71ms）刚好跨过 1~2 个 tick，从 now 重算会不断丢掉不足一个 tick
+     * 的余量，实际速率被压到约 6~10 CPS。这里改成
+     * {@code previousDeadline + interval}，把余量保留下来；只有游戏卡顿导致
+     * 计划时间严重落后时，才丢弃积压、从当前时间重新开始，避免爆发式补点。
+     */
+    private static long nextClickDeadline(long deadline, long now) {
+        long interval = autoClickerIntervalNanos();
+        long next = deadline + interval;
+        if (next <= now) {
+            next = now + interval;
+        }
+        return next;
     }
 
     private static long clickIntervalMillis(long now) {
@@ -561,24 +868,6 @@ public final class OpenMaverFeatures {
             return 0L;
         }
         return Math.max(0L, (now - autoclickerLastClickNanos) / 1_000_000L);
-    }
-
-    private static int effectiveCpsMax() {
-        if (!bypassEnabled || bypassProfile == PROFILE_AGGRESSIVE) {
-            return 20;
-        }
-        return bypassProfile == PROFILE_LEGIT ? 8 : 12;
-    }
-
-    public static int getEffectiveCpsMax() {
-        return effectiveCpsMax();
-    }
-
-    private static long minClickIntervalNanos() {
-        if (!bypassEnabled || bypassProfile == PROFILE_AGGRESSIVE) {
-            return 45_000_000L;
-        }
-        return bypassProfile == PROFILE_LEGIT ? 115_000_000L : 75_000_000L;
     }
 
     private static void resetAutoClickerTimers() {
@@ -589,6 +878,10 @@ public final class OpenMaverFeatures {
         autoclickerClickedThisTick = false;
         autoclickerLastClickNanos = 0L;
         autoclickerLastEntityAttackNanos = 0L;
+        autoclickerLastEntityAttackTick = Long.MIN_VALUE;
+        if (criticalsJumpAttackSource == CRITICALS_ATTACK_AUTOCLICKER) {
+            resetCriticalsJumpState();
+        }
     }
 
     // ==================================================================
@@ -803,7 +1096,14 @@ public final class OpenMaverFeatures {
         if (controller == null) {
             return;
         }
+        // Reach 的补刀同样需要先伪造下落，再发送 C02；攻击后恢复冲刺。
+        boolean criticalsStopSprintSent = applyCriticals(mc, player, bestTarget,
+                CRITICALS_ATTACK_REACH);
+        if (criticalsAttackDeferred) {
+            return;
+        }
         callVoid(controller, "attackEntity", "func_78764_a", "a", player, bestTarget);
+        restoreCriticalsSprint(player, criticalsStopSprintSent);
         Object name = call(bestTarget, "getName", "func_70005_c_", null);
         OpenMaverDebug.attack(name == null ? String.valueOf(bestTarget) : String.valueOf(name),
                 bestDistance, maxDistance,
@@ -860,6 +1160,464 @@ public final class OpenMaverFeatures {
         reachLastSwingProgress = Integer.MIN_VALUE;
     }
 
+    // ==================================================================
+    // Criticals（ALWAYS 刀暴 / 强制暴击）
+    // ==================================================================
+
+    /**
+     * 完成 JUMP 模式上一次被延后的攻击。该方法在 tick START 执行，早于 vanilla
+     * 移动包，因此 C02 仍保持在本 tick 的 C03 之前。
+     */
+    private static void processPendingCriticalJump(Minecraft mc) {
+        Object target = criticalsJumpTarget;
+        if (target == null) {
+            return;
+        }
+        long now = System.nanoTime();
+        if (now > criticalsJumpDeadlineNanos) {
+            resetCriticalsJumpState();
+            return;
+        }
+        Module criticals = ModuleManager.getModule("Criticals");
+        Object player = read(mc, "thePlayer", "field_71439_g", null);
+        if (criticals == null || !criticals.isEnabled() || player == null
+                || !alive(player) || !alive(target)) {
+            resetCriticalsJumpState();
+            return;
+        }
+        if (criticalsJumpAttackSource == CRITICALS_ATTACK_AUTOCLICKER) {
+            Module autoClicker = ModuleManager.getModule("AutoClicker");
+            if (autoClicker == null || !autoClicker.isEnabled()
+                    || (autoclickerRequireHold && !Mouse.isButtonDown(0))) {
+                resetCriticalsJumpState();
+                return;
+            }
+        }
+        if (scaffoldOnGround(player) || !criticalPlayerIsFalling(player)
+                || !entityReadyForDamage(target)) {
+            return;
+        }
+
+        int source = criticalsJumpAttackSource;
+        criticalsAttackDeferred = false;
+        boolean stopSprintSent = applyCriticals(mc, player, target, source);
+        if (criticalsAttackDeferred) {
+            return;
+        }
+        resetCriticalsJumpState();
+
+        if (source == CRITICALS_ATTACK_AUTOCLICKER) {
+            Object hit = read(mc, "objectMouseOver", "field_71476_x", null);
+            Object currentTarget = read(hit, "entityHit", "field_72308_g", null);
+            if (currentTarget != target) {
+                return;
+            }
+            writeIntField(mc, "leftClickCounter", "field_71429_W", 0);
+            if (!((autoclickerAttackMode != ATTACK_MODE_VANILLA)
+                    && attackEntityFirst(mc, player, target))) {
+                call(mc, "clickMouse", "func_147116_af", null);
+            }
+            restoreCriticalsSprint(player, stopSprintSent);
+            autoclickerClickedThisTick = true;
+            autoclickerLastEntityAttackNanos = now;
+            autoclickerLastEntityAttackTick = clientTick;
+            autoclickerLastClickNanos = now;
+            StatsHud.recordAutoClick(true, now);
+            OpenMaverDebug.click("critical-jump", 0L, autoclickerCpsMax,
+                    Mouse.isButtonDown(0), autoclickerMissStreak);
+            return;
+        }
+
+        if (source == CRITICALS_ATTACK_REACH) {
+            Object controller = read(mc, "playerController", "field_71442_b", null);
+            if (controller != null) {
+                callVoid(controller, "attackEntity", "func_78764_a", "a", player, target);
+                restoreCriticalsSprint(player, stopSprintSent);
+            }
+        }
+    }
+
+    private static boolean criticalPlayerIsFalling(Object player) {
+        double fallDistance = number(player, "fallDistance", "field_70143_R");
+        double motionY = number(player, "motionY", "field_70181_x");
+        return fallDistance > 0.0D || motionY < -0.01D;
+    }
+
+    private static boolean prepareCriticalJump(Object player, Object target, int source) {
+        if (player == null || target == null) {
+            return false;
+        }
+        if (scaffoldOnGround(player)) {
+            if (!callVoid(player, "jump", "func_70664_aZ", "aF")) {
+                logCriticalsFailure("jump", new IllegalStateException("jump method unavailable"));
+                return false;
+            }
+        }
+        criticalsJumpTarget = target;
+        criticalsJumpAttackSource = source;
+        criticalsJumpDeadlineNanos = System.nanoTime() + 750_000_000L;
+        criticalsAttackDeferred = true;
+        return true;
+    }
+
+    private static void resetCriticalsJumpState() {
+        criticalsJumpTarget = null;
+        criticalsJumpAttackSource = 0;
+        criticalsJumpDeadlineNanos = 0L;
+        criticalsAttackDeferred = false;
+    }
+
+    /**
+     * 在真正发送 C02 之前伪造 C03/C06 移动包，让服务端认为玩家正在下落。
+     *
+     * <p>调用顺序必须是：伪造移动包 -> C02 攻击。本方法只负责前半段；
+     * 调用方在 {@code clickMouse()} / {@code attackEntity()} 之后必须调用
+     * {@link #restoreCriticalsSprint(Object, boolean)}。
+     *
+     * @return 是否发送过 STOP_SPRINTING（用于攻击后恢复冲刺）
+     */
+    private static boolean applyCriticals(Minecraft mc, Object player, Object target, int source) {
+        boolean stopSprintSent = false;
+        criticalsAttackDeferred = false;
+        try {
+            Module criticals = ModuleManager.getModule("Criticals");
+            if (criticals == null || !criticals.isEnabled()) {
+                return false;
+            }
+            if (player == null || !(target instanceof EntityLivingBase) || !alive(target)
+                    || !alive(player)) {
+                return false;
+            }
+            // 使用物品时攻击会被 Grim MultiActions 抓，而且原版暴击条件也不成立。
+            if (Boolean.TRUE.equals(call(player, "isUsingItem", "func_71039_bw", "bS"))) {
+                return false;
+            }
+            // 目标还在无敌帧里时，即使伪造下落，C02 也不会结算伤害。
+            if (!entityReadyForDamage(target)) {
+                return false;
+            }
+            long now = System.nanoTime();
+            if (criticalsDelayMs > 0L && criticalsLastAttackNanos != 0L
+                    && now - criticalsLastAttackNanos < criticalsDelayMs * 1_000_000L) {
+                return false;
+            }
+            if (criticalsInInvalidState(player)) {
+                return false;
+            }
+
+            boolean onGround = scaffoldOnGround(player);
+            int mode = clamp(criticalsMode, CRITICALS_PACKET, CRITICALS_LAST);
+            // LEGIT 完全不做刀暴；BALANCED 把任何伪造位移模式降级为真实起跳。
+            // Matrix 的 ka.critical.*（ground / hop / modify）与 bp.timer 都直接源于
+            // “每次攻击多发的移动包”，低风险档位不应再把它们发出去。
+            if (bypassEnabled) {
+                if (bypassProfile == PROFILE_LEGIT) {
+                    return false;
+                }
+                if (bypassProfile == PROFILE_BALANCED && mode != CRITICALS_JUMP) {
+                    mode = CRITICALS_JUMP;
+                }
+            }
+            if (mode == CRITICALS_JUMP) {
+                if (!criticalPlayerIsFalling(player)) {
+                    prepareCriticalJump(player, target, source);
+                    return false;
+                }
+                if (criticalsJumpTarget == target) {
+                    criticalsJumpTarget = null;
+                    criticalsJumpDeadlineNanos = 0L;
+                }
+            }
+            // ALWAYS / NCP / FALLING / JUMP 在任意地面状态都可以执行；
+            // GRIM 仍然只作为“已经在空中”时的补包模式，避免在地面伪造 onGround=false。
+            if (mode == CRITICALS_GRIM && onGround) {
+                return false;
+            }
+
+            double x = number(player, "posX", "field_70165_t");
+            double y = number(player, "posY", "field_70163_u");
+            double z = number(player, "posZ", "field_70161_v");
+            float yaw = (float) number(player, "rotationYaw", "field_70177_z");
+            float pitch = (float) number(player, "rotationPitch", "field_70125_A");
+
+            // 1.8.9 客户端的暴击判定不检查冲刺，但 latest（1.9+）服务端的
+            // Player.attack 明确要求 !isSprinting()。攻击时还在冲刺的话，伪造下落
+            // 既不会暴击，还会白送 GroundSpoof / Post / Timer 三类 flag，所以这里
+            // 要么真的先停冲刺，要么直接放弃这次刀暴（调用方随后按普通攻击结算）。
+            boolean sprinting = Boolean.TRUE.equals(
+                    call(player, "isSprinting", "func_70051_ag", null));
+            if (sprinting) {
+                if (!criticalsStopSprint) {
+                    OpenMaverDebug.noticeOnce("criticals.sprint",
+                            "criticals skipped: sprinting blocks 1.9+ critical hits");
+                    return false;
+                }
+                stopSprintSent = stopCriticalsSprint(player);
+                if (Boolean.TRUE.equals(
+                        call(player, "isSprinting", "func_70051_ag", null))) {
+                    restoreCriticalsSprint(player, stopSprintSent);
+                    return false;
+                }
+            }
+
+            boolean movementSent = mode == CRITICALS_JUMP || sendCriticalsMovement(player, mode,
+                    x, y, z, yaw, pitch, onGround);
+            if (!movementSent) {
+                // 没有成功伪造下落就不要留下 STOP_SPRINTING 状态。
+                restoreCriticalsSprint(player, stopSprintSent);
+                return false;
+            }
+            criticalsLastAttackNanos = now;
+            return stopSprintSent;
+        } catch (Throwable error) {
+            // 任何意外都不留下 STOP_SPRINTING 状态。
+            restoreCriticalsSprint(player, stopSprintSent);
+            logCriticalsFailure("apply", error);
+            return false;
+        }
+    }
+
+    /** 梯子/水面/蜘蛛网/骑乘状态下伪造下落容易被服务端判定为非法移动。 */
+    private static boolean criticalsInInvalidState(Object player) {
+        if (Boolean.TRUE.equals(call(player, "isInWater", "func_70090_H", null))) {
+            return true;
+        }
+        if (Boolean.TRUE.equals(call(player, "isOnLadder", "func_70617_f_", "k_"))) {
+            return true;
+        }
+        if (Boolean.TRUE.equals(read(player, "isInWeb", "field_70134_J", null))) {
+            return true;
+        }
+        return Boolean.TRUE.equals(call(player, "isRiding", "func_70115_ae", null));
+    }
+
+    private static boolean sendCriticalsMovement(Object player, int mode,
+            double x, double y, double z, float yaw, float pitch, boolean onGround) {
+        switch (mode) {
+            case CRITICALS_PACKET:
+                // LiquidBounce Legacy Packet：先抬高 0.0625 再回到原位置。
+                return sendCriticalsPosition(player, x, y + 0.0625D, z, true)
+                        && sendCriticalsPosition(player, x, y, z, false);
+            case CRITICALS_NCP:
+                return sendCriticalsPosition(player, x, y + 0.11D, z, false)
+                        && sendCriticalsPosition(player, x, y + 0.1100013579D, z, false)
+                        && sendCriticalsPosition(player, x, y + 0.0000013579D, z, false);
+            case CRITICALS_FALLING:
+                return sendCriticalsPosition(player, x, y + 0.0625D, z, false)
+                        && sendCriticalsPosition(player, x, y + 0.0625013579D, z, false)
+                        && sendCriticalsPosition(player, x, y + 0.0000013579D, z, false);
+            case CRITICALS_GRIM:
+                // 现代 Grim 模式只在调用方确认玩家已离地后补一条 FULL 包。
+                return sendCriticalsPosLook(player, x, y - 0.000001D, z,
+                        yaw, pitch, false);
+            case CRITICALS_LOW:
+                // LiquidBounce / 水影 Low：先抬 1e-9 再回到原位。
+                // 位移低于 Grim Simulation 的 0.001 阈值，同时制造 >0 的 fallDistance。
+                // 用 C04（只带位置）而不是 C06：两条同 yaw/pitch 的 C06 会被 Grim 的
+                // AimDuplicateLook 当成“重复 rotation”逐条记录，而伪造下落并不需要
+                // 再发一遍视角。
+                return sendCriticalsPosition(player, x, y + 1.0E-9D, z, false)
+                        && sendCriticalsPosition(player, x, y, z, false);
+            case CRITICALS_DOWN:
+                // LiquidBounce / 水影 Down：只向下 1e-9，包数最少。
+                // 如果客户端正好贴地、微型位移被地面碰撞吃掉，请改用 LOW。
+                return sendCriticalsPosition(player, x, y - 1.0E-9D, z, false);
+            default:
+                return false;
+        }
+    }
+
+    private static boolean sendCriticalsPosition(Object player,
+            double x, double y, double z, boolean onGround) {
+        try {
+            if (!ensureCriticalsPositionPacket()) {
+                return false;
+            }
+            Object packet = criticalsPositionConstructor.newInstance(
+                    Double.valueOf(x), Double.valueOf(y), Double.valueOf(z),
+                    Boolean.valueOf(onGround));
+            return sendCriticalsPacket(player, packet);
+        } catch (Throwable error) {
+            criticalsPositionLookupFailed = true;
+            logCriticalsFailure("C04", error);
+            return false;
+        }
+    }
+
+    private static boolean sendCriticalsPosLook(Object player, double x, double y, double z,
+            float yaw, float pitch, boolean onGround) {
+        try {
+            if (!ensureCriticalsPosLookPacket()) {
+                return false;
+            }
+            Object packet = criticalsPosLookConstructor.newInstance(
+                    Double.valueOf(x), Double.valueOf(y), Double.valueOf(z),
+                    Float.valueOf(yaw), Float.valueOf(pitch), Boolean.valueOf(onGround));
+            return sendCriticalsPacket(player, packet);
+        } catch (Throwable error) {
+            criticalsPosLookLookupFailed = true;
+            logCriticalsFailure("C06", error);
+            return false;
+        }
+    }
+
+    private static boolean ensureCriticalsPositionPacket() {
+        if (criticalsPositionConstructor != null) {
+            return true;
+        }
+        if (criticalsPositionLookupFailed) {
+            return false;
+        }
+        try {
+            criticalsPositionPacketType = Class.forName(
+                    "net.minecraft.network.play.client.C03PacketPlayer$C04PacketPlayerPosition");
+            criticalsPositionConstructor = criticalsPositionPacketType.getConstructor(
+                    Double.TYPE, Double.TYPE, Double.TYPE, Boolean.TYPE);
+            return true;
+        } catch (Throwable error) {
+            criticalsPositionLookupFailed = true;
+            logCriticalsFailure("C04 lookup", error);
+            return false;
+        }
+    }
+
+    private static boolean ensureCriticalsPosLookPacket() {
+        if (criticalsPosLookConstructor != null) {
+            return true;
+        }
+        if (criticalsPosLookLookupFailed) {
+            return false;
+        }
+        try {
+            criticalsPosLookPacketType = Class.forName(
+                    "net.minecraft.network.play.client.C03PacketPlayer$C06PacketPlayerPosLook");
+            criticalsPosLookConstructor = criticalsPosLookPacketType.getConstructor(
+                    Double.TYPE, Double.TYPE, Double.TYPE,
+                    Float.TYPE, Float.TYPE, Boolean.TYPE);
+            return true;
+        } catch (Throwable error) {
+            criticalsPosLookLookupFailed = true;
+            logCriticalsFailure("C06 lookup", error);
+            return false;
+        }
+    }
+
+    private static boolean ensureCriticalsEntityAction() {
+        if (criticalsEntityActionConstructor != null
+                && criticalsStopSprintAction != null
+                && criticalsStartSprintAction != null) {
+            return true;
+        }
+        if (criticalsEntityActionLookupFailed) {
+            return false;
+        }
+        try {
+            criticalsActionType = Class.forName(
+                    "net.minecraft.network.play.client.C0BPacketEntityAction$Action");
+            criticalsStopSprintAction = criticalsAction(criticalsActionType, "STOP_SPRINTING", 4);
+            criticalsStartSprintAction = criticalsAction(criticalsActionType, "START_SPRINTING", 3);
+            if (criticalsStopSprintAction == null || criticalsStartSprintAction == null) {
+                throw new IllegalStateException("sprint actions not found");
+            }
+            criticalsEntityActionPacketType = Class.forName(
+                    "net.minecraft.network.play.client.C0BPacketEntityAction");
+            criticalsEntityActionConstructor = criticalsEntityActionPacketType.getConstructor(
+                    Entity.class, criticalsActionType);
+            return true;
+        } catch (Throwable error) {
+            criticalsEntityActionLookupFailed = true;
+            logCriticalsFailure("C0B lookup", error);
+            return false;
+        }
+    }
+
+    /** 优先按枚举名查找；运行期若被重映射，则回退到声明顺序。 */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static Object criticalsAction(Class<?> actionType, String name, int ordinal) {
+        try {
+            return Enum.valueOf((Class) actionType, name);
+        } catch (Throwable ignored) {
+            // Fall through to enum constants.
+        }
+        Object[] constants = actionType.getEnumConstants();
+        if (constants == null) {
+            return null;
+        }
+        for (int i = 0; i < constants.length; i++) {
+            if (constants[i] instanceof Enum
+                    && name.equalsIgnoreCase(((Enum) constants[i]).name())) {
+                return constants[i];
+            }
+        }
+        return ordinal >= 0 && ordinal < constants.length ? constants[ordinal] : null;
+    }
+
+    /** 攻击前发送 C0B STOP_SPRINTING，并同步客户端冲刺状态。 */
+    private static boolean stopCriticalsSprint(Object player) {
+        try {
+            if (!ensureCriticalsEntityAction()) {
+                return false;
+            }
+            criticalsSprintWasActive = true;
+            Object packet = criticalsEntityActionConstructor.newInstance(
+                    player, criticalsStopSprintAction);
+            boolean packetSent = sendCriticalsPacket(player, packet);
+            boolean stateChanged = callVoid(player, "setSprinting", "func_70031_b", null,
+                    Boolean.FALSE);
+            if (!packetSent && !stateChanged) {
+                criticalsSprintWasActive = false;
+                return false;
+            }
+            return true;
+        } catch (Throwable error) {
+            criticalsSprintWasActive = false;
+            logCriticalsFailure("STOP_SPRINTING", error);
+            return false;
+        }
+    }
+
+    /** 攻击后恢复攻击前的冲刺状态（仅当 applyCriticals 发过 STOP_SPRINTING）。 */
+    private static void restoreCriticalsSprint(Object player, boolean stopSent) {
+        if (!stopSent || player == null) {
+            return;
+        }
+        boolean wasActive = criticalsSprintWasActive;
+        criticalsSprintWasActive = false;
+        if (!wasActive) {
+            return;
+        }
+        try {
+            if (ensureCriticalsEntityAction()) {
+                Object packet = criticalsEntityActionConstructor.newInstance(
+                        player, criticalsStartSprintAction);
+                sendCriticalsPacket(player, packet);
+            }
+            callVoid(player, "setSprinting", "func_70031_b", null, Boolean.TRUE);
+        } catch (Throwable error) {
+            logCriticalsFailure("START_SPRINTING", error);
+        }
+    }
+
+    private static boolean sendCriticalsPacket(Object player, Object packet) {
+        if (player == null || packet == null) {
+            return false;
+        }
+        Object sendQueue = read(player, "sendQueue", "field_71174_a", null);
+        if (sendQueue == null) {
+            return false;
+        }
+        return callVoid(sendQueue, "addToSendQueue", "func_147297_a", null, packet);
+    }
+
+    private static void logCriticalsFailure(String stage, Throwable error) {
+        if (criticalsFailureLogged) {
+            return;
+        }
+        criticalsFailureLogged = true;
+        System.err.println("[OpenMaver] Criticals packet path failed at "
+                + stage + ": " + error);
+    }
+
     private static boolean holdingBlock(Object player) {
         Object stack = call(player, "getHeldItem", "func_70694_bm", null);
         if (stack == null || number(stack, "stackSize", "field_77994_a") <= 0.0D) {
@@ -908,8 +1666,9 @@ public final class OpenMaverFeatures {
                     // LEGIT：完全不碰原版右键冷却。
                     active = false;
                 } else if (bypassProfile == PROFILE_BALANCED) {
-                    // BALANCED：允许加速，但不压到 0；保留 2 tick 冷却。
-                    limit = Math.max(2, limit);
+                    // BALANCED：不低于原版 4 tick 冷却。Matrix 的 block.fastplace
+                    // 按 C08 间隔判定，2~3 tick 的连续放置会稳定吃 flag。
+                    limit = Math.max(4, limit);
                     // GodBridge 需要等待 timer 自然归零；FastPlace 与它
                     // 同时开启时会把 timer 卡在 2，导致永远无法放置。
                     if (placementModuleEnabled()) {
@@ -1855,6 +2614,7 @@ public final class OpenMaverFeatures {
         autoclickerRight = readBoolean(values, "autoclicker.right", false);
         autoclickerRequireHold = readBoolean(values, "autoclicker.requireHold", true);
         autoclickerWaitForHurt = readBoolean(values, "autoclicker.waitForHurt", true);
+        autoclickerAttackMode = readAttackMode(values);
         if (settingsVersion < 3) {
             // v2 为了“模块一开就点击”强制把 requireHold 写成 false，导致
             // 玩家不碰鼠标也会持续攻击（按一次 R 后尤其明显）。v3 恢复
@@ -1866,7 +2626,37 @@ public final class OpenMaverFeatures {
         autoclickerHumanize = readBoolean(values, "autoclicker.humanize", true);
         reachExtra = clamp(readFloat(values, "reach.extra", 0.0F), 0.0F, 0.5F);
         reachChance = clamp(readFloat(values, "reach.chance", 100.0F), 1.0F, 100.0F);
-        fastPlaceDelayTicks = clamp(readInt(values, "fastplace.delayTicks", 2, 4), 0, 4);
+        criticalsMode = readCriticalsMode(values, "criticals.mode", CRITICALS_JUMP);
+        criticalsStopSprint = readBoolean(values, "criticals.stopSprint", true);
+        fastPlaceDelayTicks = clamp(readInt(values, "fastplace.delayTicks", 4, 4), 0, 4);
+        if (settingsVersion < 4) {
+            // v3 及更早默认 JUMP：每次地面攻击都先起跳并延迟一 tick，
+            // 会把 AutoClicker 的 14~17 CPS 压成 6~9。v4 曾改为 ALWAYS（packet），
+            // v6 起重新以 JUMP 为默认（见下方迁移）。
+            criticalsMode = CRITICALS_JUMP;
+            settingsDirty = true;
+        }
+        if (settingsVersion < 5) {
+            // v4 的对测配置里 stopSprint 曾默认 / 被手动设成 false。
+            // 1.9+ 服务端在攻击瞬间只要玩家仍在冲刺就不会判定暴击，而
+            // AutoSprint 会一直保持冲刺——这种组合会让 Criticals 完全失效，
+            // 伪造出来的移动包还会持续触发 GroundSpoof / Post / Timer。
+            // v5 起统一恢复 STOP SPRINT，玩家确实需要 1.8 的冲刺击退时可再关掉。
+            criticalsStopSprint = true;
+            settingsDirty = true;
+        }
+        if (settingsVersion < 6) {
+            // v5 及更早的默认值会被 Matrix 直接标记：
+            // - criticals ALWAYS/NCP 每次攻击额外补 2~3 条 C04
+            //   -> ka.critical.ground / hop / modify + bp.timer；
+            // - fastplace 2 tick 间隔 -> block.fastplace。
+            // v6 起迁移为真实起跳暴击与原版 4 tick 右键间隔。
+            criticalsMode = CRITICALS_JUMP;
+            if (fastPlaceDelayTicks < 4) {
+                fastPlaceDelayTicks = 4;
+            }
+            settingsDirty = true;
+        }
         fastPlaceOnlyBlocks = readBoolean(values, "fastplace.onlyBlocks", true);
         godBridgeDelayTicks = clamp(readInt(values, "godbridge.delayTicks", 0, 4), 0, 4);
         godBridgeFastPlace = readBoolean(values, "godbridge.fastPlace", true);
@@ -2089,6 +2879,18 @@ public final class OpenMaverFeatures {
         markDirty();
     }
 
+    public static int getAutoClickerAttackMode() { return autoclickerAttackMode; }
+    public static void setAutoClickerAttackMode(int value) {
+        autoclickerAttackMode = clamp(value, ATTACK_MODE_FULL_CHARGE, ATTACK_MODE_VANILLA);
+        resetAutoClickerTimers();
+        markDirty();
+    }
+
+    public static String getAutoClickerAttackModeName() {
+        return ATTACK_MODE_NAMES[clamp(autoclickerAttackMode,
+                ATTACK_MODE_FULL_CHARGE, ATTACK_MODE_VANILLA)];
+    }
+
     public static boolean isAutoClickerHumanize() { return autoclickerHumanize; }
     public static void setAutoClickerHumanize(boolean value) {
         autoclickerHumanize = value;
@@ -2105,6 +2907,35 @@ public final class OpenMaverFeatures {
     public static float getReachChance() { return reachChance; }
     public static void setReachChance(float value) {
         reachChance = clamp(value, 1.0F, 100.0F);
+        markDirty();
+    }
+
+    public static int getCriticalsMode() { return criticalsMode; }
+    public static void setCriticalsMode(int value) {
+        criticalsMode = clamp(value, CRITICALS_PACKET, CRITICALS_LAST);
+        markDirty();
+    }
+
+    public static String getCriticalsModeName() {
+        return CRITICALS_MODE_NAMES[clamp(criticalsMode, CRITICALS_PACKET, CRITICALS_LAST)];
+    }
+
+    /** LEGIT 档会完全跳过刀暴。 */
+    public static boolean isCriticalsDisabledByProfile() {
+        return bypassEnabled && bypassProfile == PROFILE_LEGIT;
+    }
+
+    /** BALANCED 档会把 packet 模式降级为真实起跳（矩阵/Grim 下 packet 刀暴必吃 flag）。 */
+    public static boolean isCriticalsPacketSuppressed() {
+        if (!bypassEnabled || bypassProfile == PROFILE_AGGRESSIVE) {
+            return false;
+        }
+        return clamp(criticalsMode, CRITICALS_PACKET, CRITICALS_LAST) != CRITICALS_JUMP;
+    }
+
+    public static boolean isCriticalsStopSprint() { return criticalsStopSprint; }
+    public static void setCriticalsStopSprint(boolean value) {
+        criticalsStopSprint = value;
         markDirty();
     }
 
@@ -2193,6 +3024,9 @@ public final class OpenMaverFeatures {
         resetAutoClickerTimers();
         resetReachState();
         resetGodBridgeState();
+        criticalsSprintWasActive = false;
+        criticalsLastAttackNanos = 0L;
+        resetCriticalsJumpState();
         rightClickUsedThisTick = false;
         autoclickerClickedThisTick = false;
         lastPlacementTick = Long.MIN_VALUE;
@@ -2237,6 +3071,50 @@ public final class OpenMaverFeatures {
         } catch (NumberFormatException ignored) {
             return PROFILE_BALANCED;
         }
+    }
+
+    /** 读取 Criticals 模式：支持 packet/ncp/falling/grim/jump，也接受 0~4。 */
+    private static int readCriticalsMode(Properties values, String key, int fallback) {
+        String raw = values.getProperty(key);
+        if (raw == null) {
+            return fallback;
+        }
+        raw = raw.trim().toLowerCase(java.util.Locale.ROOT);
+        for (int i = 0; i < CRITICALS_MODE_KEYS.length; i++) {
+            if (CRITICALS_MODE_KEYS[i].equals(raw)) {
+                return i;
+            }
+        }
+        try {
+            return clamp(Integer.parseInt(raw), CRITICALS_PACKET, CRITICALS_LAST);
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    /** 读取攻击节奏；兼容上一版的 `autoclicker.fullDamage` 布尔开关。 */
+    private static int readAttackMode(Properties values) {
+        String raw = values.getProperty("autoclicker.attackMode");
+        if (raw != null) {
+            raw = raw.trim().toLowerCase(java.util.Locale.ROOT);
+            for (int i = 0; i < ATTACK_MODE_KEYS.length; i++) {
+                if (ATTACK_MODE_KEYS[i].equals(raw)
+                        || ATTACK_MODE_NAMES[i].equalsIgnoreCase(raw)) {
+                    return i;
+                }
+            }
+            try {
+                return clamp(Integer.parseInt(raw), ATTACK_MODE_FULL_CHARGE,
+                        ATTACK_MODE_VANILLA);
+            } catch (NumberFormatException ignored) {
+                // fall through to the legacy key / default
+            }
+        }
+        String legacy = values.getProperty("autoclicker.fullDamage");
+        if (legacy != null && "false".equalsIgnoreCase(legacy.trim())) {
+            return ATTACK_MODE_VANILLA;
+        }
+        return ATTACK_MODE_FULL_CHARGE;
     }
 
     private static float readFloat(Properties values, String key, float fallback) {
@@ -2311,9 +3189,15 @@ public final class OpenMaverFeatures {
                     + "\nautoclicker.right=" + autoclickerRight
                     + "\nautoclicker.requireHold=" + autoclickerRequireHold
                     + "\nautoclicker.waitForHurt=" + autoclickerWaitForHurt
+                    + "\nautoclicker.attackMode="
+                    + ATTACK_MODE_KEYS[clamp(autoclickerAttackMode,
+                            ATTACK_MODE_FULL_CHARGE, ATTACK_MODE_VANILLA)]
                     + "\nautoclicker.humanize=" + autoclickerHumanize
                     + "\nreach.extra=" + reachExtra
                     + "\nreach.chance=" + Math.round(reachChance)
+                    + "\ncriticals.mode=" + CRITICALS_MODE_KEYS[
+                            clamp(criticalsMode, CRITICALS_PACKET, CRITICALS_LAST)]
+                    + "\ncriticals.stopSprint=" + criticalsStopSprint
                     + "\nfastplace.delayTicks=" + fastPlaceDelayTicks
                     + "\nfastplace.onlyBlocks=" + fastPlaceOnlyBlocks
                     + "\ngodbridge.delayTicks=" + godBridgeDelayTicks

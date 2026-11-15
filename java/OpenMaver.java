@@ -2,6 +2,7 @@ import config.Config;
 import module.Module;
 import module.ModuleManager;
 import module.combat.AutoClicker;
+import module.combat.Criticals;
 import module.combat.Reach;
 import module.movement.AutoSprint;
 import module.movement.GodBridge;
@@ -290,6 +291,9 @@ public final class OpenMaver {
 
         // 战斗模块：Reach 攻击距离（配置路径 combat.reach；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new Reach());
+
+        // 战斗模块：Criticals Packet 刀暴（配置路径 combat.criticals；MC 侧逻辑在 OpenMaverFeatures）
+        ModuleManager.register(new Criticals());
 
         // 移动模块：GodBridge 神桥（配置路径 movement.godbridge；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new GodBridge());
