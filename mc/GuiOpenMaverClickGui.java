@@ -75,10 +75,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final int CARD_RADIUS = 16;
     /** 模块行左侧开关图标的半径（含外圈）。 */
     private static final int TOGGLE_RADIUS = 10;
-    /** 圆角/圆形的边缘羽化宽度（GUI 单位），只在外侧做很窄的抗锯齿过渡。 */
-    private static final float AA_FEATHER = 0.25F;
+    /** 圆角/圆形的边缘羽化宽度（GUI 单位）；与主菜单保持一致的柔和描边。 */
+    private static final float AA_FEATHER = 1.0F;
     /** 每个圆角使用的圆弧段数；越高越圆滑。 */
-    private static final int AA_ARC_SEGMENTS = 16;
+    private static final int AA_ARC_SEGMENTS = 24;
     /** 圆角多边形的采样点数量（4 个角 × 每个角的采样点）。 */
     private static final int AA_POINT_COUNT = 4 * (AA_ARC_SEGMENTS + 1);
     private static final float[] AA_INNER_X = new float[AA_POINT_COUNT];
@@ -187,6 +187,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final float ACTIVE_MS = 190.0F;
     private static final float PRESS_MS = 160.0F;
 
+    /** 打开 / 关闭时的缩放动画：从略小的面板放大展开，关闭时反向收回。 */
+    private static final float OPEN_DURATION_MS = 220.0F;
+    private static final float CLOSE_DURATION_MS = 210.0F;
+    private static final float OPEN_SCALE_FROM = 0.82F;
+
     private int scroll;
     private float scrollVisual;
     /** 壁纸页文件列表的滚动偏移。 */
@@ -194,6 +199,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private long lastAnimationAt;
     private long frameNow;
     private float openProgress;
+    private boolean closing;
+    private long closingAt;
+    private float closingFrom;
     private final Map<String, ControlAnim> controls = new HashMap<String, ControlAnim>();
     private int lastMouseX;
     private int lastMouseY;
@@ -257,6 +265,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         this.openedAt = System.currentTimeMillis();
         this.lastAnimationAt = this.openedAt;
         this.openProgress = 0.0F;
+        this.closing = false;
+        this.closingAt = 0L;
+        this.closingFrom = 0.0F;
         this.systemPage = initialSystemPage;
         Keyboard.enableRepeatEvents(true);
         layout();
@@ -296,8 +307,18 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         this.frameNow = now;
         float frameDelta = Math.min(50.0F, Math.max(0.0F, now - lastAnimationAt));
         lastAnimationAt = now;
-        float openTarget = 1.0F;
-        openProgress = approach(openProgress, openTarget, frameDelta, 150.0F);
+        if (closing) {
+            float closeT = clamp01((now - closingAt) / CLOSE_DURATION_MS);
+            // 关闭时使用两端都平滑的 S 曲线，画面不会在最后一帧突然消失。
+            openProgress = closingFrom * (1.0F - easeInOutCubic(closeT));
+            if (closeT >= 1.0F) {
+                finishClose();
+                return;
+            }
+        } else {
+            float openT = clamp01((now - openedAt) / OPEN_DURATION_MS);
+            openProgress = easeOutCubic(openT);
+        }
         scrollVisual = approach(scrollVisual, scroll, frameDelta, 180.0F);
         lastMouseX = mouseX;
         lastMouseY = mouseY;
@@ -806,16 +827,25 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     // ==================================================================
 
     private void drawGui() {
-        float reveal = easeOutCubic(openProgress);
+        float reveal = viewReveal();
         GlColor.restore();
 
-        // 背景：先抓取世界画面做高斯模糊，再叠一层轻薄的深色，形成毛玻璃景深。
+        // 背景：模糊强度和透明度同时随动画变化，形成平滑的焦点过渡，
+        // 关闭到最后一帧时会自然回到清晰画面，而不是突然切换。
         ScaledResolution resolution = new ScaledResolution(this.mc);
         GuiBlur.beginFrame(this.width, this.height, resolution.getScaleFactor());
-        GuiBlur.draw(0, 0, this.width, this.height, 0.0F, 0x0C0F15, 0.34F, reveal);
+        GuiBlur.draw(0, 0, this.width, this.height, 0.0F, 0x0C0F15,
+                0.34F * reveal, reveal, reveal);
 
         GL11.glPushMatrix();
-        GL11.glTranslatef(0.0F, (1.0F - reveal) * 7.0F, 0.0F);
+        // 打开时从面板中心向外放大，关闭时沿同一路径缩回。
+        float scale = panelScale();
+        float centerX = panelX + panelW / 2.0F;
+        float centerY = panelY + panelH / 2.0F;
+        float lift = (1.0F - reveal) * 6.0F;
+        GL11.glTranslatef(centerX, centerY + lift, 0.0F);
+        GL11.glScalef(scale, scale, 1.0F);
+        GL11.glTranslatef(-centerX, -centerY, 0.0F);
 
         drawPanelShadow(reveal);
         drawPanel(reveal);
@@ -905,7 +935,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     // ------------------------------------------------------------------
 
     private void drawRail(FontRenderer font) {
-        float reveal = easeOutCubic(openProgress);
+        float reveal = viewReveal();
         long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
         int x = panelX;
         int y = panelY;
@@ -2043,6 +2073,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
+        if (closing) {
+            return;
+        }
         try {
             lastMouseX = mouseX;
             lastMouseY = mouseY;
@@ -2406,6 +2439,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     @Override
     public void handleMouseInput() throws IOException {
+        if (closing) {
+            return;
+        }
         try {
             super.handleMouseInput();
             int wheel = Mouse.getEventDWheel();
@@ -2436,6 +2472,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
+        if (closing) {
+            return;
+        }
         if (keyCode == Keyboard.KEY_ESCAPE) {
             if (selectSetting != null) {
                 selectSetting = null;
@@ -2489,7 +2528,30 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     public void closeGui() {
-        this.mc.displayGuiScreen(this.returnScreen);
+        if (closing) {
+            return;
+        }
+        closing = true;
+        closingAt = System.currentTimeMillis();
+        closingFrom = Math.max(0.0F, Math.min(1.0F, openProgress));
+        // 关闭动画期间不再响应拖拽 / 输入，避免面板缩小时误触。
+        dragSetting = null;
+        dragEntry = null;
+        panelDragging = false;
+        logoSizeDragging = false;
+        wallpaperBlurDragging = false;
+        selectSetting = null;
+        selectEntry = null;
+        searchFocused = false;
+        OpenMaverFeatures.flushSettings();
+    }
+
+    /** 关闭动画播完后才真正切换回上一个界面。 */
+    private void finishClose() {
+        closing = false;
+        if (this.mc != null) {
+            this.mc.displayGuiScreen(this.returnScreen);
+        }
     }
 
     @Override
@@ -2684,7 +2746,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             return;
         }
         int r = Math.min(radius, Math.min(w / 2, h / 2));
-        if (r <= 1) {
+        if (r <= 0) {
             Gui.drawRect(x, y, x + w, y + h, color);
             return;
         }
@@ -3106,9 +3168,46 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         return entry.id + ":" + setting.label;
     }
 
+    /** 当前整体可见度。 */
+    private float viewReveal() {
+        return openProgress;
+    }
+
+    /** 面板缩放：打开时带一点轻微回弹，关闭时直接跟随可见度收回。 */
+    private float panelScale() {
+        if (!closing) {
+            float t = clamp01((frameNow - openedAt) / OPEN_DURATION_MS);
+            float spring = easeOutBack(t);
+            return OPEN_SCALE_FROM + (1.0F - OPEN_SCALE_FROM) * spring;
+        }
+        return OPEN_SCALE_FROM + (1.0F - OPEN_SCALE_FROM) * openProgress;
+    }
+
+    private static float clamp01(float value) {
+        return Math.max(0.0F, Math.min(1.0F, value));
+    }
+
     private static float easeOutCubic(float value) {
         float inverse = 1.0F - Math.max(0.0F, Math.min(1.0F, value));
         return 1.0F - inverse * inverse * inverse;
+    }
+
+    private static float easeInOutCubic(float value) {
+        float t = clamp01(value);
+        if (t < 0.5F) {
+            return 4.0F * t * t * t;
+        }
+        float inverse = -2.0F * t + 2.0F;
+        return 1.0F - inverse * inverse * inverse / 2.0F;
+    }
+
+    /** 轻微的 ease-out-back：结束时带一点点回弹，避免缩放像生硬地推到终点。 */
+    private static float easeOutBack(float value) {
+        float t = clamp01(value);
+        float c1 = 0.9F;
+        float c3 = c1 + 1.0F;
+        float p = t - 1.0F;
+        return 1.0F + c3 * p * p * p + c1 * p * p;
     }
 
     private static int blendColor(int from, int to, float amount) {

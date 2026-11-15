@@ -26,11 +26,10 @@ import java.util.Set;
  *
  * <p>视觉稿：
  * <ul>
- *   <li>每个启用功能是一枚独立的深灰色圆角卡片，右对齐垂直堆叠，卡片之间留出细缝</li>
- *   <li>模块名使用白色 Source Code Pro 字体，右侧是一枚短白色竖条作为启用指示</li>
- *   <li>模块的当前参数摘要（如 AutoClicker 的 CPS 区间）以较淡的白色显示在竖条左侧；
- *       不再显示键位提示</li>
- *   <li>卡片带轻微投影与顶部高光，启用/关闭时从右侧滑入或淡出</li>
+ *   <li>每个启用功能是一行右对齐的白色文字，下面垫一块边缘羽化的深色矩形</li>
+ *   <li>模块名用白色绘制，当前参数摘要（如 AutoClicker 的 CPS 区间）用灰色半透明紧跟在后面</li>
+ *   <li>整个列表紧贴屏幕右侧，最右侧压一条带柔光的白色分隔线</li>
+ *   <li>启用/关闭时从右侧滑入或淡出，宽度变化保持右边缘对齐</li>
  * </ul>
  *
  * <p>动画全部基于 {@link System#nanoTime()}，与帧率无关。列表行按注册顺序错峰出现，
@@ -48,28 +47,27 @@ public final class OpenMaverHud {
     // ------------------------------------------------------------------
 
     private static final int MARGIN = 12;
-    private static final int ROW_H = 22;
-    private static final int ROW_GAP = 5;
-    private static final int ROW_PAD_LEFT = 10;
-    private static final int ROW_PAD_RIGHT = 15;
-    private static final int ROW_RADIUS = 7;
-    /** 功能列表字号：保持清晰易读，同时让卡片更有存在感。 */
-    private static final float ROW_TEXT_SIZE = 0.95F;
-    /** 深色毛玻璃卡片：模糊自身覆盖的画面，再叠一层深色保证白字可读。 */
-    private static final int ROW_TINT = 0x141418;
-    /** 色调占比压低，让背后的模糊画面透出来，毛玻璃感更明显。 */
-    private static final float ROW_TINT_STRENGTH = 0.55F;
-    private static final int ROW_BORDER = 0xFFFFFF;
-    private static final int ROW_BORDER_ALPHA = 0x2A;
-    private static final int ROW_SHADOW_ALPHA = 0x40;
-    private static final int ROW_HIGHLIGHT_ALPHA = 0x18;
-    /** 右侧白色竖条（启用指示）。 */
-    private static final int ROW_BAR_W = 3;
-    private static final int ROW_BAR_H = 11;
-    private static final int ROW_BAR_INSET = 9;
-    private static final int ROW_BAR_ALPHA = 0xF0;
-    /** 功能参数摘要与模块名之间的间距。 */
-    private static final int INFO_GAP = 8;
+    private static final int ROW_H = 20;
+    private static final int ROW_GAP = 0;
+    private static final int ROW_PAD_LEFT = 6;
+    private static final int ROW_PAD_RIGHT = 5;
+    /** 模块名与参数预览之间的间距。 */
+    private static final int INFO_GAP = 6;
+    /** 底板的羽化宽度：向内分层淡化，让矩形边缘像被模糊过一样。 */
+    private static final int ROW_FEATHER = 3;
+    /** 功能列表字号：接近参考图里紧凑但清晰的白字。 */
+    private static final float ROW_TEXT_SIZE = 1.0F;
+    private static final int ROW_TEXT_Y = 5;
+    /** 半透明深色底，保证白字在亮背景上也清晰。 */
+    private static final int ROW_BG = 0x000000;
+    private static final int ROW_BG_ALPHA = 0x80;
+    private static final int ROW_TEXT = 0xFFFFFF;
+    private static final int ROW_SHADOW_ALPHA = 0x90;
+    /** 参数预览：灰色半透明，紧跟在模块名后面。 */
+    private static final int ROW_INFO = 0xB4B4B4;
+    private static final int ROW_INFO_ALPHA = 0xA0;
+    /** 列表最右侧的白色分隔线，带一点外发光。 */
+    private static final int EDGE_LINE = 0xFFFFFF;
 
     // ------------------------------------------------------------------
     // 动效时长
@@ -174,14 +172,12 @@ public final class OpenMaverHud {
         }
         try {
             Minecraft minecraft = Minecraft.getMinecraft();
-            if (minecraft != null && minecraft.currentScreen instanceof GuiOpenMaverClickGui) {
-                // ClickGUI 自己会绘制提示卡；此时再画一遍 HUD 会被全屏毛玻璃糊掉，
-                // 右上角的功能列表也会变成一层模糊残影。
-                return;
-            }
             if (minecraft == null) {
                 return;
             }
+            // ClickGUI 打开时 HUD 仍然绘制：它会被 ClickGUI 的整屏毛玻璃一起模糊，
+            // 作为背景的一部分保留下来。提示卡例外，由 ClickGUI 在面板上方清晰重绘。
+            boolean clickGuiOpen = minecraft.currentScreen instanceof GuiOpenMaverClickGui;
             FontRenderer font = (FontRenderer) readField(minecraft,
                     "fontRendererObj", "field_71466_p");
             if (font == null) {
@@ -213,7 +209,7 @@ public final class OpenMaverHud {
             GuiBlur.beginFrame(resolution.getScaledWidth(),
                     resolution.getScaledHeight(), resolution.getScaleFactor());
             if (!entries.isEmpty() || !TOASTS.isEmpty() || !LIST_ENTRIES.isEmpty()
-                    || TargetHud.isEnabled() || ScaffoldHud.isEnabled() || StatsHud.isEnabled()) {
+                    || TargetHud.isEnabled() || ScaffoldHud.isEnabled()) {
                 GuiBlur.capture();
             }
             StatsHud.render(font, event.resolution, now);
@@ -228,8 +224,10 @@ public final class OpenMaverHud {
                 System.err.println("[OpenMaver] Scaffold HUD 绘制出错: " + scaffoldError);
             }
             int listBottom = renderModuleList(font, event.resolution, entries, now);
-            renderToasts(font, event.resolution.getScaledWidth(),
-                    event.resolution.getScaledHeight(), now, listBottom);
+            if (!clickGuiOpen) {
+                renderToasts(font, event.resolution.getScaledWidth(),
+                        event.resolution.getScaledHeight(), now, listBottom);
+            }
         } catch (Throwable t) {
             failed = true;
             TOASTS.clear();
@@ -273,7 +271,8 @@ public final class OpenMaverHud {
 
         int screenW = resolution.getScaledWidth();
         int screenH = resolution.getScaledHeight();
-        int right = screenW - MARGIN;
+        // 功能栏紧贴右边缘，最右侧再压一条白色分隔线。
+        int right = screenW;
         int startY = MARGIN;
 
         if (LIST_ENTRIES.isEmpty()) {
@@ -294,11 +293,11 @@ public final class OpenMaverHud {
         });
 
         final int count = display.size();
-        final String[] labels = new String[count];
+        final String[] names = new String[count];
         final String[] infos = new String[count];
         for (int i = 0; i < count; i++) {
             HudEntry entry = display.get(i);
-            labels[i] = entry.name;
+            names[i] = entry.name;
             infos[i] = entry.info;
         }
 
@@ -318,6 +317,7 @@ public final class OpenMaverHud {
         GL11.glDisable(GL11.GL_CULL_FACE);
         GL11.glEnable(GL11.GL_POLYGON_SMOOTH);
 
+        float listAlpha = 0.0F;
         for (int i = 0; i < count; i++) {
             HudEntry entry = display.get(i);
             RowAnim anim = rowAnim(entry, now);
@@ -338,52 +338,52 @@ public final class OpenMaverHud {
             }
 
             float alpha = clamp01(anim.visible);
+            listAlpha = Math.max(listAlpha, alpha);
             int slide = (int) ((1.0F - easeOutCubic(alpha)) * 22.0F);
             int y = Math.round(anim.y);
             int rowRight = right + slide;
 
             // 右边缘固定对齐，每行宽度由自身文字决定，形成参考图里的阶梯感。
-            int nameW = HudFont.getStringWidth(font, labels[i], ROW_TEXT_SIZE);
+            int nameW = HudFont.getStringWidth(font, names[i], ROW_TEXT_SIZE);
             int infoW = hasInfo(infos[i])
                     ? HudFont.getStringWidth(font, infos[i], ROW_TEXT_SIZE) : 0;
-            int rowWidth = nameW + ROW_PAD_LEFT
-                    + (infoW > 0 ? INFO_GAP + infoW : 0) + ROW_PAD_RIGHT;
+            int rowWidth = nameW + (infoW > 0 ? INFO_GAP + infoW : 0)
+                    + ROW_PAD_LEFT + ROW_PAD_RIGHT;
             int rowX = rowRight - rowWidth;
 
-            // 柔和投影 + 毛玻璃卡片 + 极淡白色描边，右侧再放一枚白色竖条。
-            roundRect(rowX + 2, y + 2, rowWidth, ROW_H, ROW_RADIUS,
+            // 半透明深色底：外圈逐层向内加深，边缘自然羽化。
+            softRect(rowX, y, rowWidth, ROW_H,
+                    withAlpha(ROW_BG, clamp255((int) (alpha * ROW_BG_ALPHA))),
+                    ROW_FEATHER, i == 0, i == count - 1);
+
+            int textY = y + ROW_TEXT_Y;
+            int nameX = rowX + ROW_PAD_LEFT;
+            texts.add(new TextDraw(names[i], nameX, textY,
+                    withAlpha(ROW_TEXT, clamp255((int) (alpha * 255.0F))),
+                    ROW_TEXT_SIZE,
                     withAlpha(0x000000,
-                            clamp255((int) (alpha * ROW_SHADOW_ALPHA))));
-            roundRect(rowX, y, rowWidth, ROW_H, ROW_RADIUS,
-                    withAlpha(ROW_BORDER,
-                            clamp255((int) (alpha * ROW_BORDER_ALPHA))));
-            GuiBlur.draw(rowX + 1, y + 1, rowWidth - 2, ROW_H - 2,
-                    Math.max(0, ROW_RADIUS - 1), ROW_TINT,
-                    ROW_TINT_STRENGTH, alpha);
-            if (rowWidth > ROW_RADIUS * 2) {
-                roundRect(rowX + ROW_RADIUS, y + 1,
-                        rowWidth - ROW_RADIUS * 2, 1, 0,
-                        withAlpha(ROW_BORDER,
-                                clamp255((int) (alpha * ROW_HIGHLIGHT_ALPHA))));
-            }
-
-            int barX = rowRight - ROW_BAR_INSET;
-            int barY = y + (ROW_H - ROW_BAR_H) / 2;
-            roundRect(barX, barY, ROW_BAR_W, ROW_BAR_H, 1,
-                    withAlpha(0xFFFFFF,
-                            clamp255((int) (alpha * ROW_BAR_ALPHA))));
-
-            int textY = y + 7;
-            texts.add(new TextDraw(labels[i], rowX + ROW_PAD_LEFT, textY,
-                    withAlpha(0xFFFFFF, clamp255((int) (alpha * 255.0F))),
-                    ROW_TEXT_SIZE));
+                            clamp255((int) (alpha * ROW_SHADOW_ALPHA)))));
             if (infoW > 0) {
-                int infoX = rowRight - ROW_PAD_RIGHT - infoW;
-                texts.add(new TextDraw(infos[i], infoX, textY,
-                        withAlpha(0xFFFFFF,
-                                clamp255((int) (alpha * 0xB8))),
-                        ROW_TEXT_SIZE));
+                texts.add(new TextDraw(infos[i], nameX + nameW + INFO_GAP, textY,
+                        withAlpha(ROW_INFO,
+                                clamp255((int) (alpha * ROW_INFO_ALPHA))),
+                        ROW_TEXT_SIZE,
+                        withAlpha(0x000000,
+                                clamp255((int) (alpha * 0x60)))));
             }
+        }
+
+        if (listAlpha > 0.01F) {
+            int lineTop = startY;
+            int lineHeight = Math.max(1, totalHeight);
+            int alpha = clamp255((int) (listAlpha * 255.0F));
+            // 外侧两层很淡，核心 1px 白线紧贴屏幕右边缘。
+            roundRect(screenW - 3, lineTop, 3, lineHeight, 0,
+                    withAlpha(EDGE_LINE, Math.round(alpha * 0.18F)));
+            roundRect(screenW - 2, lineTop, 2, lineHeight, 0,
+                    withAlpha(EDGE_LINE, Math.round(alpha * 0.55F)));
+            roundRect(screenW - 1, lineTop, 1, lineHeight, 0,
+                    withAlpha(EDGE_LINE, alpha));
         }
 
         GL11.glEnable(GL11.GL_TEXTURE_2D);
@@ -418,8 +418,8 @@ public final class OpenMaverHud {
     // ------------------------------------------------------------------
 
     /**
-     * 每个功能右侧显示一行当前参数，例如 AutoClicker 的 {@code 6-10}。
-     * 没有可展示数值的功能返回空字符串，HUD 只保留模块名与启用竖条。
+     * 功能当前的参数摘要，例如 AutoClicker 的 {@code 6-10}。
+     * 没有可展示数值的功能返回空字符串，HUD 只显示模块名。
      */
     private static String moduleInfo(Module module) {
         String name = module.getName();
@@ -644,6 +644,10 @@ public final class OpenMaverHud {
     private static void drawTexts(FontRenderer font, List<TextDraw> texts) {
         for (int i = 0; i < texts.size(); i++) {
             TextDraw text = texts.get(i);
+            if ((text.shadowColor >>> 24) != 0) {
+                HudFont.drawString(font, text.text, text.x + 1, text.y + 1,
+                        text.shadowColor, text.size);
+            }
             HudFont.drawString(font, text.text, text.x, text.y, text.color,
                     text.size);
         }
@@ -682,6 +686,33 @@ public final class OpenMaverHud {
         GL11.glVertex2f(x2 - nx, y2 - ny);
         GL11.glVertex2f(x1 - nx, y1 - ny);
         GL11.glEnd();
+    }
+
+    /**
+     * 左右两侧始终羽化；只有列表最上面 / 最下面一行才羽化上下外缘。
+     *
+     * <p>这样行与行之间的公共边保持满高，功能栏会真正连成一块，
+     * 同时整个列表的最外圈仍然有柔和的模糊边缘。
+     */
+    private static void softRect(int x, int y, int w, int h, int argb,
+            int feather, boolean featherTop, boolean featherBottom) {
+        if (w <= 0 || h <= 0 || (argb >>> 24) == 0) {
+            return;
+        }
+        int rgb = argb & 0x00FFFFFF;
+        int alpha = argb >>> 24;
+        int layers = Math.max(0, Math.min(feather, Math.min(w / 2, h / 2)));
+        for (int i = 0; i < layers; i++) {
+            float t = (i + 1) / (float) layers;
+            int layerAlpha = Math.round(alpha * (0.05F + 0.12F * t));
+            int top = featherTop ? i : 0;
+            int bottom = featherBottom ? i : 0;
+            roundRect(x + i, y + top, w - i * 2, h - top - bottom, 0,
+                    withAlpha(rgb, layerAlpha));
+        }
+        int top = featherTop ? layers : 0;
+        int bottom = featherBottom ? layers : 0;
+        roundRect(x + layers, y + top, w - layers * 2, h - top - bottom, 0, argb);
     }
 
     private static void roundRect(int x, int y, int w, int h, int radius, int argb) {
@@ -770,17 +801,24 @@ public final class OpenMaverHud {
         final int y;
         final int color;
         final float size;
+        /** 黑色投影颜色；alpha 为 0 时不绘制投影。 */
+        final int shadowColor;
 
         TextDraw(String text, int x, int y, int color) {
             this(text, x, y, color, 1.0F);
         }
 
         TextDraw(String text, int x, int y, int color, float size) {
+            this(text, x, y, color, size, 0);
+        }
+
+        TextDraw(String text, int x, int y, int color, float size, int shadowColor) {
             this.text = text;
             this.x = x;
             this.y = y;
             this.color = color;
             this.size = size;
+            this.shadowColor = shadowColor;
         }
     }
 

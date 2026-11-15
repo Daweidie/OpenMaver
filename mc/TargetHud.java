@@ -36,6 +36,7 @@ public final class TargetHud {
     private static final float AVATAR_X = 8.0F;
     private static final float AVATAR_Y = 10.0F;
     private static final float AVATAR_SIZE = 24.0F;
+    private static final float AVATAR_RADIUS = 6.0F;
 
     private static final float CONTENT_X = 37.0F;
     private static final float CONTENT_W = 117.0F;
@@ -66,6 +67,12 @@ public final class TargetHud {
     private static final long FADE_OUT_MS = 150L;
     private static final float SLIDE_DISTANCE = 18.0F;
 
+    /** 血量读数 / 血条的平滑时间常数：掉血比回血稍慢，确保掉血过程看得见。 */
+    private static final float HEALTH_DROP_SMOOTH_MS = 140.0F;
+    private static final float HEALTH_GAIN_SMOOTH_MS = 80.0F;
+    /** 与目标值差小于该值时直接吸附，避免数字长期停在 19.9 之类的中间值。 */
+    private static final float HEALTH_SNAP = 0.02F;
+
     private static EntityLivingBase target;
     private static long lastFrameNanos;
     private static float visible;
@@ -75,6 +82,9 @@ public final class TargetHud {
     private static String cachedName = "";
     private static String cachedHealthNow = "0";
     private static String cachedHealthMax = "/20";
+    /** 当前「显示中」的血量/血量上限；每帧向真实值平滑逼近。 */
+    private static float shownHealth;
+    private static float shownMaxHealth = 20.0F;
     private static float cachedRatio = 1.0F;
 
     private TargetHud() {
@@ -143,11 +153,22 @@ public final class TargetHud {
 
         if (active) {
             // 只在准星真正命中生物时更新缓存；移开准星后缓存用于淡出。
-            target = aimed;
+            float actualHealth = health(aimed);
+            float actualMax = Math.max(1.0F, maxHealth(aimed));
+            if (target != aimed) {
+                // 换目标时直接吸附到真实值，避免从上一个目标的血量滑过来。
+                target = aimed;
+                shownHealth = actualHealth;
+                shownMaxHealth = actualMax;
+            } else {
+                // 血条和数字一起平滑：掉血慢一点、回血快一点。
+                shownHealth = approachHealth(shownHealth, actualHealth, deltaMs);
+                shownMaxHealth = approachHealth(shownMaxHealth, actualMax, deltaMs);
+            }
             cachedName = trimToWidth(font, displayName(target), 0.95F, (int) CONTENT_W);
-            cachedHealthNow = formatHealth(health(target));
-            cachedHealthMax = "/" + formatHealth(maxHealth(target));
-            cachedRatio = healthRatio(target);
+            cachedHealthNow = formatHealth(shownHealth);
+            cachedHealthMax = "/" + formatHealth(shownMaxHealth);
+            cachedRatio = clamp01(shownHealth / shownMaxHealth);
         }
 
         float duration = active ? FADE_IN_MS : FADE_OUT_MS;
@@ -173,6 +194,8 @@ public final class TargetHud {
         cachedName = "";
         cachedHealthNow = "0";
         cachedHealthMax = "/20";
+        shownHealth = 0.0F;
+        shownMaxHealth = 20.0F;
         cachedRatio = 1.0F;
     }
 
@@ -208,11 +231,6 @@ public final class TargetHud {
         }
         float range = OpenMaverFeatures.getTargetHudRange();
         return distance(self, entity) <= range;
-    }
-
-    private static float healthRatio(EntityLivingBase entity) {
-        float max = Math.max(1.0F, maxHealth(entity));
-        return clamp01(health(entity) / max);
     }
 
     /** 整数血量去掉小数点，半颗心等小数保留一位。 */
@@ -329,14 +347,15 @@ public final class TargetHud {
     }
 
     private static void drawAvatar(float alpha) {
-        // 深色方形底盘
-        roundRect(AVATAR_X, AVATAR_Y, AVATAR_SIZE, AVATAR_SIZE, 2.0F,
+        float hurt = hurtAmount();
+        // 深色圆角底盘
+        roundRect(AVATAR_X, AVATAR_Y, AVATAR_SIZE, AVATAR_SIZE, AVATAR_RADIUS,
                 color(0x15181D, 0.98F * alpha));
 
         if (target instanceof AbstractClientPlayer) {
             try {
                 if (drawSkin((AbstractClientPlayer) target, AVATAR_X, AVATAR_Y,
-                        AVATAR_SIZE, alpha)) {
+                        AVATAR_SIZE, alpha, hurt)) {
                     return;
                 }
             } catch (Throwable ignored) {
@@ -346,20 +365,32 @@ public final class TargetHud {
         }
 
         // 无头像（非玩家生物 / 皮肤缺失）统一使用 Steve 头像
-        drawDefaultSkin(alpha);
+        drawDefaultSkin(alpha, hurt);
     }
 
-    private static void drawDefaultSkin(float alpha) {
+    /** 受击时头像整体偏红，随时间自然恢复。 */
+    private static float hurtAmount() {
+        if (target == null) {
+            return 0.0F;
+        }
+        Object value = read(target, "hurtTime", "field_70737_aN", null, Number.class);
+        if (!(value instanceof Number)) {
+            return 0.0F;
+        }
+        return clamp01(((Number) value).floatValue() / 10.0F);
+    }
+
+    private static void drawDefaultSkin(float alpha, float hurt) {
         Minecraft mc = Minecraft.getMinecraft();
         Object textures = mc == null ? null
                 : call(mc, "getTextureManager", "func_110434_K", null);
         if (textures != null) {
-            bindAndDrawFace(textures, STEVE_SKIN, alpha);
+            bindAndDrawFace(textures, STEVE_SKIN, alpha, hurt);
         }
     }
 
     private static boolean drawSkin(AbstractClientPlayer player, float x, float y,
-            float size, float alpha) {
+            float size, float alpha, float hurt) {
         Minecraft mc = Minecraft.getMinecraft();
         Object textures = mc == null ? null
                 : call(mc, "getTextureManager", "func_110434_K", null);
@@ -373,47 +404,71 @@ public final class TargetHud {
         GL11.glEnable(GL11.GL_TEXTURE_2D);
         GL11.glDisable(GL11.GL_DEPTH_TEST);
         GL11.glTexEnvi(GL11.GL_TEXTURE_ENV, GL11.GL_TEXTURE_ENV_MODE, GL11.GL_MODULATE);
-        GlColor.set(1.0F, 1.0F, 1.0F, alpha);
+        setSkinTint(alpha, hurt);
         call(textures, "bindTexture", "func_110577_a", null, skin);
-        drawFaceQuad(x, y, size, 8, 8);
+        drawFaceRounded(x, y, size, AVATAR_RADIUS, 8, 8);
         call(textures, "bindTexture", "func_110577_a", null, skin);
-        drawFaceQuad(x, y, size, 40, 8);
+        drawFaceRounded(x, y, size, AVATAR_RADIUS, 40, 8);
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         GlColor.restore();
         return true;
     }
 
-    private static void bindAndDrawFace(Object textures, Object skin, float alpha) {
+    private static void bindAndDrawFace(Object textures, Object skin, float alpha,
+            float hurt) {
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         GL11.glEnable(GL11.GL_TEXTURE_2D);
         GL11.glDisable(GL11.GL_DEPTH_TEST);
         GL11.glTexEnvi(GL11.GL_TEXTURE_ENV, GL11.GL_TEXTURE_ENV_MODE, GL11.GL_MODULATE);
-        GlColor.set(1.0F, 1.0F, 1.0F, alpha);
+        setSkinTint(alpha, hurt);
         call(textures, "bindTexture", "func_110577_a", null, skin);
-        drawFaceQuad(AVATAR_X, AVATAR_Y, AVATAR_SIZE, 8, 8);
+        drawFaceRounded(AVATAR_X, AVATAR_Y, AVATAR_SIZE, AVATAR_RADIUS, 8, 8);
         call(textures, "bindTexture", "func_110577_a", null, skin);
-        drawFaceQuad(AVATAR_X, AVATAR_Y, AVATAR_SIZE, 40, 8);
+        drawFaceRounded(AVATAR_X, AVATAR_Y, AVATAR_SIZE, AVATAR_RADIUS, 40, 8);
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         GlColor.restore();
     }
 
-    private static void drawFaceQuad(float x, float y, float size, int texX, int texY) {
+    private static void setSkinTint(float alpha, float hurt) {
+        float gb = 1.0F - 0.74F * clamp01(hurt);
+        GlColor.set(1.0F, gb, gb, alpha);
+    }
+
+    /**
+     * 把头像纹理绘制成圆角矩形：用三角形扇沿圆角轮廓采样同一张脸，
+     * 四个角会被真正裁掉，而不是在方形头像上盖一块色块。
+     */
+    private static void drawFaceRounded(float x, float y, float size,
+            float radius, int texX, int texY) {
         float inset = 0.18F;
         float u0 = (texX + inset) / 64.0F;
         float v0 = (texY + inset) / 64.0F;
         float u1 = (texX + 8.0F - inset) / 64.0F;
         float v1 = (texY + 8.0F - inset) / 64.0F;
+        float uMid = (u0 + u1) * 0.5F;
+        float vMid = (v0 + v1) * 0.5F;
 
-        GL11.glBegin(GL11.GL_QUADS);
-        GL11.glTexCoord2f(u0, v0);
-        GL11.glVertex2f(x, y);
-        GL11.glTexCoord2f(u1, v0);
-        GL11.glVertex2f(x + size, y);
-        GL11.glTexCoord2f(u1, v1);
-        GL11.glVertex2f(x + size, y + size);
-        GL11.glTexCoord2f(u0, v1);
-        GL11.glVertex2f(x, y + size);
+        GL11.glBegin(GL11.GL_TRIANGLE_FAN);
+        GL11.glTexCoord2f(uMid, vMid);
+        GL11.glVertex2f(x + size * 0.5F, y + size * 0.5F);
+        for (int corner = 0; corner < 4; corner++) {
+            float centerX = x + ((corner == 0 || corner == 3)
+                    ? radius : size - radius);
+            float centerY = y + ((corner < 2) ? radius : size - radius);
+            float startAngle = 180.0F + corner * 90.0F;
+            for (int segment = 0; segment <= 8; segment++) {
+                double angle = Math.toRadians(startAngle + segment * 11.25D);
+                float px = centerX + (float) Math.cos(angle) * radius;
+                float py = centerY + (float) Math.sin(angle) * radius;
+                GL11.glTexCoord2f(u0 + (px - x) / size * (u1 - u0),
+                        v0 + (py - y) / size * (v1 - v0));
+                GL11.glVertex2f(px, py);
+            }
+        }
+        // 闭合圆角轮廓，补上左侧直边对应的最后一个三角形。
+        GL11.glTexCoord2f(u0, v0 + radius / size * (v1 - v0));
+        GL11.glVertex2f(x, y + radius);
         GL11.glEnd();
     }
 
@@ -475,6 +530,22 @@ public final class TargetHud {
             return Math.min(goal, value + step);
         }
         return Math.max(goal, value - step);
+    }
+
+    /**
+     * 血量 / 血量上限的平滑逼近。
+     *
+     * <p>用与帧率无关的指数平滑：掉血用 {@link #HEALTH_DROP_SMOOTH_MS}，
+     * 回血用更快的 {@link #HEALTH_GAIN_SMOOTH_MS}；差很小时直接吸附到目标值。
+     */
+    private static float approachHealth(float value, float goal, float deltaMs) {
+        float diff = goal - value;
+        if (Math.abs(diff) <= HEALTH_SNAP) {
+            return goal;
+        }
+        float tau = diff < 0.0F ? HEALTH_DROP_SMOOTH_MS : HEALTH_GAIN_SMOOTH_MS;
+        float factor = 1.0F - (float) Math.exp(-deltaMs / Math.max(1.0F, tau));
+        return value + diff * factor;
     }
 
     /** 满血绿色 → 半血橙色 → 空血深红。 */

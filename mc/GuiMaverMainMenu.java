@@ -988,7 +988,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
         float ui = uiScale();
         int x = clampInt(Math.round(10.0F * ui), 6, 22);
         int y = height - clampInt(Math.round(17.0F * ui), 14, 26);
-        String version = "Maver " + OpenMaver.VERSION + "  \u00b7  Minecraft 1.8.9";
+        String version = "Maver " + OpenMaver.VERSION;
         drawTrackedLeft(fontRendererObj, version, x, y,
                 scaleAlpha(TEXT_MUTED, reveal), 0.98F * ui, 0.25F * ui, false);
     }

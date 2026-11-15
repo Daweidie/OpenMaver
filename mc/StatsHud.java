@@ -5,6 +5,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.ScaledResolution;
 
+import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
 
@@ -12,11 +13,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 左上角统计 HUD：FPS 胶囊 + CPS 小方块。
+ * 左上角统计 HUD：FPS 胶囊 + 键盘 / CPS 检测。
  *
- * <p>布局默认锚定屏幕左上角：CPS 小方块在最左，FPS 胶囊紧挨在它右侧。
- * 两块底板都是灰色调圆角毛玻璃（模糊自身覆盖的画面，再叠一层中性灰），
- * 与右侧 ModuleList / 右下角提示保持同一套视觉语言。
+ * <p>FPS 在上方，下面是一块按键布局：W、A / S / D、空格、LMB / RMB，
+ * 最底部显示 CPS（左键 | 右键）。键盘和鼠标按下时对应按键会高亮。
+ * 文字统一使用 Maver 自带的 Source Code Pro（{@link HudFont}）。
  *
  * <p>FPS 通过统计每秒 {@code RenderGameOverlayEvent.Post} 的调用次数得到，
  * 不依赖 Minecraft 的调试屏状态；CPS 每帧轮询鼠标左/右键边沿，
@@ -30,32 +31,35 @@ public final class StatsHud {
     private static final int MARGIN = 12;
     private static final int GAP = 6;
 
-    /** 两块底板统一高度，保证顶边对齐。 */
+    /** 顶部 FPS 胶囊。 */
     private static final int PANEL_H = 22;
-    private static final int FPS_RADIUS = 6;
-    private static final int CPS_SIZE = 22;
-    private static final int CPS_RADIUS = 6;
-
+    private static final int FPS_RADIUS = 3;
     private static final int FPS_PAD_X = 9;
     private static final int FPS_MIN_W = 60;
-    private static final float FPS_TEXT_SIZE = 0.8F;
+    private static final float FPS_TEXT_SIZE = 0.95F;
 
-    private static final float CPS_TEXT_SIZE = 0.6F;
-    /** CPS 方块内两行文字（左键 / 右键）的纵向位置。 */
-    private static final int CPS_ROW_LEFT_Y = 3;
-    private static final int CPS_ROW_RIGHT_Y = 11;
+    /** 按键面板：W / A S D / 空格 / LMB RMB / CPS。 */
+    private static final int KEY_SIZE = 22;
+    private static final int KEY_GAP = 2;
+    private static final int KEYBOARD_W = KEY_SIZE * 3 + KEY_GAP * 2;
+    private static final int SPACE_H = 8;
+    private static final int CPS_ROW_H = 20;
+    private static final float KEY_TEXT_SIZE = 0.95F;
+    private static final float KEY_LABEL_TEXT_SIZE = 0.85F;
+    private static final float CPS_TEXT_SIZE = 0.95F;
 
-    /** 灰色毛玻璃：与右下角提示相同的色调与占比。 */
-    private static final int PANEL_TINT = 0x8E8E8E;
-    private static final float PANEL_TINT_STRENGTH = 0.46F;
-    private static final int PANEL_BORDER_ALPHA = 0x30;
+    /** 统计 HUD 统一使用中性灰底，无外描边。 */
     private static final int PANEL_SHADOW_ALPHA = 0x38;
-    private static final int PANEL_HIGHLIGHT_ALPHA = 0x14;
+
+    /** 按键底板：半透明灰色，按下时反白。 */
+    private static final int KEY_BG = 0xCC4A4A4A;
+    private static final int KEY_BG_PRESSED = 0xDCE8EDF2;
+    private static final int KEY_TEXT = 0xFFFFFFFF;
+    private static final int KEY_TEXT_PRESSED = 0xFF20262D;
+    private static final int KEY_SHADOW = 0x90000000;
 
     /** HudFont 用 ARGB，最高位必须是不透明的 0xFF，否则整段文字会被跳过。 */
     private static final int FPS_TEXT = 0xFFFFFFFF;
-    private static final int CPS_LABEL = 0xFFD8D8D8;
-    private static final int CPS_VALUE = 0xFFFFFFFF;
 
     /** FPS 统计窗口：每满 1 秒结算一次，避免数字逐帧跳动。 */
     private static final long FPS_WINDOW_NANOS = 1_000_000_000L;
@@ -77,7 +81,7 @@ public final class StatsHud {
     private StatsHud() {
     }
 
-    /** 任一统计模块开启时返回 true；HUD 用它决定是否提前抓取毛玻璃快照。 */
+    /** 任一统计模块开启时返回 true。 */
     public static boolean isEnabled() {
         return isModuleEnabled("FPS") || isModuleEnabled("CPS");
     }
@@ -207,22 +211,17 @@ public final class StatsHud {
             boolean fpsEnabled, boolean cpsEnabled) {
         int x = MARGIN;
         int y = MARGIN;
-        int cpsX = -1;
-        int fpsX = -1;
         int fpsW = 0;
 
         // ---- 先算布局，再统一画底板（避免玻璃绘制打断文字批次） ----
-        if (cpsEnabled) {
-            cpsX = x;
-            x += CPS_SIZE + GAP;
-        }
         if (fpsEnabled) {
             String label = fpsLabel();
             int textW = HudFont.getStringWidth(font, label, FPS_TEXT_SIZE);
             fpsW = Math.max(FPS_MIN_W, textW + FPS_PAD_X * 2);
-            fpsX = x;
-            fpsW = Math.min(fpsW, Math.max(FPS_MIN_W, resolution.getScaledWidth() - fpsX - MARGIN));
+            fpsW = Math.min(fpsW, Math.max(FPS_MIN_W,
+                    resolution.getScaledWidth() - x - MARGIN));
         }
+        int keysY = fpsEnabled ? y + PANEL_H + GAP : y;
 
         GlColor.restore();
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT);
@@ -233,11 +232,11 @@ public final class StatsHud {
         GL11.glDisable(GL11.GL_CULL_FACE);
         GL11.glEnable(GL11.GL_POLYGON_SMOOTH);
 
-        if (cpsX >= 0) {
-            panel(cpsX, y, CPS_SIZE, PANEL_H, CPS_RADIUS);
+        if (fpsEnabled) {
+            panel(x, y, fpsW, PANEL_H, FPS_RADIUS);
         }
-        if (fpsX >= 0) {
-            panel(fpsX, y, fpsW, PANEL_H, FPS_RADIUS);
+        if (cpsEnabled) {
+            drawKeyBoxes(x, keysY);
         }
 
         GL11.glEnable(GL11.GL_TEXTURE_2D);
@@ -245,50 +244,107 @@ public final class StatsHud {
         GL11.glPopAttrib();
         GlColor.restore();
 
-        if (cpsX >= 0) {
-            drawCpsText(font, cpsX, y);
-        }
-        if (fpsX >= 0) {
+        if (fpsEnabled) {
             String label = fpsLabel();
-            int textX = fpsX + (fpsW - HudFont.getStringWidth(font, label, FPS_TEXT_SIZE)) / 2;
-            int textY = y + (PANEL_H - 10) / 2;
+            int textX = x + (fpsW - HudFont.getStringWidth(font, label, FPS_TEXT_SIZE)) / 2;
+            int textY = y + (PANEL_H - 12) / 2;
             HudFont.drawString(font, label, textX, textY, FPS_TEXT, FPS_TEXT_SIZE);
         }
+        if (cpsEnabled) {
+            drawKeyTexts(font, x, keysY);
+        }
     }
 
-    /** 灰色毛玻璃圆角底板：柔和投影 + 1px 白色描边 + 局部模糊。 */
+    /** 灰色圆角底板：柔和投影 + 纯灰填充，不描边。 */
     private static void panel(int x, int y, int w, int h, int radius) {
-        roundRect(x + 1, y + 2, w, h, radius, withAlpha(0x000000, PANEL_SHADOW_ALPHA));
-        roundRect(x, y, w, h, radius + 1, withAlpha(0xFFFFFF, PANEL_BORDER_ALPHA));
-        GuiBlur.draw(x + 1, y + 1, w - 2, h - 2, Math.max(0, radius - 1),
-                PANEL_TINT, PANEL_TINT_STRENGTH, 1.0F);
-        if (w > radius * 2) {
-            roundRect(x + radius, y + 1, w - radius * 2, 1, 0,
-                    withAlpha(0xFFFFFF, PANEL_HIGHLIGHT_ALPHA));
+        grayBox(x, y, w, h, radius, KEY_BG);
+    }
+
+    private static void grayBox(int x, int y, int w, int h, int radius, int fill) {
+        roundRect(x + 1, y + 2, w, h, radius,
+                withAlpha(0x000000, PANEL_SHADOW_ALPHA));
+        roundRect(x, y, w, h, radius, fill);
+    }
+
+    /** 键盘 / 鼠标 / CPS 的所有底板。 */
+    private static void drawKeyBoxes(int x, int y) {
+        int rowY = y;
+        int wX = x + (KEYBOARD_W - KEY_SIZE) / 2;
+        keyBox(wX, rowY, KEY_SIZE, KEY_SIZE, Keyboard.isKeyDown(Keyboard.KEY_W));
+        rowY += KEY_SIZE + KEY_GAP;
+
+        keyBox(x, rowY, KEY_SIZE, KEY_SIZE, Keyboard.isKeyDown(Keyboard.KEY_A));
+        keyBox(x + KEY_SIZE + KEY_GAP, rowY, KEY_SIZE, KEY_SIZE,
+                Keyboard.isKeyDown(Keyboard.KEY_S));
+        keyBox(x + (KEY_SIZE + KEY_GAP) * 2, rowY, KEY_SIZE, KEY_SIZE,
+                Keyboard.isKeyDown(Keyboard.KEY_D));
+        rowY += KEY_SIZE + KEY_GAP;
+
+        boolean space = Keyboard.isKeyDown(Keyboard.KEY_SPACE);
+        keyBox(x, rowY, KEYBOARD_W, SPACE_H, space);
+        int markW = Math.min(18, KEYBOARD_W - 12);
+        roundRect(x + (KEYBOARD_W - markW) / 2, rowY + SPACE_H / 2 - 1,
+                markW, 2, 1, space ? KEY_TEXT_PRESSED : 0xB0FFFFFF);
+        rowY += SPACE_H + KEY_GAP;
+
+        int halfW = (KEYBOARD_W - KEY_GAP) / 2;
+        keyBox(x, rowY, halfW, KEY_SIZE, Mouse.isButtonDown(0));
+        keyBox(x + halfW + KEY_GAP, rowY, halfW, KEY_SIZE, Mouse.isButtonDown(1));
+        rowY += KEY_SIZE + KEY_GAP;
+
+        keyBox(x, rowY, KEYBOARD_W, CPS_ROW_H, false);
+    }
+
+    private static void keyBox(int x, int y, int w, int h, boolean pressed) {
+        grayBox(x, y, w, h, 3, pressed ? KEY_BG_PRESSED : KEY_BG);
+    }
+
+    /** 所有按键文字，统一使用 Maver 自带字体。 */
+    private static void drawKeyTexts(FontRenderer font, int x, int y) {
+        int rowY = y;
+        int wX = x + (KEYBOARD_W - KEY_SIZE) / 2;
+        drawKeyLabel(font, "W", wX, rowY, KEY_SIZE, KEY_SIZE,
+                Keyboard.isKeyDown(Keyboard.KEY_W), KEY_TEXT_SIZE);
+        rowY += KEY_SIZE + KEY_GAP;
+
+        drawKeyLabel(font, "A", x, rowY, KEY_SIZE, KEY_SIZE,
+                Keyboard.isKeyDown(Keyboard.KEY_A), KEY_TEXT_SIZE);
+        drawKeyLabel(font, "S", x + KEY_SIZE + KEY_GAP, rowY, KEY_SIZE, KEY_SIZE,
+                Keyboard.isKeyDown(Keyboard.KEY_S), KEY_TEXT_SIZE);
+        drawKeyLabel(font, "D", x + (KEY_SIZE + KEY_GAP) * 2, rowY,
+                KEY_SIZE, KEY_SIZE, Keyboard.isKeyDown(Keyboard.KEY_D),
+                KEY_TEXT_SIZE);
+        rowY += KEY_SIZE + KEY_GAP + SPACE_H + KEY_GAP;
+
+        int halfW = (KEYBOARD_W - KEY_GAP) / 2;
+        drawKeyLabel(font, "LMB", x, rowY, halfW, KEY_SIZE,
+                Mouse.isButtonDown(0), KEY_LABEL_TEXT_SIZE);
+        drawKeyLabel(font, "RMB", x + halfW + KEY_GAP, rowY, halfW, KEY_SIZE,
+                Mouse.isButtonDown(1), KEY_LABEL_TEXT_SIZE);
+        rowY += KEY_SIZE + KEY_GAP;
+
+        drawCpsText(font, x, rowY, KEYBOARD_W, CPS_ROW_H);
+    }
+
+    private static void drawKeyLabel(FontRenderer font, String text,
+            int boxX, int boxY, int boxW, int boxH, boolean pressed, float size) {
+        int textW = HudFont.getStringWidth(font, text, size);
+        int textX = boxX + (boxW - textW) / 2;
+        int textY = boxY + (boxH - 12) / 2;
+        if (!pressed) {
+            HudFont.drawString(font, text, textX + 1, textY + 1, KEY_SHADOW, size);
         }
+        HudFont.drawString(font, text, textX, textY,
+                pressed ? KEY_TEXT_PRESSED : KEY_TEXT, size);
     }
 
-    private static void drawCpsText(FontRenderer font, int x, int y) {
-        String left = "L " + LEFT_CLICKS.size();
-        String right = "R " + RIGHT_CLICKS.size();
-        drawCpsRow(font, left, x, y + CPS_ROW_LEFT_Y);
-        drawCpsRow(font, right, x, y + CPS_ROW_RIGHT_Y);
-    }
-
-    private static void drawCpsRow(FontRenderer font, String text, int x, int y) {
+    private static void drawCpsText(FontRenderer font, int x, int y, int w, int h) {
+        String text = "CPS " + LEFT_CLICKS.size() + " | " + RIGHT_CLICKS.size();
         int textW = HudFont.getStringWidth(font, text, CPS_TEXT_SIZE);
-        int textX = x + (CPS_SIZE - textW) / 2;
-        // 字母标签稍暗、数值更亮，两行仍然保持紧凑。
-        int split = text.indexOf(' ');
-        if (split > 0) {
-            String label = text.substring(0, split);
-            String value = text.substring(split);
-            int labelW = HudFont.getStringWidth(font, label, CPS_TEXT_SIZE);
-            HudFont.drawString(font, label, textX, y, CPS_LABEL, CPS_TEXT_SIZE);
-            HudFont.drawString(font, value, textX + labelW, y, CPS_VALUE, CPS_TEXT_SIZE);
-        } else {
-            HudFont.drawString(font, text, textX, y, CPS_VALUE, CPS_TEXT_SIZE);
-        }
+        int textX = x + (w - textW) / 2;
+        int textY = y + (h - 12) / 2;
+        HudFont.drawString(font, text, textX + 1, textY + 1, KEY_SHADOW, CPS_TEXT_SIZE);
+        HudFont.drawString(font, text, textX, textY, KEY_TEXT, CPS_TEXT_SIZE);
     }
 
     // ==================================================================

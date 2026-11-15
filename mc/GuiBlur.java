@@ -25,6 +25,8 @@ public final class GuiBlur {
     private static final float BLUR_RADIUS = 2.6F;
     /** 单次横纵模糊后再叠加一轮，让毛玻璃更厚、更明显。 */
     private static final int BLUR_ITERATIONS = 2;
+    /** 低于该强度时直接采样清晰快照，避免低强度下缩略图降采样的糊感。 */
+    private static final float SHARP_THRESHOLD = 0.02F;
 
     private static final String VERTEX_SHADER =
             "#version 120\n"
@@ -101,6 +103,8 @@ public final class GuiBlur {
     private static int screenWidth = 1;
     private static int screenHeight = 1;
     private static boolean captured;
+    /** 本次抓屏是否直接使用清晰快照（跳过了模糊 pass）。 */
+    private static boolean capturedSharp;
     /** 本次抓屏使用的模糊强度；默认 1.0，主菜单会请求更轻的模糊。 */
     private static float requestedBlurStrength = 1.0F;
 
@@ -133,6 +137,7 @@ public final class GuiBlur {
             if (!ensureResources()) {
                 return;
             }
+            capturedSharp = requestedBlurStrength <= SHARP_THRESHOLD;
             int previousProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
             int previousActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
             GL20.glUseProgram(0);
@@ -143,7 +148,9 @@ public final class GuiBlur {
             GlStateManager.bindTexture(0);
             GL13.glActiveTexture(previousActiveTexture);
             GL20.glUseProgram(previousProgram);
-            runBlurPasses();
+            if (requestedBlurStrength > SHARP_THRESHOLD) {
+                runBlurPasses();
+            }
         } catch (Throwable t) {
             disabled = true;
             System.err.println("[OpenMaver] 背景模糊不可用，已回退纯色: " + t);
@@ -170,10 +177,10 @@ public final class GuiBlur {
     /**
      * 与 {@link #draw} 相同，但允许在抓屏前指定模糊强度。
      *
-     * <p>强度会同时缩放采样半径，并在低于 0.85 时减少一轮模糊 pass。
+     * <p>强度会连续缩放采样半径；接近 0 时直接使用清晰快照。
      * 只影响这一次抓屏；HUD / ClickGUI 仍使用默认强度。
      *
-     * @param blurStrength 0.1 ~ 1.0；越小越清晰
+     * @param blurStrength 0.0 ~ 1.0；越小越清晰
      */
     public static void draw(int x, int y, int w, int h, float radius,
             int tintRgb, float tintStrength, float alpha, float blurStrength) {
@@ -201,10 +208,10 @@ public final class GuiBlur {
     /**
      * 与 {@link #drawMirrored} 相同，但允许在抓屏前指定模糊强度。
      *
-     * <p>强度会同时缩放采样半径，并在低于 0.85 时减少一轮模糊 pass。
+     * <p>强度会连续缩放采样半径；接近 0 时直接使用清晰快照。
      * 只影响这一次抓屏；HUD / ClickGUI 仍使用默认强度。
      *
-     * @param blurStrength 0.1 ~ 1.0；越小越清晰
+     * @param blurStrength 0.0 ~ 1.0；越小越清晰
      */
     public static void drawMirrored(int x, int y, int w, int h, float radius,
             int tintRgb, float tintStrength, float alpha, float blurStrength) {
@@ -252,7 +259,8 @@ public final class GuiBlur {
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             GL11.glEnable(GL11.GL_TEXTURE_2D);
             GL13.glActiveTexture(GL13.GL_TEXTURE0);
-            GlStateManager.bindTexture(blurTextureB);
+            // 动画收尾时直接使用清晰快照，背景能真正回到完全清晰，而不是留一层降采样糊边。
+            GlStateManager.bindTexture(capturedSharp ? sourceTexture : blurTextureB);
             GL20.glUseProgram(drawProgram);
             GL20.glUniform1i(drawTexLocation, 0);
             GL20.glUniform4f(drawTintLocation,
@@ -479,9 +487,9 @@ public final class GuiBlur {
         if (!targetsReady) {
             return;
         }
-        float strength = Math.max(0.1F, Math.min(1.0F, requestedBlurStrength));
+        float strength = clamp01(requestedBlurStrength);
         float radius = BLUR_RADIUS * strength;
-        int iterations = strength < 0.85F ? 1 : BLUR_ITERATIONS;
+        int iterations = BLUR_ITERATIONS;
         int previousProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
         int previousActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
         int previousFramebuffer = GL11.glGetInteger(
