@@ -123,6 +123,18 @@ def install_mod():
     return target
 
 
+def install_resource_pack():
+    """Install the 2pimp v2 [16x] pack bundled with Maver into this instance."""
+    helper = REPO / "tools/resourcepack.py"
+    if not helper.is_file():
+        return
+    try:
+        subprocess.call([sys.executable, str(helper),
+                         "--game-dir", str(GAME_DIR)])
+    except OSError as exc:
+        print("[OpenMaver] resource pack installer failed: {}".format(exc))
+
+
 def disable_mod():
     """Keep mod mode and injection mode isolated inside the same instance."""
     disabled = []
@@ -259,6 +271,7 @@ def main():
                 print("[OpenMaver] disabled mod jar for injection mode: {}".format(path))
         else:
             install_mod()
+        install_resource_pack()
     classpath = []
     for library in base_meta["libraries"] + forge_meta["libraries"]:
         if not library_is_enabled(library):
@@ -323,6 +336,7 @@ def main():
                   REPO / "build/openmaver-mc.jar")
         else:
             print("OpenMaver mod:", mod_jar_path(), "(installed at launch)")
+        print("Resource pack:", REPO / "mc/resources/openmaver/resourcepack/2pimp-v2-16x.zip")
         print("Account:", username, "(credentials omitted)")
         return
     if mode == "inject":

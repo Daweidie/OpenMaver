@@ -83,6 +83,8 @@ public final class OpenMaverClientHandler {
                 return;
             }
             ensureCustomMainMenu(mc);
+            // 首次 tick：把 jar 内自带的 2pimp v2 [16x] 材质包装进 resourcepacks/。
+            BundledResourcePack.install(mc);
             // START：在 vanilla 发送 C03 之前应用 aim / sprint。
             if (event.phase == TickEvent.Phase.START) {
                 syncHeldKeys();

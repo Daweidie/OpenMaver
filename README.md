@@ -53,9 +53,12 @@ OpenMaver/
 │   ├── GuiOpenMaverClickGui.java  # 游戏内 ClickGUI（分类 / 搜索 / 展开设置）
 │   ├── GuiMaverMainMenu.java      # Badlion 风格主菜单（Logo / 按钮 / 账号 / 快捷菜单）
 │   ├── MaverWallpaper.java        # 主菜单壁纸（静态图片 / GIF / 内置动态背景）
-│   └── MaverLogo.java             # 打包的 Maver Logo 纹理绘制
+│   ├── MaverLogo.java             # 打包的 Maver Logo 纹理绘制
+│   ├── BundledResourcePack.java   # 首次启动安装自带的 2pimp v2 [16x] 材质包
+│   └── resources/openmaver/resourcepack/2pimp-v2-16x.zip  # 自带材质包本体
 ├── mcstubs/                       # 编译 mc/ 用的 API stub（仅编译期，不进 jar）
 ├── tools/McpReobf.java            # MCP -> SRG reobf（Forge 1.8.9 运行期需要）
+├── tools/resourcepack.py          # 自带材质包安装（launch / inject 脚本共用）
 ├── config/default.jsonc           # 默认配置
 └── CMakeLists.txt
 ```
@@ -125,6 +128,14 @@ mc/*.java --javac(对 MCP API)--> mc-classes --McpReobf(MCP->SRG)--> mc-classes-
 2. 用上面的命令构建出 **`build/openmaver-mod.jar`**。
 3. 把 `openmaver-mod.jar` 放进该实例的 `mods/` 目录（`~/.minecraft/mods/` 或 Prism 实例的 `minecraft/mods/`）。
 4. 启动游戏 → 进入世界，右下角会出现「Loaded successfully, x features enabled!」。
+
+> **自带材质包**：Maver 内置 `2pimp v2 [16x]` 材质包
+> （`mc/resources/openmaver/resourcepack/2pimp-v2-16x.zip`，已打进 jar）。
+> 首次启动时 mod 会把它复制到实例的 `resourcepacks/` 并加入资源包列表，正常退出
+> 游戏后下次启动自动启用；之后可在 **选项 → 资源包** 里自由开关，Maver 不会再强制打开。
+> 使用 `./launch-openmaver.sh` 或 `./inject-prism.sh` 时，安装脚本会在启动前完成同样的
+> 安装并立即启用。落地文件名使用纯 ASCII（`2pimp v2 [16x].zip`）：1.8.9 的 JVM 在部分
+> 系统上以 ASCII 解码文件名，带 `§` 颜色代码的文件名会变成 `?` 导致永远匹配不上。
 
 > 用 PrismLauncher 的 vanilla 实例直接实现不了——`mc/` 的事件（`TickEvent`、`RenderGameOverlayEvent` 等）
 > 全部来自 Forge，必须先给该实例装上 Forge。

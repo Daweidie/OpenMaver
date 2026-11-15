@@ -27,6 +27,11 @@ instance="${OPENMAVER_INSTANCE_DIR:-$prism_root/instances/$instance_id}"
 mod_jar="$instance/minecraft/mods/OpenMaver.jar"
 disabled_mod_jar="$mod_jar.disabled"
 
+# Maver 自带的 2pimp v2 [16x] 材质包：复制进实例，首次安装时加入已启用列表。
+if [ -f "$repo_dir/tools/resourcepack.py" ]; then
+    python3 "$repo_dir/tools/resourcepack.py" --game-dir "$instance/minecraft" || true
+fi
+
 # Remove --force from the arguments forwarded to the injector.
 force=0
 inject_args=()
