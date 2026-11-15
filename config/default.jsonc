@@ -20,8 +20,8 @@
       "enabled": false,        // 示例模块 AutoSprint：默认关闭（链路验证时可临时改为 true）
       "key": "V"               // 绑定键位（按 V 切换）
     },
-    "godbridge": {
-      "enabled": false,        // GodBridge 神桥：默认关闭（按 B 切换）
+    "scaffold": {
+      "enabled": false,        // Scaffold 自动搭路/神桥：默认关闭（按 B 切换）
       "key": "B"               // 绑定键位（按 B 切换）
     }
   },
@@ -44,6 +44,10 @@
     },
     "criticals": {
       "enabled": false,        // 刀暴/强制暴击：默认关闭（JUMP 模式：真实起跳后才暴击，不发伪造移动包）
+      "key": ""                // 默认不占用按键，玩家可自行绑定
+    },
+    "killaura": {
+      "enabled": false,        // KillAura 自动攻击：默认关闭（参数在 ClickGUI 中调整）
       "key": ""                // 默认不占用按键，玩家可自行绑定
     }
   },
@@ -72,6 +76,14 @@
     "playerxray": {
       "enabled": false,        // 玩家透视：默认关闭（按 J 切换）
       "key": "J"               // 绑定键位
+    },
+    "motionblur": {
+      "enabled": false,        // 运动模糊：默认关闭（按 M 切换；静止时零开销）
+      "key": "M"               // 绑定键位
+    },
+    "fullbright": {
+      "enabled": false,        // 全亮/夜视：默认关闭（按 Y 切换）
+      "key": "Y"               // 绑定键位
     },
     "fps": {
       "enabled": true,         // 左上角 FPS 显示：默认开启

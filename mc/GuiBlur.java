@@ -101,6 +101,8 @@ public final class GuiBlur {
     private static int screenWidth = 1;
     private static int screenHeight = 1;
     private static boolean captured;
+    /** 本次抓屏使用的模糊强度；默认 1.0，主菜单会请求更轻的模糊。 */
+    private static float requestedBlurStrength = 1.0F;
 
     private GuiBlur() {
     }
@@ -166,6 +168,25 @@ public final class GuiBlur {
     }
 
     /**
+     * 与 {@link #draw} 相同，但允许在抓屏前指定模糊强度。
+     *
+     * <p>强度会同时缩放采样半径，并在低于 0.85 时减少一轮模糊 pass。
+     * 只影响这一次抓屏；HUD / ClickGUI 仍使用默认强度。
+     *
+     * @param blurStrength 0.1 ~ 1.0；越小越清晰
+     */
+    public static void draw(int x, int y, int w, int h, float radius,
+            int tintRgb, float tintStrength, float alpha, float blurStrength) {
+        float previous = requestedBlurStrength;
+        requestedBlurStrength = clamp01(blurStrength);
+        try {
+            draw(x, y, w, h, radius, tintRgb, tintStrength, alpha, false);
+        } finally {
+            requestedBlurStrength = previous;
+        }
+    }
+
+    /**
      * 与 {@link #draw} 相同，但把采样到的整张背景水平镜像。
      *
      * <p>原版主菜单先把全景图渲染到 FBO，再在最终绘制时把 U 轴反过来，
@@ -175,6 +196,25 @@ public final class GuiBlur {
     public static void drawMirrored(int x, int y, int w, int h, float radius,
             int tintRgb, float tintStrength, float alpha) {
         draw(x, y, w, h, radius, tintRgb, tintStrength, alpha, true);
+    }
+
+    /**
+     * 与 {@link #drawMirrored} 相同，但允许在抓屏前指定模糊强度。
+     *
+     * <p>强度会同时缩放采样半径，并在低于 0.85 时减少一轮模糊 pass。
+     * 只影响这一次抓屏；HUD / ClickGUI 仍使用默认强度。
+     *
+     * @param blurStrength 0.1 ~ 1.0；越小越清晰
+     */
+    public static void drawMirrored(int x, int y, int w, int h, float radius,
+            int tintRgb, float tintStrength, float alpha, float blurStrength) {
+        float previous = requestedBlurStrength;
+        requestedBlurStrength = clamp01(blurStrength);
+        try {
+            draw(x, y, w, h, radius, tintRgb, tintStrength, alpha, true);
+        } finally {
+            requestedBlurStrength = previous;
+        }
     }
 
     private static void draw(int x, int y, int w, int h, float radius,
@@ -439,6 +479,9 @@ public final class GuiBlur {
         if (!targetsReady) {
             return;
         }
+        float strength = Math.max(0.1F, Math.min(1.0F, requestedBlurStrength));
+        float radius = BLUR_RADIUS * strength;
+        int iterations = strength < 0.85F ? 1 : BLUR_ITERATIONS;
         int previousProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
         int previousActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
         int previousFramebuffer = GL11.glGetInteger(
@@ -459,19 +502,19 @@ public final class GuiBlur {
             GL20.glUseProgram(blurProgram);
             GL20.glUniform1i(blurTexLocation, 0);
 
-            for (int iteration = 0; iteration < BLUR_ITERATIONS; iteration++) {
+            for (int iteration = 0; iteration < iterations; iteration++) {
                 // 横向：首轮取全分辨率快照，之后在两张低分辨率缓冲之间往复。
                 EXTFramebufferObject.glBindFramebufferEXT(
                         EXTFramebufferObject.GL_FRAMEBUFFER_EXT, blurFramebufferA);
                 GlStateManager.bindTexture(iteration == 0 ? sourceTexture : blurTextureB);
-                GL20.glUniform2f(blurDirLocation, BLUR_RADIUS / blurWidth, 0.0F);
+                GL20.glUniform2f(blurDirLocation, radius / blurWidth, 0.0F);
                 drawFullscreenQuad();
 
                 // 纵向：A -> B
                 EXTFramebufferObject.glBindFramebufferEXT(
                         EXTFramebufferObject.GL_FRAMEBUFFER_EXT, blurFramebufferB);
                 GlStateManager.bindTexture(blurTextureA);
-                GL20.glUniform2f(blurDirLocation, 0.0F, BLUR_RADIUS / blurHeight);
+                GL20.glUniform2f(blurDirLocation, 0.0F, radius / blurHeight);
                 drawFullscreenQuad();
             }
         } finally {

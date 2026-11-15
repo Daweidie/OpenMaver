@@ -213,7 +213,7 @@ public final class OpenMaverHud {
             GuiBlur.beginFrame(resolution.getScaledWidth(),
                     resolution.getScaledHeight(), resolution.getScaleFactor());
             if (!entries.isEmpty() || !TOASTS.isEmpty() || !LIST_ENTRIES.isEmpty()
-                    || TargetHud.isEnabled() || StatsHud.isEnabled()) {
+                    || TargetHud.isEnabled() || ScaffoldHud.isEnabled() || StatsHud.isEnabled()) {
                 GuiBlur.capture();
             }
             StatsHud.render(font, event.resolution, now);
@@ -221,6 +221,11 @@ public final class OpenMaverHud {
                 TargetHud.render(font, event.resolution, now);
             } catch (Throwable targetError) {
                 System.err.println("[OpenMaver] Target HUD 绘制出错: " + targetError);
+            }
+            try {
+                ScaffoldHud.render(font, event.resolution, now);
+            } catch (Throwable scaffoldError) {
+                System.err.println("[OpenMaver] Scaffold HUD 绘制出错: " + scaffoldError);
             }
             int listBottom = renderModuleList(font, event.resolution, entries, now);
             renderToasts(font, event.resolution.getScaledWidth(),
@@ -434,8 +439,17 @@ public final class OpenMaverHud {
         if ("FastPlace".equals(name)) {
             return OpenMaverFeatures.getFastPlaceDelayTicks() + "t";
         }
-        if ("GodBridge".equals(name)) {
-            return OpenMaverFeatures.getGodBridgeDelayTicks() + "t";
+        if ("Scaffold".equals(name)) {
+            int blocks = ScaffoldFeature.getBlockCount();
+            return Math.max(0, blocks) + "b";
+        }
+        if ("KillAura".equals(name)) {
+            int min = Math.min(OpenMaverFeatures.getKillAuraCpsMin(),
+                    OpenMaverFeatures.getKillAuraCpsMax());
+            int max = Math.max(OpenMaverFeatures.getKillAuraCpsMin(),
+                    OpenMaverFeatures.getKillAuraCpsMax());
+            return number(OpenMaverFeatures.getEffectiveKillAuraRange()) + "m "
+                    + (min == max ? Integer.toString(min) : min + "-" + max);
         }
         if ("FakePlayer".equals(name)) {
             return OpenMaverFeatures.getFakePlayerCount() + "x "
@@ -444,8 +458,14 @@ public final class OpenMaverHud {
         if ("Target HUD".equals(name)) {
             return Math.round(OpenMaverFeatures.getTargetHudRange()) + "m";
         }
+        if ("FullBright".equals(name)) {
+            return "NV";
+        }
         if ("Player X-Ray".equals(name)) {
             return Math.round(OpenMaverFeatures.getPlayerXrayRange()) + "m";
+        }
+        if ("Motion Blur".equals(name)) {
+            return Math.round(OpenMaverFeatures.getMotionBlurStrength() * 100.0F) + "%";
         }
         if ("Grim Bypass".equals(name)) {
             return OpenMaverFeatures.getBypassProfileName();

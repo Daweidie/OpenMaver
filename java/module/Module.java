@@ -136,7 +136,10 @@ public abstract class Module {
     public final void syncFromConfig() {
         if (config != null) {
             String configuredKey = config.getString(configKey + ".key", null);
-            setKeybind(configuredKey);
+            // 配置里没有 key 时保留模块自己的默认键位；显式写成 "" 仍然解除绑定。
+            if (configuredKey != null) {
+                setKeybind(configuredKey);
+            }
         }
         boolean wanted = (config != null)
                 ? config.getBoolean(configKey + ".enabled", defaultEnabled)

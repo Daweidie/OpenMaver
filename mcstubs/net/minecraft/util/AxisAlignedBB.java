@@ -7,4 +7,17 @@ public class AxisAlignedBB {
     public double maxX;
     public double maxY;
     public double maxZ;
+
+    public AxisAlignedBB() {
+    }
+
+    public AxisAlignedBB(double minX, double minY, double minZ,
+            double maxX, double maxY, double maxZ) {
+        this.minX = minX;
+        this.minY = minY;
+        this.minZ = minZ;
+        this.maxX = maxX;
+        this.maxY = maxY;
+        this.maxZ = maxZ;
+    }
 }

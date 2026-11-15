@@ -9,6 +9,7 @@ import net.minecraft.client.renderer.entity.RenderManager;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.potion.PotionEffect;
 import net.minecraft.util.AxisAlignedBB;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
 
@@ -17,8 +18,10 @@ import org.lwjgl.opengl.GL11;
 
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -93,6 +96,22 @@ public final class OpenMaverFeatures {
     private static float aimCachedPitch;
     private static EntityLivingBase aimCachedPlayer;
     private static float aimCachedGcd;
+    /**
+     * 粘性目标锁定：一旦锁住某个生物，只有它死亡、离开范围/维度，或玩家主动
+     * 把鼠标移开时才重新选目标，不会因为旁边出现更近的生物而换人。
+     */
+    private static EntityLivingBase aimLockedTarget;
+    private static Object aimLockedWorld;
+    private static EntityLivingBase aimLockedPlayer;
+    /** 上一次由 Aim 实际写入的绝对视角，用于识别玩家的手动鼠标移动。 */
+    private static float aimWrittenYaw = Float.NaN;
+    private static float aimWrittenPitch = Float.NaN;
+    /** 手动移动的泄漏累计量（度），超过阈值就放弃当前锁定目标。 */
+    private static float aimManualYaw;
+    private static float aimManualPitch;
+    private static final float AIM_MANUAL_YAW_LIMIT = 6.0F;
+    private static final float AIM_MANUAL_PITCH_LIMIT = 4.0F;
+    private static final float AIM_MANUAL_DECAY_MS = 120.0F;
 
     // Player ESP
     private static float espRange = 48.0F;
@@ -109,6 +128,9 @@ public final class OpenMaverFeatures {
     // Player X-Ray
     private static float playerXrayRange = 64.0F;
     private static int playerXrayColor = 0;      // 0 = Health, 1 = Orange, 2 = Cyan, 3 = Violet, 4 = Red
+
+    // Motion Blur
+    private static float motionBlurStrength = 0.70F;
 
     // AutoSprint
     private static boolean sprintOnlyForward = true;
@@ -154,7 +176,7 @@ public final class OpenMaverFeatures {
     private static boolean autoclickerHumanize = true;
 
     /** openmaver.properties 的结构版本，用于迁移旧默认值。 */
-    private static final int SETTINGS_VERSION = 6;
+    private static final int SETTINGS_VERSION = 7;
 
     /**
      * 1.8.9 服务端的受击无敌窗口是 10 tick（hurtResistantTime 20 -> 10 才会结算）。
@@ -212,6 +234,7 @@ public final class OpenMaverFeatures {
 
     private static final int CRITICALS_ATTACK_AUTOCLICKER = 1;
     private static final int CRITICALS_ATTACK_REACH = 2;
+    private static final int CRITICALS_ATTACK_KILLAURA = 3;
 
     /**
      * 默认 JUMP：只有真实起跳后的下落才会暴击，不发送任何伪造移动包。
@@ -264,29 +287,52 @@ public final class OpenMaverFeatures {
     private static long lastPlacementTick = Long.MIN_VALUE;
     private static long clientTick;
 
-    // GodBridge（神桥）
-    private static int godBridgeDelayTicks = 0;
-    private static boolean godBridgeFastPlace = true;
-    private static boolean godBridgeRequireEdgeAim = true;
-    private static boolean godBridgeAutoRotate = true;
+    // Scaffold（自动搭路/神桥，由 GodBridge 重命名而来）
+    private static int scaffoldDelayTicks = 1;
+    private static boolean scaffoldFastPlace = true;
+    /** 只在后退时搭路；Myau Scaffold 默认任意方向都铺，因此默认关闭。 */
+    private static boolean scaffoldRequireBackward;
+    /** 前方有实心方块、头上有空间时自动起跳（可选辅助）。 */
+    private static boolean scaffoldAutoJump;
+    private static boolean scaffoldAutoRotate = true;
     /**
      * 只用玩家真实准星放置：不自动转视角，也不额外发飞行包。
      * 这是当前对 Grim 最干净的模式；自动旋转/发包模式保留用于对比测试。
      */
-    private static boolean godBridgeLegitAim = true;
+    private static boolean scaffoldLegitAim = true;
     /** 通过 C05 视角包让服务端在收到 C08 前更新 yaw/pitch（实验性）。 */
-    private static boolean godBridgePacketRotation;
-    private static Class<?> godBridgeLookPacketType;
-    private static java.lang.reflect.Constructor<?> godBridgeLookPacketConstructor;
-    private static int godBridgeCooldownTicks;
-    /** 起桥/落地时记录的桥面 Y，跳跃期间沿用它，避免原地跳一次就搭高一层。 */
-    private static int godBridgeGroundY = Integer.MIN_VALUE;
-    private static boolean godBridgeArmed;
-    private static boolean godBridgeActive;
-    private static boolean godBridgeTimerOwned;
-    private static boolean godBridgeFailed;
-    /** 鼠标命中点距离方块边缘小于该值时，视为“瞄准方块边缘”。 */
-    private static final double GOD_BRIDGE_EDGE_TOLERANCE = 0.30D;
+    private static boolean scaffoldPacketRotation;
+    private static Class<?> scaffoldLookPacketType;
+    private static java.lang.reflect.Constructor<?> scaffoldLookPacketConstructor;
+    private static int scaffoldCooldownTicks;
+    private static boolean scaffoldTimerOwned;
+    private static boolean scaffoldFailed;
+    private static long scaffoldLastJumpNanos;
+    /** 自动跳跃在脚前方寻找的额外水平距离。 */
+    private static final double SCAFFOLD_JUMP_LOOKAHEAD = 1.0D;
+
+    // KillAura（刀暴/自动攻击，行为参考 OpenMyau-Fix KillAura）
+    private static float killAuraRange = 3.0F;
+    private static int killAuraCpsMin = 8;
+    private static int killAuraCpsMax = 12;
+    private static int killAuraFov = 360;
+    private static boolean killAuraThroughWalls = true;
+    private static boolean killAuraPlayers = true;
+    private static boolean killAuraMobs;
+    private static boolean killAuraAnimals;
+    /** false = Single，true = Switch；Switch 会按间隔轮换目标。 */
+    private static boolean killAuraSwitch;
+    /** 0 = Distance，1 = Health。 */
+    private static int killAuraSort;
+    private static int killAuraSwitchDelayMs = 150;
+    private static boolean killAuraRotate = true;
+    private static float killAuraSmoothing = 0.45F;
+    private static boolean killAuraRequirePress;
+    private static boolean killAuraFailed;
+    private static EntityLivingBase killAuraTarget;
+    private static long killAuraNextAttackNanos;
+    private static long killAuraLastSwitchNanos;
+    private static final Random KILL_AURA_RANDOM = new Random();
 
     private static Class<?> scaffoldBlockPosType;
     private static java.lang.reflect.Constructor<?> scaffoldBlockPosConstructor;
@@ -328,6 +374,17 @@ public final class OpenMaverFeatures {
     private static float fakePlayerSpawnedDistance = -1.0F;
     private static boolean fakePlayerFailed;
 
+    // FullBright（全亮 / 夜视）
+    /** 1.8.9 夜视药水的数字 ID。 */
+    private static final int NIGHT_VISION_POTION_ID = 16;
+    /** 每次 tick 重新补满，长时间挂机也不会因为效果到期而闪烁。 */
+    private static final int FULLBRIGHT_DURATION_TICKS = 20 * 60 * 30;
+    /** 只清理本模块自己添加的夜视，避免误删玩家原本的药水效果。 */
+    private static boolean fullBrightApplied;
+    /** 记录效果加在哪个玩家实例上；切换世界/重登后重新判断归属。 */
+    private static EntityLivingBase fullBrightPlayer;
+    private static boolean fullBrightFailed;
+
     private OpenMaverFeatures() {
     }
 
@@ -353,11 +410,17 @@ public final class OpenMaverFeatures {
         try {
             refreshSettings();
             clientTick++;
+            ScaffoldFeature.tickCounter(clientTick);
             processPendingCriticalJump(mc);
+            // Scaffold 需要在本 tick 的 C03 之前完成旋转、Tower 与放置。
+            ScaffoldFeature.onTickStart(mc);
+            // KillAura 先选目标并转向，再攻击；AutoClicker 在 KillAura 启用时让位。
+            updateKillAura(mc);
             updateAutoClicker(mc);
             suppressVanillaDuplicateAttack(mc);
             boolean screenOpen = read(mc, "currentScreen", "field_71462_r", null) != null;
             if (screenOpen) {
+                clearAimLock();
                 aimHasTarget = false;
                 return;
             }
@@ -374,11 +437,14 @@ public final class OpenMaverFeatures {
     }
 
     public static void onTick(Minecraft mc) {
+        // Scaffold 的 tick 内换视角：C03 已在 tick 中间发出，这里在渲染前
+        // 把 rotation 恢复成相机，同时让 F5 身体保留服务端 aim。
+        ScaffoldFeature.onTickEnd(mc);
         updateFakePlayers(mc);
+        updateFullBright(mc);
         // AutoSprint / Aim / AutoClicker 已在 onTickStart 处理。
         updateFastPlace(mc);
-        // GodBridge 放置成功后会置位 rightClickUsedThisTick，避免同 tick 重复右键。
-        updateGodBridge(mc);
+        // Scaffold 已在 onTickStart 中完成放置。
         // Reach 放在最后：AutoClicker 可能在本 tick 内产生新的挥击，需要立即识别。
         updateReach(mc);
         OpenMaverDebug.tickSummary();
@@ -430,6 +496,12 @@ public final class OpenMaverFeatures {
      */
     private static void updateAutoClicker(Minecraft mc) {
         try {
+            // KillAura 启用时由它独占实体攻击，AutoClicker 完全让位，避免同 tick 双 C02。
+            Module killAura = ModuleManager.getModule("KillAura");
+            if (killAura != null && killAura.isEnabled()) {
+                resetAutoClickerTimers();
+                return;
+            }
             Module autoClicker = ModuleManager.getModule("AutoClicker");
             boolean active = autoClicker != null && autoClicker.isEnabled();
             Object player = read(mc, "thePlayer", "field_71439_g", null);
@@ -519,12 +591,17 @@ public final class OpenMaverFeatures {
      */
     private static void suppressVanillaDuplicateAttack(Minecraft mc) {
         try {
-            Module autoClicker = ModuleManager.getModule("AutoClicker");
-            if (autoClicker == null || !autoClicker.isEnabled() || !autoclickerLeft) {
-                return;
-            }
-            if (autoclickerRequireHold && !Mouse.isButtonDown(0)) {
-                return;
+            Module killAura = ModuleManager.getModule("KillAura");
+            boolean killAuraActive = killAura != null && killAura.isEnabled()
+                    && (!killAuraRequirePress || Mouse.isButtonDown(0));
+            if (!killAuraActive) {
+                Module autoClicker = ModuleManager.getModule("AutoClicker");
+                if (autoClicker == null || !autoClicker.isEnabled() || !autoclickerLeft) {
+                    return;
+                }
+                if (autoclickerRequireHold && !Mouse.isButtonDown(0)) {
+                    return;
+                }
             }
             Object hit = read(mc, "objectMouseOver", "field_71476_x", null);
             if (hit == null || !isEntityHit(hit)) {
@@ -1193,6 +1270,14 @@ public final class OpenMaverFeatures {
                 return;
             }
         }
+        if (criticalsJumpAttackSource == CRITICALS_ATTACK_KILLAURA) {
+            Module killAura = ModuleManager.getModule("KillAura");
+            if (killAura == null || !killAura.isEnabled()
+                    || (killAuraRequirePress && !Mouse.isButtonDown(0))) {
+                resetCriticalsJumpState();
+                return;
+            }
+        }
         if (scaffoldOnGround(player) || !criticalPlayerIsFalling(player)
                 || !entityReadyForDamage(target)) {
             return;
@@ -1233,6 +1318,20 @@ public final class OpenMaverFeatures {
             if (controller != null) {
                 callVoid(controller, "attackEntity", "func_78764_a", "a", player, target);
                 restoreCriticalsSprint(player, stopSprintSent);
+            }
+            return;
+        }
+
+        if (source == CRITICALS_ATTACK_KILLAURA) {
+            if (attackEntityFirst(mc, player, target)) {
+                restoreCriticalsSprint(player, stopSprintSent);
+                killAuraNextAttackNanos = now + nextKillAuraIntervalNanos();
+                Object name = call(target, "getName", "func_70005_c_", null);
+                OpenMaverDebug.attack(name == null ? String.valueOf(target) : String.valueOf(name),
+                        0.0D, killAuraRange,
+                        (float) number(player, "rotationYaw", "field_70177_z"),
+                        (float) number(player, "rotationPitch", "field_70125_A"),
+                        true);
             }
         }
     }
@@ -1618,7 +1717,7 @@ public final class OpenMaverFeatures {
                 + stage + ": " + error);
     }
 
-    private static boolean holdingBlock(Object player) {
+    static boolean holdingBlock(Object player) {
         Object stack = call(player, "getHeldItem", "func_70694_bm", null);
         if (stack == null || number(stack, "stackSize", "field_77994_a") <= 0.0D) {
             return false;
@@ -1669,7 +1768,7 @@ public final class OpenMaverFeatures {
                     // BALANCED：不低于原版 4 tick 冷却。Matrix 的 block.fastplace
                     // 按 C08 间隔判定，2~3 tick 的连续放置会稳定吃 flag。
                     limit = Math.max(4, limit);
-                    // GodBridge 需要等待 timer 自然归零；FastPlace 与它
+                    // Scaffold 需要等待 timer 自然归零；FastPlace 与它
                     // 同时开启时会把 timer 卡在 2，导致永远无法放置。
                     if (placementModuleEnabled()) {
                         active = false;
@@ -1708,10 +1807,10 @@ public final class OpenMaverFeatures {
         }
     }
 
-    /** GodBridge 是否启用；balanced 下 FastPlace 需要让位。 */
+    /** Scaffold 是否启用；balanced 下 FastPlace 需要让位。 */
     private static boolean placementModuleEnabled() {
-        Module godBridge = ModuleManager.getModule("GodBridge");
-        return godBridge != null && godBridge.isEnabled();
+        Module scaffold = ModuleManager.getModule("Scaffold");
+        return scaffold != null && scaffold.isEnabled();
     }
 
     private static Integer readIntField(Object target, String mcp, String srg) {        Field field = findField(target, runtimeCandidates(mcp, srg));
@@ -1727,7 +1826,7 @@ public final class OpenMaverFeatures {
         }
     }
 
-    private static boolean writeIntField(Object target, String mcp, String srg, int value) {
+    static boolean writeIntField(Object target, String mcp, String srg, int value) {
         Field field = findField(target, runtimeCandidates(mcp, srg));
         if (field == null) {
             return false;
@@ -1750,6 +1849,60 @@ public final class OpenMaverFeatures {
             return false;
         }
         return false;
+    }
+
+    // ==================================================================
+    // FullBright（全亮 / 夜视，仅客户端）
+    // ==================================================================
+
+    /**
+     * FullBright：给本地玩家补一个持续刷新的夜视药水效果。
+     *
+     * <p>效果通过 {@link EntityLivingBase#addPotionEffect} 直接写在客户端玩家身上，
+     * 不发包、不影响服务端。关闭时只移除本模块自己添加的那一份；如果玩家在开启
+     * 模块前就已经有夜视药水，则保持原样不动。
+     */
+    private static void updateFullBright(Minecraft mc) {
+        if (fullBrightFailed) {
+            return;
+        }
+        try {
+            Module module = ModuleManager.getModule("FullBright");
+            Object playerObject = read(mc, "thePlayer", "field_71439_g", null);
+            if (!(playerObject instanceof EntityLivingBase)) {
+                // 世界卸载/重登中：保留状态，等同一个玩家实例回来再清理。
+                return;
+            }
+            EntityLivingBase player = (EntityLivingBase) playerObject;
+            if (player != fullBrightPlayer) {
+                fullBrightPlayer = player;
+                fullBrightApplied = false;
+            }
+            boolean enabled = module != null && module.isEnabled();
+
+            if (!enabled) {
+                if (fullBrightApplied) {
+                    player.removePotionEffect(NIGHT_VISION_POTION_ID);
+                    fullBrightApplied = false;
+                }
+                return;
+            }
+
+            if (!player.isPotionActive(NIGHT_VISION_POTION_ID)) {
+                // 玩家原本没有夜视：添加本模块的效果。
+                player.addPotionEffect(new PotionEffect(NIGHT_VISION_POTION_ID,
+                        FULLBRIGHT_DURATION_TICKS, 0, true, false));
+                fullBrightApplied = true;
+            } else if (fullBrightApplied) {
+                // 本模块自己的效果：每 tick 续期，避免长时间挂机后到期闪烁。
+                player.addPotionEffect(new PotionEffect(NIGHT_VISION_POTION_ID,
+                        FULLBRIGHT_DURATION_TICKS, 0, true, false));
+            }
+        } catch (Throwable error) {
+            fullBrightFailed = true;
+            fullBrightApplied = false;
+            System.err.println("[OpenMaver] FullBright disabled: " + error);
+        }
     }
 
     // ==================================================================
@@ -1888,95 +2041,61 @@ public final class OpenMaverFeatures {
     }
 
     // ==================================================================
-    // GodBridge（神桥）
+    // Scaffold（自动搭路 / 神桥，原 GodBridge）
     // ==================================================================
 
     /**
-     * 神桥的触发方式与手动操作保持一致：
-     * <ol>
-     *   <li>按住 Shift 蹲在方块边缘，手持可放置方块；</li>
-     *   <li>视角瞄准方块边缘，并按住 D（右平移）；</li>
-     *   <li>松开 Shift 后进入神桥，自动向移动方向铺路；</li>
-     *   <li>期间可以直接跳跃，或用 A/D 改变方向；再次按下 Shift 停止。</li>
-     * </ol>
+     * 行为参考 {@code OpenMyau-Fix} 的 Scaffold：开启后不再需要“蹲下 + 松 Shift”
+     * 的起桥手势，只要手持可放置方块并移动，就会在脚下或移动方向前方补块。
      *
-     * <p>神桥进行中每 tick 最多放置一次，并复用 {@link #tryGodBridgePlacement}
-     * 的真实右键放置逻辑。默认在神桥期间把 {@code rightClickDelayTimer} 压到 0，
-     * 否则原版 4 tick 的右键冷却不足以跟上行走速度。
+     * <p>每 tick 最多放置一次，复用 {@link #tryPlaceBlock} 的真实右键逻辑：
+     * 先尝试移动方向前方一格，失败后回退到脚下；没有移动输入时只铺脚下。
+     * 打开 GUI/聊天、死亡、空手、使用物品或按住左键挖掘/攻击时停止，避免误放。
+     *
+     * <p>{@code scaffold.fastPlace} 默认开启，但是否压缩 {@code rightClickDelayTimer}
+     * 仍由 bypass profile 决定：只有 aggressive（或关闭 bypass）才压 0，
+     * legit/balanced 等原版冷却自然归零。
      */
-    private static void updateGodBridge(Minecraft mc) {
-        if (godBridgeFailed) {
-            restoreGodBridgeTimer(mc);
+    private static void updateScaffold(Minecraft mc) {
+        if (scaffoldFailed) {
+            restoreScaffoldTimer(mc);
             return;
         }
         try {
-            Module godBridge = ModuleManager.getModule("GodBridge");
+            Module scaffold = ModuleManager.getModule("Scaffold");
             Object player = read(mc, "thePlayer", "field_71439_g", null);
             Object world = read(mc, "theWorld", "field_71441_e", null);
-            boolean safe = godBridge != null && godBridge.isEnabled()
+            boolean safe = scaffold != null && scaffold.isEnabled()
                     && read(mc, "currentScreen", "field_71462_r", null) == null
                     && player != null
                     && world != null
-                    && alive(player);
+                    && alive(player)
+                    && holdingBlock(player);
             if (!safe) {
-                stopGodBridge(mc);
+                stopScaffold(mc);
                 return;
             }
-
-            Object input = read(player, "movementInput", "field_71158_b", null);
-            if (input == null) {
-                stopGodBridge(mc);
-                return;
-            }
-            boolean holdingBlock = holdingBlock(player);
-            boolean sneaking = Boolean.TRUE.equals(
-                    call(player, "isSneaking", "func_70093_af", "av"));
-            double forward = number(input, "moveForward", "field_78900_b");
-            double strafe = number(input, "moveStrafe", "field_78901_c");
-
-            if (!godBridgeActive) {
-                if (!holdingBlock) {
-                    resetGodBridgeState();
-                    return;
-                }
-                if (sneaking) {
-                    // 蹲下 + 瞄准方块边缘：进入待触发状态。
-                    if (godBridgeArmed
-                            || !godBridgeRequireEdgeAim
-                            || isAimingAtBlockEdge(mc)) {
-                        godBridgeArmed = scaffoldOnGround(player);
-                    }
-                    return;
-                }
-                if (!godBridgeArmed) {
-                    return;
-                }
-                // 松开 Shift 时 D 必须仍被按住，才视为完成了“按住 D 再松开 Shift”的起桥动作；
-                // 同时要求仍在地面上，避免跳跃或坠落过程中被误触发。
-                if (strafe >= -0.01D || !scaffoldOnGround(player)) {
-                    godBridgeArmed = false;
-                    return;
-                }
-                // 松开 Shift：本 tick 立即开始铺路，避免多等 1 tick 踏空。
-                godBridgeActive = true;
-                godBridgeArmed = false;
-                godBridgeCooldownTicks = 0;
-                godBridgeGroundY = (int) Math.floor(number(player, "posY", "field_70163_u")) - 1;
-            }
-
-            // 神桥进行中：再次按 Shift 视为停止，避免与手动蹲桥冲突。
-            if (!holdingBlock || sneaking) {
-                stopGodBridge(mc);
-                return;
-            }
-            if (Boolean.TRUE.equals(call(player, "isUsingItem", "func_71039_bw", "bS"))) {
+            // 左键按住通常是在挖掘/攻击，此时不抢右键；使用物品/进食时同样跳过。
+            if (Mouse.isButtonDown(0)
+                    || Boolean.TRUE.equals(call(player, "isUsingItem", "func_71039_bw", "bS"))) {
                 return;
             }
             if (rightClickUsedThisTick) {
                 return;
             }
-            if (godBridgeCooldownTicks > 0) {
-                godBridgeCooldownTicks--;
+            if (scaffoldCooldownTicks > 0) {
+                scaffoldCooldownTicks--;
+                return;
+            }
+
+            Object input = read(player, "movementInput", "field_71158_b", null);
+            if (input == null) {
+                resetScaffoldState();
+                return;
+            }
+            double forward = number(input, "moveForward", "field_78900_b");
+            double strafe = number(input, "moveStrafe", "field_78901_c");
+            if (scaffoldRequireBackward && forward > -0.01D) {
                 return;
             }
 
@@ -1997,16 +2116,47 @@ public final class OpenMaverFeatures {
                 directionZ = (forwardZ * forward + leftZ * strafe) / inputMagnitude;
             }
 
-            int groundY = (int) Math.floor(posY) - 1;
-            if (scaffoldOnGround(player)) {
-                godBridgeGroundY = groundY;
-            } else if (godBridgeGroundY != Integer.MIN_VALUE) {
-                // 跳跃期间仍沿桥面高度铺路，避免在玩家脚下叠出“跳一格搭一层”的柱子。
-                groundY = godBridgeGroundY;
+            if (scaffoldAutoJump) {
+                maybeScaffoldJump(player, world, directionX, directionZ, posX, posY, posZ);
+                if (scaffoldFailed) {
+                    return;
+                }
             }
+
+            // legit/balanced 不压右键冷却；只有 aggressive（或关闭 bypass）允许 fastPlace。
+            boolean fastPlaceAllowed = scaffoldFastPlace
+                    && (!bypassEnabled || bypassProfile == PROFILE_AGGRESSIVE);
+            if (!fastPlaceAllowed && scaffoldTimerOwned) {
+                restoreScaffoldTimer(mc);
+            }
+            if (scaffoldFastPlace && !fastPlaceAllowed) {
+                OpenMaverDebug.noticeOnce("scaffold-fastplace-suppressed",
+                        "Scaffold fastPlace suppressed by " + profileName() + " profile");
+            }
+            if (fastPlaceAllowed) {
+                if (!writeIntField(mc, "rightClickDelayTimer", "field_71467_ac", 0)) {
+                    failScaffold("cannot write rightClickDelayTimer", null);
+                    restoreScaffoldTimer(mc);
+                    return;
+                }
+                scaffoldTimerOwned = true;
+            } else {
+                Integer delayTimer = readIntField(mc, "rightClickDelayTimer", "field_71467_ac");
+                if (delayTimer == null) {
+                    failScaffold("cannot read rightClickDelayTimer", null);
+                    return;
+                }
+                if (delayTimer.intValue() > 0) {
+                    return;
+                }
+            }
+
+            int groundY = (int) Math.floor(posY) - 1;
+            // 1.8.9 世界高度为 0..255；越界时不要构造 BlockPos 去探测。
             if (groundY < 0 || groundY > 255) {
                 return;
             }
+            // 目标方块必须完全位于脚部以下，避免把玩家自己封在方块里。
             if (groundY + 1.0D > posY + 0.001D) {
                 return;
             }
@@ -2015,143 +2165,102 @@ public final class OpenMaverFeatures {
             int aheadX = (int) Math.floor(posX + directionX);
             int aheadZ = (int) Math.floor(posZ + directionZ);
 
-            // legit/balanced 不再把 rightClickDelayTimer 压到 0：
-            // 只有 aggressive（或关闭 bypass）才允许 GodBridge 的 fastPlace。
-            boolean fastPlaceAllowed = godBridgeFastPlace
-                    && (!bypassEnabled || bypassProfile == PROFILE_AGGRESSIVE);
-            if (!fastPlaceAllowed && godBridgeTimerOwned) {
-                restoreGodBridgeTimer(mc);
-            }
-            if (godBridgeFastPlace && !fastPlaceAllowed) {
-                OpenMaverDebug.noticeOnce("godbridge-fastplace-suppressed",
-                        "GodBridge fastPlace suppressed by " + profileName() + " profile");
-            }
-            if (fastPlaceAllowed) {
-                if (!writeIntField(mc, "rightClickDelayTimer", "field_71467_ac", 0)) {
-                    failGodBridge("cannot write rightClickDelayTimer", null);
-                    restoreGodBridgeTimer(mc);
-                    return;
-                }
-                godBridgeTimerOwned = true;
-            } else {
-                Integer delayTimer = readIntField(mc, "rightClickDelayTimer", "field_71467_ac");
-                if (delayTimer == null) {
-                    failGodBridge("cannot read rightClickDelayTimer", null);
-                    return;
-                }
-                if (delayTimer.intValue() > 0) {
-                    return;
-                }
-            }
-
             float originalYaw = (float) yaw;
             float originalPitch = (float) number(player, "rotationPitch", "field_70125_A");
             Object originalHit = read(mc, "objectMouseOver", "field_71476_x", null);
 
-            // 先尝试脚下：神桥真正需要的是“踏空瞬间在脚下补块”，此时身后的
-            // 上一格方块侧面朝向玩家、能被正常 ray trace 命中。
-            boolean placed = tryGodBridgePlacement(mc, player, world, currentX, groundY, currentZ,
-                    originalYaw, originalPitch, originalHit);
-            if (!placed && !godBridgeFailed && (aheadX != currentX || aheadZ != currentZ)) {
-                placed = tryGodBridgePlacement(mc, player, world, aheadX, groundY, aheadZ,
+            boolean placed = false;
+            if (aheadX != currentX || aheadZ != currentZ) {
+                placed = tryScaffoldPlacement(mc, player, world, aheadX, groundY, aheadZ,
                         originalYaw, originalPitch, originalHit);
             }
-            if (godBridgeFailed) {
-                restoreGodBridgeTimer(mc);
+            if (!placed && !scaffoldFailed) {
+                placed = tryScaffoldPlacement(mc, player, world, currentX, groundY, currentZ,
+                        originalYaw, originalPitch, originalHit);
+            }
+            if (scaffoldFailed) {
+                restoreScaffoldTimer(mc);
                 return;
             }
             if (placed) {
-                godBridgeCooldownTicks = clamp(godBridgeDelayTicks, 0, 4);
+                scaffoldCooldownTicks = clamp(scaffoldDelayTicks, 0, 4);
                 rightClickUsedThisTick = true;
             }
         } catch (Throwable error) {
-            failGodBridge("update failed", error);
-            restoreGodBridgeTimer(mc);
+            failScaffold("update failed", error);
+            restoreScaffoldTimer(mc);
         }
     }
 
-    /**
-     * 判断当前 {@code objectMouseOver} 是否落在方块边缘。读取不到命中点时
-     * 退回为“只要瞄准方块即可”，避免因映射差异让整个模块不可用。
-     */
-    private static boolean isAimingAtBlockEdge(Minecraft mc) {
-        Object hit = read(mc, "objectMouseOver", "field_71476_x", null);
-        if (hit == null) {
-            return false;
-        }
-        Object type = read(hit, "typeOfHit", "field_72313_a", null);
-        if (type == null || !"BLOCK".equals(String.valueOf(type))) {
-            return false;
-        }
-        Object hitVec = read(hit, "hitVec", "field_72307_f", null);
-        Object blockPos = read(hit, "blockPos", "field_178783_e", null);
-        Object sideHit = read(hit, "sideHit", "field_178784_b", null);
-        if (hitVec == null || blockPos == null || sideHit == null) {
-            return true;
-        }
-        Field xField = findField(hitVec, runtimeCandidates("xCoord", "field_72450_a"));
-        Field yField = findField(hitVec, runtimeCandidates("yCoord", "field_72448_b"));
-        Field zField = findField(hitVec, runtimeCandidates("zCoord", "field_72449_c"));
-        if (xField == null || yField == null || zField == null) {
-            return true;
-        }
-        Object blockX = call(blockPos, "getX", "func_177958_n", "n");
-        Object blockY = call(blockPos, "getY", "func_177956_o", "o");
-        Object blockZ = call(blockPos, "getZ", "func_177952_p", "p");
-        if (!(blockX instanceof Number) || !(blockY instanceof Number) || !(blockZ instanceof Number)) {
-            return true;
-        }
-        double localX = number(hitVec, "xCoord", "field_72450_a") - ((Number) blockX).intValue();
-        double localY = number(hitVec, "yCoord", "field_72448_b") - ((Number) blockY).intValue();
-        double localZ = number(hitVec, "zCoord", "field_72449_c") - ((Number) blockZ).intValue();
-
-        String side = String.valueOf(sideHit);
-        if ("UP".equals(side) || "DOWN".equals(side)) {
-            return nearBlockEdge(localX) || nearBlockEdge(localZ);
-        }
-        if ("NORTH".equals(side) || "SOUTH".equals(side)) {
-            return nearBlockEdge(localX) || nearBlockEdge(localY);
-        }
-        if ("WEST".equals(side) || "EAST".equals(side)) {
-            return nearBlockEdge(localZ) || nearBlockEdge(localY);
-        }
-        return nearBlockEdge(localX) || nearBlockEdge(localZ);
-    }
-
-    private static boolean nearBlockEdge(double localCoordinate) {
-        double clamped = Math.max(0.0D, Math.min(1.0D, localCoordinate));
-        return clamped <= GOD_BRIDGE_EDGE_TOLERANCE
-                || 1.0D - clamped <= GOD_BRIDGE_EDGE_TOLERANCE;
-    }
-
-    private static void stopGodBridge(Minecraft mc) {
-        resetGodBridgeState();
-        restoreGodBridgeTimer(mc);
-    }
-
-    private static void resetGodBridgeState() {
-        godBridgeActive = false;
-        godBridgeArmed = false;
-        godBridgeCooldownTicks = 0;
-        godBridgeGroundY = Integer.MIN_VALUE;
-    }
-
-    private static void restoreGodBridgeTimer(Minecraft mc) {
-        if (!godBridgeTimerOwned) {
+    /** 自动跳跃只在脚前方是实心方块、上方为空气时触发，作为可选的前进辅助。 */
+    private static void maybeScaffoldJump(Object player, Object world,
+            double directionX, double directionZ, double posX, double posY, double posZ) {
+        if (!scaffoldOnGround(player)) {
             return;
         }
-        godBridgeTimerOwned = false;
-        // 原版 rightClickMouse 点击后会把冷却设为 4；关闭神桥时恢复同一数值。
+        if (Boolean.TRUE.equals(call(player, "isSneaking", "func_70093_af", "av"))) {
+            return;
+        }
+        long now = System.nanoTime();
+        if (now - scaffoldLastJumpNanos < 350_000_000L) {
+            return;
+        }
+        int bodyY = (int) Math.floor(posY);
+        int stepX = (int) Math.floor(posX + directionX * SCAFFOLD_JUMP_LOOKAHEAD);
+        int stepZ = (int) Math.floor(posZ + directionZ * SCAFFOLD_JUMP_LOOKAHEAD);
+        Object stepPos = scaffoldBlockPos(stepX, bodyY, stepZ, false);
+        if (stepPos == null) {
+            return;
+        }
+        Boolean stepAir = scaffoldAir(world, stepPos);
+        if (stepAir == null) {
+            failScaffold("cannot read jump block", null);
+            return;
+        }
+        if (stepAir.booleanValue()) {
+            return;
+        }
+        Object abovePos = scaffoldBlockPos(stepX, bodyY + 1, stepZ, false);
+        if (abovePos == null) {
+            return;
+        }
+        Boolean aboveAir = scaffoldAir(world, abovePos);
+        if (aboveAir == null) {
+            failScaffold("cannot read jump headroom", null);
+            return;
+        }
+        if (!aboveAir.booleanValue()) {
+            return;
+        }
+        call(player, "jump", "func_70664_aZ", "bF");
+        scaffoldLastJumpNanos = now;
+    }
+
+    private static void stopScaffold(Minecraft mc) {
+        resetScaffoldState();
+        restoreScaffoldTimer(mc);
+    }
+
+    private static void resetScaffoldState() {
+        scaffoldCooldownTicks = 0;
+    }
+
+    private static void restoreScaffoldTimer(Minecraft mc) {
+        if (!scaffoldTimerOwned) {
+            return;
+        }
+        scaffoldTimerOwned = false;
+        // 原版 rightClickMouse 点击后会把冷却设为 4；关闭 Scaffold 时恢复同一数值。
         writeIntField(mc, "rightClickDelayTimer", "field_71467_ac", 4);
     }
 
-    private static void failGodBridge(String reason, Throwable error) {
-        if (godBridgeFailed) {
+    private static void failScaffold(String reason, Throwable error) {
+        if (scaffoldFailed) {
             return;
         }
-        godBridgeFailed = true;
-        resetGodBridgeState();
-        System.err.println("[OpenMaver] GodBridge disabled: " + reason
+        scaffoldFailed = true;
+        resetScaffoldState();
+        System.err.println("[OpenMaver] Scaffold disabled: " + reason
                 + (error == null ? "" : " (" + error + ")"));
     }
 
@@ -2163,21 +2272,27 @@ public final class OpenMaverFeatures {
      * 这里只在 C08 **之前**发一次 C05，让服务端先更新到用于 ray trace 的视角；
      * 不再发 placement 后的重复 C05，避免 AimDuplicateLook/Timer 额外的检测面。
      *
-     * <p>放置逻辑在发送前调用这里；是否发送由调用方的设置决定。
+     * <p>Scaffold 现在用“静默瞄准”：客户端 rotationYaw/Pitch 完全不动，只把
+     * 射线验证过的 aim 通过这条 C05 告诉服务端。
      */
-    private static boolean sendPlacementLook(Object player, float yaw, float pitch) {
+    static boolean sendPlacementLook(Object player, float yaw, float pitch) {
         try {
-            if (godBridgeLookPacketConstructor == null) {
-                godBridgeLookPacketType = Class.forName(
+            if (scaffoldLookPacketConstructor == null) {
+                scaffoldLookPacketType = Class.forName(
                         "net.minecraft.network.play.client.C03PacketPlayer$C05PacketPlayerLook");
-                godBridgeLookPacketConstructor = godBridgeLookPacketType.getConstructor(
+                scaffoldLookPacketConstructor = scaffoldLookPacketType.getConstructor(
                         Float.TYPE, Float.TYPE, Boolean.TYPE);
             }
             Object sendQueue = read(player, "sendQueue", "field_71174_a", null);
             if (sendQueue == null) {
+                // EntityPlayerSP.sendQueue 读不到时退回 Minecraft.getNetHandler()。
+                Minecraft mc = Minecraft.getMinecraft();
+                sendQueue = call(mc, "getNetHandler", "func_147114_u", null);
+            }
+            if (sendQueue == null) {
                 return false;
             }
-            Object packet = godBridgeLookPacketConstructor.newInstance(
+            Object packet = scaffoldLookPacketConstructor.newInstance(
                     Float.valueOf(yaw),
                     Float.valueOf(pitch),
                     Boolean.valueOf(scaffoldOnGround(player)));
@@ -2187,43 +2302,357 @@ public final class OpenMaverFeatures {
         }
     }
 
-    private static boolean tryGodBridgePlacement(Minecraft mc, Object player, Object world,
+    private static boolean tryScaffoldPlacement(Minecraft mc, Object player, Object world,
             int targetX, int targetY, int targetZ,
             float originalYaw, float originalPitch, Object originalHit) {
         return tryPlaceBlock(mc, player, world, targetX, targetY, targetZ,
-                originalYaw, originalPitch, originalHit, godBridgeAutoRotate, true);
+                originalYaw, originalPitch, originalHit, scaffoldAutoRotate, false);
+    }
+
+    // ==================================================================
+    // KillAura（刀暴 / 自动攻击，行为参考 OpenMyau-Fix KillAura）
+    // ==================================================================
+
+    /**
+     * 稳定核心版 KillAura：
+     * <ul>
+     *   <li>在 FOV/距离过滤后按距离或血量选择目标，支持 Single / Switch；</li>
+     *   <li>可平滑转向目标（复用 Aim 的 profile 单 tick 步长上限）；</li>
+     *   <li>按配置 CPS 攻击，但至少等待目标的 10 tick 受击无敌帧；</li>
+     *   <li>与 Criticals 联动：JUMP 模式先起跳，下一次 START 再补 C02；</li>
+     *   <li>KillAura 启用时 AutoClicker 自动让位，避免同 tick 双攻击。</li>
+     * </ul>
+     *
+     * <p>未移植 Myau 的 AutoBlock / Blink / BackTrack / Teams 等重型逻辑，
+     * 以稳定、可编译、不会高频刷包为优先。
+     */
+    private static void updateKillAura(Minecraft mc) {
+        if (killAuraFailed) {
+            return;
+        }
+        try {
+            updateKillAuraInternal(mc);
+        } catch (Throwable error) {
+            killAuraFailed = true;
+            resetKillAuraState();
+            System.err.println("[OpenMaver] KillAura disabled after error: " + error);
+        }
+    }
+
+    private static void updateKillAuraInternal(Minecraft mc) {
+        Module killAura = ModuleManager.getModule("KillAura");
+        Object player = read(mc, "thePlayer", "field_71439_g", null);
+        Object world = read(mc, "theWorld", "field_71441_e", null);
+        boolean safe = killAura != null && killAura.isEnabled()
+                && read(mc, "currentScreen", "field_71462_r", null) == null
+                && player != null
+                && world != null
+                && alive(player)
+                && (!killAuraRequirePress || Mouse.isButtonDown(0));
+        if (!safe) {
+            resetKillAuraState();
+            return;
+        }
+        // 使用物品/进食/拉弓时不攻击，避免 MultiActionsA。
+        if (Boolean.TRUE.equals(call(player, "isUsingItem", "func_71039_bw", "bS"))) {
+            return;
+        }
+
+        EntityLivingBase target = selectKillAuraTarget(player, world);
+        killAuraTarget = target;
+        if (target == null) {
+            return;
+        }
+
+        long now = System.nanoTime();
+        // 攻击使用“本 tick 转向之前”的视角判断：本 tick 的 rotation 还没随 C03
+        // 发到服务端，等服务端收到后再攻击，避免 RotationPlace / Aim 类误判。
+        boolean aimed = !killAuraRotate || killAuraAimError(player, target) <= 15.0F;
+        if (killAuraRotate) {
+            applyKillAuraRotation(player, target);
+        }
+        if (!aimed) {
+            return;
+        }
+        if (killAuraNextAttackNanos != 0L && now < killAuraNextAttackNanos) {
+            return;
+        }
+        // 目标仍在受击无敌帧 / 1.9+ 攻击冷却里时，等待而不是发送无效 C02。
+        if (!entityReadyForDamage(target)) {
+            return;
+        }
+
+        boolean stopSprintSent = applyCriticals(mc, player, target,
+                CRITICALS_ATTACK_KILLAURA);
+        if (criticalsAttackDeferred) {
+            return;
+        }
+        boolean attacked = attackEntityFirst(mc, player, target);
+        restoreCriticalsSprint(player, stopSprintSent);
+        if (!attacked) {
+            OpenMaverDebug.noticeOnce("killaura.attack",
+                    "KillAura attackEntity unavailable; retrying next tick");
+            return;
+        }
+        killAuraNextAttackNanos = now + nextKillAuraIntervalNanos();
+        Object name = call(target, "getName", "func_70005_c_", null);
+        OpenMaverDebug.attack(name == null ? String.valueOf(target) : String.valueOf(name),
+                distanceToEntityBox(player, target),
+                effectiveKillAuraRange(),
+                (float) number(player, "rotationYaw", "field_70177_z"),
+                (float) number(player, "rotationPitch", "field_70125_A"),
+                true);
+    }
+
+    private static void resetKillAuraState() {
+        killAuraTarget = null;
+        killAuraNextAttackNanos = 0L;
+        killAuraLastSwitchNanos = 0L;
+    }
+
+    private static double effectiveKillAuraRange() {
+        // 安全档不允许超过 Grim 3.0 扩张箱；aggressive 才放开配置值。
+        double configured = clamp(killAuraRange, 3.0F, 6.0F);
+        if (!bypassEnabled) {
+            return configured;
+        }
+        if (bypassProfile == PROFILE_AGGRESSIVE) {
+            return Math.min(REACH_AGGRESSIVE_CAP, configured);
+        }
+        return Math.min(REACH_SAFE_CAP, configured);
+    }
+
+    private static long nextKillAuraIntervalNanos() {
+        int min = Math.min(killAuraCpsMin, killAuraCpsMax);
+        int max = Math.max(killAuraCpsMin, killAuraCpsMax);
+        int cps = min + (max > min ? KILL_AURA_RANDOM.nextInt(max - min + 1) : 0);
+        long interval = 1_000_000_000L / Math.max(1, cps);
+        // 1.8 服务端有 10 tick 受击无敌帧；低于 11 tick 的 C02 不会结算伤害。
+        long floor = AUTOCLICKER_HURT_TICKS * 50_000_000L;
+        return Math.max(interval, floor);
+    }
+
+    private static EntityLivingBase selectKillAuraTarget(Object player, Object world) {
+        List<?> entities = (List<?>) read(world, "loadedEntityList", "field_72996_f", List.class);
+        if (entities == null) {
+            return null;
+        }
+        long now = System.nanoTime();
+        EntityLivingBase current = killAuraTarget;
+        boolean currentValid = isValidKillAuraTarget(player, current);
+        if (currentValid) {
+            boolean holdCurrent = !killAuraSwitch
+                    || now - killAuraLastSwitchNanos < killAuraSwitchDelayMs * 1_000_000L;
+            if (holdCurrent) {
+                return current;
+            }
+        }
+
+        EntityLivingBase best = null;
+        double bestScore = Double.MAX_VALUE;
+        for (int i = 0; i < entities.size(); i++) {
+            Object candidate = entities.get(i);
+            if (!(candidate instanceof EntityLivingBase)) {
+                continue;
+            }
+            EntityLivingBase living = (EntityLivingBase) candidate;
+            if (!isValidKillAuraTarget(player, living)) {
+                continue;
+            }
+            // Switch 模式在冷却结束后优先换一个目标；没有其他目标时继续打当前目标。
+            if (killAuraSwitch && currentValid && living == current) {
+                continue;
+            }
+            double score;
+            if (killAuraSort == 1) {
+                Object health = call(living, "getHealth", "func_110143_aJ", null);
+                score = health instanceof Number
+                        ? ((Number) health).doubleValue() : Double.MAX_VALUE;
+            } else {
+                score = distanceToEntityBox(player, living);
+            }
+            if (score < bestScore) {
+                bestScore = score;
+                best = living;
+            }
+        }
+        if (best == null && currentValid) {
+            return current;
+        }
+        if (best != null && best != current) {
+            killAuraLastSwitchNanos = now;
+        }
+        return best;
+    }
+
+    private static boolean isValidKillAuraTarget(Object player, EntityLivingBase candidate) {
+        if (candidate == null || candidate == player || !alive(candidate)) {
+            return false;
+        }
+        if (!Boolean.TRUE.equals(
+                call(candidate, "canBeCollidedWith", "func_70067_L", "ad"))) {
+            return false;
+        }
+        boolean isPlayer = candidate instanceof EntityPlayer;
+        if (isPlayer && !killAuraPlayers) {
+            return false;
+        }
+        if (!isPlayer) {
+            if (isAnimalEntity(candidate)) {
+                if (!killAuraAnimals) {
+                    return false;
+                }
+            } else if (!killAuraMobs) {
+                return false;
+            }
+        }
+        double distance = distanceToEntityBox(player, candidate);
+        if (distance > effectiveKillAuraRange()) {
+            return false;
+        }
+        if (!killAuraThroughWalls
+                && !Boolean.TRUE.equals(
+                        call(player, "canEntityBeSeen", "func_70685_l", "t", candidate))) {
+            return false;
+        }
+        if (killAuraFov < 360) {
+            double yaw = number(player, "rotationYaw", "field_70177_z");
+            double dx = number(candidate, "posX", "field_70165_t")
+                    - number(player, "posX", "field_70165_t");
+            double dz = number(candidate, "posZ", "field_70161_v")
+                    - number(player, "posZ", "field_70161_v");
+            float targetYaw = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
+            if (Math.abs(wrapDegrees(targetYaw - (float) yaw)) > killAuraFov * 0.5F) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 动物/村民/蝙蝠/鱿鱼归入 Animals，其余非玩家生物归入 Mobs。 */
+    private static boolean isAnimalEntity(Object entity) {
+        for (Class<?> type = entity.getClass(); type != null && type != Object.class;
+                type = type.getSuperclass()) {
+            String name = type.getSimpleName();
+            if ("EntityAnimal".equals(name) || "EntityVillager".equals(name)
+                    || "EntityBat".equals(name) || "EntitySquid".equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 眼睛到实体碰撞箱的最近距离（不做视线射线，供目标筛选使用）。 */
+    private static double distanceToEntityBox(Object player, EntityLivingBase entity) {
+        AxisAlignedBB box = boundingBox(entity);
+        if (box == null) {
+            return Double.MAX_VALUE;
+        }
+        double eyeX = number(player, "posX", "field_70165_t");
+        double eyeY = number(player, "posY", "field_70163_u") + eyeHeight(player);
+        double eyeZ = number(player, "posZ", "field_70161_v");
+        double dx = Math.max(0.0D, Math.max(
+                number(box, "minX", "field_72340_a") - eyeX,
+                eyeX - number(box, "maxX", "field_72336_d")));
+        double dy = Math.max(0.0D, Math.max(
+                number(box, "minY", "field_72338_b") - eyeY,
+                eyeY - number(box, "maxY", "field_72337_e")));
+        double dz = Math.max(0.0D, Math.max(
+                number(box, "minZ", "field_72339_c") - eyeZ,
+                eyeZ - number(box, "maxZ", "field_72334_f")));
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    /** 当前视角与目标胸口方向的夹角；任一侧超过阈值就返回大值。 */
+    private static float killAuraAimError(Object player, EntityLivingBase target) {
+        double dx = number(target, "posX", "field_70165_t")
+                - number(player, "posX", "field_70165_t");
+        double dz = number(target, "posZ", "field_70161_v")
+                - number(player, "posZ", "field_70161_v");
+        double targetY = number(target, "posY", "field_70163_u")
+                + number(target, "height", "field_70131_O") * 0.70D;
+        double eyeY = number(player, "posY", "field_70163_u") + eyeHeight(player);
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        float desiredYaw = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
+        float desiredPitch = (float) (-Math.atan2(targetY - eyeY, horizontal)
+                * 180.0D / Math.PI);
+        float yawError = Math.abs(wrapDegrees(desiredYaw
+                - (float) number(player, "rotationYaw", "field_70177_z")));
+        float pitchError = Math.abs(desiredPitch
+                - (float) number(player, "rotationPitch", "field_70125_A"));
+        return Math.max(yawError, pitchError);
+    }
+
+    /**
+     * 平滑转向。与 Aim Assist 一样使用 profile 的单 tick 最大步长，
+     * 不发送额外 C05，让本 tick 的 C03 自然带上新视角。
+     */
+    private static void applyKillAuraRotation(Object player, EntityLivingBase target) {
+        double dx = number(target, "posX", "field_70165_t")
+                - number(player, "posX", "field_70165_t");
+        double dz = number(target, "posZ", "field_70161_v")
+                - number(player, "posZ", "field_70161_v");
+        double targetY = number(target, "posY", "field_70163_u")
+                + number(target, "height", "field_70131_O") * 0.70D;
+        double eyeY = number(player, "posY", "field_70163_u") + eyeHeight(player);
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        if (horizontal < 1.0E-4D) {
+            return;
+        }
+        float oldYaw = (float) number(player, "rotationYaw", "field_70177_z");
+        float oldPitch = (float) number(player, "rotationPitch", "field_70125_A");
+        float desiredYaw = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
+        float desiredPitch = (float) (-Math.atan2(targetY - eyeY, horizontal)
+                * 180.0D / Math.PI);
+        desiredPitch = Math.max(-90.0F, Math.min(90.0F, desiredPitch));
+
+        float deltaYaw = wrapDegrees(desiredYaw - oldYaw);
+        float deltaPitch = desiredPitch - oldPitch;
+        float maxYaw = effectiveAimMaxStep(true);
+        float maxPitch = effectiveAimMaxStep(false);
+        float stepYaw = Math.max(-maxYaw, Math.min(maxYaw, deltaYaw * killAuraSmoothing));
+        float stepPitch = Math.max(-maxPitch, Math.min(maxPitch, deltaPitch * killAuraSmoothing));
+        if (Math.abs(stepYaw) < 1.0E-4F && Math.abs(stepPitch) < 1.0E-4F) {
+            return;
+        }
+        float newYaw = wrapDegrees(oldYaw + stepYaw);
+        float newPitch = Math.max(-90.0F, Math.min(90.0F, oldPitch + stepPitch));
+        setNumber(player, "rotationYaw", "field_70177_z", newYaw);
+        setNumber(player, "rotationPitch", "field_70125_A", newPitch);
+        setNumber(player, "prevRotationYaw", "field_70126_B", newYaw);
+        setNumber(player, "prevRotationPitch", "field_70127_C", newPitch);
     }
 
     /**
      * 尝试在指定空气格放置方块。会依次检查六个相邻支撑面，只点击从眼睛方向
      * 真正可见、且 {@code objectMouseOver} 校验通过的面。
      *
-     * <p>{@code godBridge} 用于区分搭桥的放置角度细节，{@code autoRotate}
+     * <p>{@code bridge} 用于区分搭桥的放置角度细节，{@code autoRotate}
      * 决定是否允许临时转向目标面。安全 profile
      * 或 {@code autoRotate=false} 时一律回退为真实准星放置。
      */
     private static boolean tryPlaceBlock(Minecraft mc, Object player, Object world,
             int targetX, int targetY, int targetZ,
             float originalYaw, float originalPitch, Object originalHit,
-            boolean autoRotate, boolean godBridge) {
-        Object targetPos = scaffoldBlockPos(targetX, targetY, targetZ, godBridge);
+            boolean autoRotate, boolean bridge) {
+        Object targetPos = scaffoldBlockPos(targetX, targetY, targetZ, bridge);
         if (targetPos == null) {
             return false;
         }
         Boolean targetAir = scaffoldAir(world, targetPos);
         if (targetAir == null) {
-            failGodBridge("cannot read target block", null);
+            failScaffold("cannot read target block", null);
             return false;
         }
         if (!targetAir.booleanValue()) {
             return false;
         }
 
-        Object[] facings = scaffoldFacings(godBridge);
+        Object[] facings = scaffoldFacings(bridge);
         if (facings == null) {
             return false;
         }
-        boolean legitAim = godBridgeLegitAim;
+        boolean legitAim = scaffoldLegitAim;
         if (!legitAim && (safeProfile() || !autoRotate)) {
             // legit/balanced 下不允许“只改客户端 rotation 再 C08”的路径：
             // 服务端看到的 yaw 仍是上一 tick 的，RotationPlace 会直接失败。
@@ -2236,7 +2665,7 @@ public final class OpenMaverFeatures {
         }
         if (legitAim) {
             return tryPlaceWithCurrentAim(mc, player, world, targetPos, targetX, targetY, targetZ,
-                    facings, godBridge);
+                    facings, bridge);
         }
         double eyeX = number(player, "posX", "field_70165_t");
         double eyeY = number(player, "posY", "field_70163_u") + eyeHeight(player);
@@ -2250,13 +2679,13 @@ public final class OpenMaverFeatures {
             int supportX = targetX + SCAFFOLD_FACING_OFFSETS[i][0];
             int supportY = targetY + SCAFFOLD_FACING_OFFSETS[i][1];
             int supportZ = targetZ + SCAFFOLD_FACING_OFFSETS[i][2];
-            Object supportPos = scaffoldBlockPos(supportX, supportY, supportZ, godBridge);
+            Object supportPos = scaffoldBlockPos(supportX, supportY, supportZ, bridge);
             if (supportPos == null) {
                 return false;
             }
             Boolean support = scaffoldSupport(world, supportPos);
             if (support == null) {
-                failGodBridge("cannot read support block", null);
+                failScaffold("cannot read support block", null);
                 return false;
             }
             if (!support.booleanValue()) {
@@ -2271,7 +2700,7 @@ public final class OpenMaverFeatures {
                     + (eyeZ - faceZ) * SCAFFOLD_FACING_OFFSETS[sideIndex][2];
             // 神桥需要抓“刚踏空”时身后方块侧面，眼睛往往只比侧面高一点点；
             // 放宽到 >0 才能在踏空后的第一个 tick 就命中。最终仍由 ray trace 校验。
-            double minDot = godBridge ? 0.0D : 0.02D;
+            double minDot = bridge ? 0.0D : 0.02D;
             if (dot <= minDot) {
                 continue;
             }
@@ -2294,7 +2723,7 @@ public final class OpenMaverFeatures {
 
         Object renderer = read(mc, "entityRenderer", "field_71460_t", null);
         if (renderer == null) {
-            failGodBridge("cannot read entityRenderer", null);
+            failScaffold("cannot read entityRenderer", null);
             return false;
         }
 
@@ -2313,7 +2742,7 @@ public final class OpenMaverFeatures {
 
                 // 稍微指向支撑方块内部，保证射线确实穿过目标面，而不是停在面边界上。
                 // 神桥的侧面几乎与视线平行，inset 过大会先打到方块顶面，导致命中面校验失败。
-                double inset = godBridge ? 0.002D : 0.05D;
+                double inset = bridge ? 0.002D : 0.05D;
                 double dx = faceX - SCAFFOLD_FACING_OFFSETS[sideIndex][0] * inset - eyeX;
                 double dy = faceY - SCAFFOLD_FACING_OFFSETS[sideIndex][1] * inset - eyeY;
                 double dz = faceZ - SCAFFOLD_FACING_OFFSETS[sideIndex][2] * inset - eyeZ;
@@ -2338,20 +2767,20 @@ public final class OpenMaverFeatures {
                 }
                 Boolean stillAir = scaffoldAir(world, targetPos);
                 if (stillAir == null) {
-                    failGodBridge("cannot re-read target block", null);
+                    failScaffold("cannot re-read target block", null);
                     return false;
                 }
                 if (!stillAir.booleanValue()) {
                     continue;
                 }
-                boolean packetRotation = godBridgePacketRotation;
+                boolean packetRotation = scaffoldPacketRotation;
                 if (packetRotation && safeProfile()) {
                     packetRotation = false;
                     OpenMaverDebug.noticeOnce("placement-c05-suppressed",
                             "placement C05 packet rotation suppressed by " + profileName() + " profile");
                 }
                 if (packetRotation && !sendPlacementLook(player, yaw, pitch)) {
-                    failGodBridge("cannot send pre-placement rotation packet", null);
+                    failScaffold("cannot send pre-placement rotation packet", null);
                     return false;
                 }
                 call(mc, "rightClickMouse", "func_147121_ag", "ax");
@@ -2379,10 +2808,10 @@ public final class OpenMaverFeatures {
      */
     private static boolean tryPlaceWithCurrentAim(Minecraft mc, Object player, Object world,
             Object targetPos, int targetX, int targetY, int targetZ, Object[] facings,
-            boolean godBridge) {
+            boolean bridge) {
         Object renderer = read(mc, "entityRenderer", "field_71460_t", null);
         if (renderer == null) {
-            failGodBridge("cannot read entityRenderer", null);
+            failScaffold("cannot read entityRenderer", null);
             return false;
         }
         // 用当前真实 rotation 刷新 objectMouseOver。
@@ -2398,7 +2827,7 @@ public final class OpenMaverFeatures {
             }
             Boolean stillAir = scaffoldAir(world, targetPos);
             if (stillAir == null) {
-                failGodBridge("cannot re-read target block", null);
+                failScaffold("cannot re-read target block", null);
                 return false;
             }
             if (!stillAir.booleanValue()) {
@@ -2423,7 +2852,7 @@ public final class OpenMaverFeatures {
                 legitAim, packetRotation, (int) Math.max(0L, interval));
     }
 
-    private static Object scaffoldBlockPos(int x, int y, int z, boolean godBridge) {
+    private static Object scaffoldBlockPos(int x, int y, int z, boolean bridge) {
         try {
             if (scaffoldBlockPosConstructor == null) {
                 if (scaffoldBlockPosType == null) {
@@ -2435,12 +2864,12 @@ public final class OpenMaverFeatures {
             return scaffoldBlockPosConstructor.newInstance(
                     Integer.valueOf(x), Integer.valueOf(y), Integer.valueOf(z));
         } catch (Throwable error) {
-            failGodBridge("cannot create BlockPos", error);
+            failScaffold("cannot create BlockPos", error);
             return null;
         }
     }
 
-    private static Object[] scaffoldFacings(boolean godBridge) {
+    private static Object[] scaffoldFacings(boolean bridge) {
         if (scaffoldFacings != null) {
             return scaffoldFacings;
         }
@@ -2469,7 +2898,7 @@ public final class OpenMaverFeatures {
                     }
                 }
                 if (found == null) {
-                    failGodBridge("cannot resolve EnumFacing." + SCAFFOLD_FACING_NAMES[i], null);
+                    failScaffold("cannot resolve EnumFacing." + SCAFFOLD_FACING_NAMES[i], null);
                     return null;
                 }
                 ordered[i] = found;
@@ -2477,7 +2906,7 @@ public final class OpenMaverFeatures {
             scaffoldFacings = ordered;
             return ordered;
         } catch (Throwable error) {
-            failGodBridge("cannot load EnumFacing", error);
+            failScaffold("cannot load EnumFacing", error);
             return null;
         }
     }
@@ -2530,12 +2959,12 @@ public final class OpenMaverFeatures {
                 && ((Number) posZ).intValue() == z;
     }
 
-    private static boolean scaffoldOnGround(Object player) {
+    static boolean scaffoldOnGround(Object player) {
         Object value = read(player, "onGround", "field_70122_E", null);
         return Boolean.TRUE.equals(value);
     }
 
-    private static boolean writeObjectField(Object target, String mcp, String srg, Object value) {
+    static boolean writeObjectField(Object target, String mcp, String srg, Object value) {
         Field field = findField(target, runtimeCandidates(mcp, srg));
         if (field == null) {
             return false;
@@ -2582,6 +3011,7 @@ public final class OpenMaverFeatures {
         bypassProfile = readProfile(values, "bypass.profile", "balanced");
         debugEnabled = readBoolean(values, "debug.enabled", false);
         OpenMaverDebug.setEnabled(debugEnabled);
+        MaverWallpaper.load(values);
         aimSpeed = clamp(readFloat(values, "aim.speed", 0.35F), 0.05F, 1.0F);
         aimRange = clamp(readFloat(values, "aim.range", 6.0F), 3.0F, 12.0F);
         aimFov = clamp(readFloat(values, "aim.fov", 180.0F), 30.0F, 180.0F);
@@ -2600,6 +3030,13 @@ public final class OpenMaverFeatures {
         targetHudPlayersOnly = readBoolean(values, "targethud.playersOnly", false);
         playerXrayRange = clamp(readFloat(values, "playerxray.range", 64.0F), 8.0F, 128.0F);
         playerXrayColor = readInt(values, "playerxray.color", 0, 4);
+        motionBlurStrength = clamp(readFloat(values, "motionblur.strength", 0.70F), 0.05F, 1.0F);
+        if (settingsVersion < 7) {
+            // v6 及更早没有 Motion Blur，旧配置里可能残留调试时的 0.05；
+            // 首次升级统一给一个能明显看到效果的默认强度。
+            motionBlurStrength = 0.70F;
+            settingsDirty = true;
+        }
         sprintOnlyForward = readBoolean(values, "sprint.onlyForward", true);
         sprintPauseSneak = readBoolean(values, "sprint.pauseSneak", true);
         sprintPauseItem = readBoolean(values, "sprint.pauseItem", true);
@@ -2658,17 +3095,33 @@ public final class OpenMaverFeatures {
             settingsDirty = true;
         }
         fastPlaceOnlyBlocks = readBoolean(values, "fastplace.onlyBlocks", true);
-        godBridgeDelayTicks = clamp(readInt(values, "godbridge.delayTicks", 0, 4), 0, 4);
-        godBridgeFastPlace = readBoolean(values, "godbridge.fastPlace", true);
-        godBridgeRequireEdgeAim = readBoolean(values, "godbridge.requireEdgeAim", true);
-        godBridgeAutoRotate = readBoolean(values, "godbridge.autoRotate", true);
-        godBridgeLegitAim = readBoolean(values, "godbridge.legitAim", true);
-        godBridgePacketRotation = readBoolean(values, "godbridge.packetRotation", false);
+        ScaffoldFeature.load(values);
+        killAuraRange = clamp(readFloat(values, "killaura.range", 3.0F), 3.0F, 6.0F);
+        killAuraCpsMin = clamp(readInt(values, "killaura.cpsMin", 8, 20), 1, 20);
+        killAuraCpsMax = clamp(readInt(values, "killaura.cpsMax", 12, 20), 1, 20);
+        if (killAuraCpsMin > killAuraCpsMax) {
+            int swap = killAuraCpsMin;
+            killAuraCpsMin = killAuraCpsMax;
+            killAuraCpsMax = swap;
+        }
+        killAuraFov = clamp(readInt(values, "killaura.fov", 360, 360), 30, 360);
+        killAuraThroughWalls = readBoolean(values, "killaura.throughWalls", true);
+        killAuraPlayers = readBoolean(values, "killaura.players", true);
+        killAuraMobs = readBoolean(values, "killaura.mobs", false);
+        killAuraAnimals = readBoolean(values, "killaura.animals", false);
+        killAuraSwitch = readBoolean(values, "killaura.switch", false);
+        killAuraSort = readInt(values, "killaura.sort", 0, 1);
+        killAuraSwitchDelayMs = clamp(readInt(values, "killaura.switchDelay", 150, 1000), 0, 1000);
+        killAuraRotate = readBoolean(values, "killaura.rotate", true);
+        killAuraSmoothing = clamp(readFloat(values, "killaura.smoothing", 0.45F), 0.05F, 1.0F);
+        killAuraRequirePress = readBoolean(values, "killaura.requirePress", false);
         fakePlayerCount = clamp(readInt(values, "fakeplayer.count", 1, 5), 1, 5);
         fakePlayerDistance = clamp(readFloat(values, "fakeplayer.distance", 4.0F), 2.0F, 10.0F);
         fakePlayerShowName = readBoolean(values, "fakeplayer.showName", true);
         resetAutoClickerTimers();
-        resetGodBridgeState();
+        resetScaffoldState();
+        ScaffoldFeature.reset();
+        resetKillAuraState();
     }
 
     public static boolean isAimEnabled() {
@@ -2822,6 +3275,12 @@ public final class OpenMaverFeatures {
         markDirty();
     }
 
+    public static float getMotionBlurStrength() { return motionBlurStrength; }
+    public static void setMotionBlurStrength(float value) {
+        motionBlurStrength = clamp(value, 0.05F, 1.0F);
+        markDirty();
+    }
+
     public static boolean isSprintOnlyForward() { return sprintOnlyForward; }
     public static void setSprintOnlyForward(boolean value) { sprintOnlyForward = value; markDirty(); }
 
@@ -2951,44 +3410,148 @@ public final class OpenMaverFeatures {
         markDirty();
     }
 
-    public static int getGodBridgeDelayTicks() { return godBridgeDelayTicks; }
-    public static void setGodBridgeDelayTicks(int value) {
-        godBridgeDelayTicks = clamp(value, 0, 4);
-        godBridgeCooldownTicks = 0;
+    public static int getScaffoldDelayTicks() { return scaffoldDelayTicks; }
+    public static void setScaffoldDelayTicks(int value) {
+        scaffoldDelayTicks = clamp(value, 0, 4);
+        scaffoldCooldownTicks = 0;
         markDirty();
     }
 
-    public static boolean isGodBridgeFastPlace() { return godBridgeFastPlace; }
-    public static void setGodBridgeFastPlace(boolean value) {
-        godBridgeFastPlace = value;
+    public static boolean isScaffoldFastPlace() { return scaffoldFastPlace; }
+    public static void setScaffoldFastPlace(boolean value) {
+        scaffoldFastPlace = value;
         markDirty();
     }
 
-    public static boolean isGodBridgeRequireEdgeAim() { return godBridgeRequireEdgeAim; }
-    public static void setGodBridgeRequireEdgeAim(boolean value) {
-        godBridgeRequireEdgeAim = value;
-        godBridgeArmed = false;
+    public static boolean isScaffoldRequireBackward() { return scaffoldRequireBackward; }
+    public static void setScaffoldRequireBackward(boolean value) {
+        scaffoldRequireBackward = value;
         markDirty();
     }
 
-    public static boolean isGodBridgeAutoRotate() { return godBridgeAutoRotate; }
-    public static void setGodBridgeAutoRotate(boolean value) {
-        godBridgeAutoRotate = value;
+    public static boolean isScaffoldAutoJump() { return scaffoldAutoJump; }
+    public static void setScaffoldAutoJump(boolean value) {
+        scaffoldAutoJump = value;
         markDirty();
     }
 
-    public static boolean isGodBridgeLegitAim() { return godBridgeLegitAim; }
-    public static void setGodBridgeLegitAim(boolean value) {
-        godBridgeLegitAim = value;
-        godBridgeArmed = false;
+    public static boolean isScaffoldAutoRotate() { return scaffoldAutoRotate; }
+    public static void setScaffoldAutoRotate(boolean value) {
+        scaffoldAutoRotate = value;
         markDirty();
     }
 
-    public static boolean isGodBridgePacketRotation() { return godBridgePacketRotation; }
-    public static void setGodBridgePacketRotation(boolean value) {
-        godBridgePacketRotation = value;
-        godBridgeArmed = false;
+    public static boolean isScaffoldLegitAim() { return scaffoldLegitAim; }
+    public static void setScaffoldLegitAim(boolean value) {
+        scaffoldLegitAim = value;
         markDirty();
+    }
+
+    public static boolean isScaffoldPacketRotation() { return scaffoldPacketRotation; }
+    public static void setScaffoldPacketRotation(boolean value) {
+        scaffoldPacketRotation = value;
+        markDirty();
+    }
+
+    // ------------------------------------------------------------------
+    // KillAura 设置
+    // ------------------------------------------------------------------
+
+    public static float getKillAuraRange() { return killAuraRange; }
+    public static void setKillAuraRange(float value) {
+        killAuraRange = clamp(value, 3.0F, 6.0F);
+        markDirty();
+    }
+
+    public static int getKillAuraCpsMin() { return killAuraCpsMin; }
+    public static void setKillAuraCpsMin(int value) {
+        killAuraCpsMin = clamp(value, 1, 20);
+        if (killAuraCpsMin > killAuraCpsMax) {
+            killAuraCpsMax = killAuraCpsMin;
+        }
+        markDirty();
+    }
+
+    public static int getKillAuraCpsMax() { return killAuraCpsMax; }
+    public static void setKillAuraCpsMax(int value) {
+        killAuraCpsMax = clamp(value, 1, 20);
+        if (killAuraCpsMax < killAuraCpsMin) {
+            killAuraCpsMin = killAuraCpsMax;
+        }
+        markDirty();
+    }
+
+    public static int getKillAuraFov() { return killAuraFov; }
+    public static void setKillAuraFov(int value) {
+        killAuraFov = clamp(value, 30, 360);
+        markDirty();
+    }
+
+    public static boolean isKillAuraThroughWalls() { return killAuraThroughWalls; }
+    public static void setKillAuraThroughWalls(boolean value) {
+        killAuraThroughWalls = value;
+        markDirty();
+    }
+
+    public static boolean isKillAuraPlayers() { return killAuraPlayers; }
+    public static void setKillAuraPlayers(boolean value) {
+        killAuraPlayers = value;
+        markDirty();
+    }
+
+    public static boolean isKillAuraMobs() { return killAuraMobs; }
+    public static void setKillAuraMobs(boolean value) {
+        killAuraMobs = value;
+        markDirty();
+    }
+
+    public static boolean isKillAuraAnimals() { return killAuraAnimals; }
+    public static void setKillAuraAnimals(boolean value) {
+        killAuraAnimals = value;
+        markDirty();
+    }
+
+    public static boolean isKillAuraSwitch() { return killAuraSwitch; }
+    public static void setKillAuraSwitch(boolean value) {
+        killAuraSwitch = value;
+        killAuraTarget = null;
+        markDirty();
+    }
+
+    public static int getKillAuraSort() { return killAuraSort; }
+    public static void setKillAuraSort(int value) {
+        killAuraSort = clamp(value, 0, 1);
+        killAuraTarget = null;
+        markDirty();
+    }
+
+    public static int getKillAuraSwitchDelay() { return killAuraSwitchDelayMs; }
+    public static void setKillAuraSwitchDelay(int value) {
+        killAuraSwitchDelayMs = clamp(value, 0, 1000);
+        markDirty();
+    }
+
+    public static boolean isKillAuraRotate() { return killAuraRotate; }
+    public static void setKillAuraRotate(boolean value) {
+        killAuraRotate = value;
+        markDirty();
+    }
+
+    public static float getKillAuraSmoothing() { return killAuraSmoothing; }
+    public static void setKillAuraSmoothing(float value) {
+        killAuraSmoothing = clamp(value, 0.05F, 1.0F);
+        markDirty();
+    }
+
+    public static boolean isKillAuraRequirePress() { return killAuraRequirePress; }
+    public static void setKillAuraRequirePress(boolean value) {
+        killAuraRequirePress = value;
+        markDirty();
+    }
+
+    /** 当前实际生效的 KillAura 距离（受 profile 限制）。 */
+    public static float getEffectiveKillAuraRange() {
+        return (float) effectiveKillAuraRange();
     }
 
     public static int getFakePlayerCount() { return fakePlayerCount; }
@@ -3023,21 +3586,23 @@ public final class OpenMaverFeatures {
         espEnabled = false;
         resetAutoClickerTimers();
         resetReachState();
-        resetGodBridgeState();
+        resetScaffoldState();
+        ScaffoldFeature.reset();
+        resetKillAuraState();
         criticalsSprintWasActive = false;
         criticalsLastAttackNanos = 0L;
         resetCriticalsJumpState();
         rightClickUsedThisTick = false;
         autoclickerClickedThisTick = false;
         lastPlacementTick = Long.MIN_VALUE;
-        godBridgeTimerOwned = false;
+        scaffoldTimerOwned = false;
         FAKE_PLAYERS.clear();
         fakePlayerSpawnedCount = -1;
         fakePlayerSpawnedDistance = -1.0F;
         saveSettings();
     }
 
-    private static void markDirty() {
+    public static void markDirty() {
         settingsDirty = true;
     }
 
@@ -3162,7 +3727,8 @@ public final class OpenMaverFeatures {
                     + "\nbypass.enabled=" + bypassEnabled
                     + "\nbypass.profile=" + PROFILE_KEYS[clamp(bypassProfile, PROFILE_LEGIT, PROFILE_AGGRESSIVE)]
                     + "\ndebug.enabled=" + debugEnabled
-                    + "\naim.speed=" + aimSpeed
+                    + "\n" + MaverWallpaper.save()
+                    + "aim.speed=" + aimSpeed
                     + "\naim.range=" + aimRange
                     + "\naim.fov=" + aimFov
                     + "\naim.mode=" + aimMode
@@ -3180,6 +3746,7 @@ public final class OpenMaverFeatures {
                     + "\ntargethud.playersOnly=" + targetHudPlayersOnly
                     + "\nplayerxray.range=" + playerXrayRange
                     + "\nplayerxray.color=" + playerXrayColor
+                    + "\nmotionblur.strength=" + motionBlurStrength
                     + "\nsprint.onlyForward=" + sprintOnlyForward
                     + "\nsprint.pauseSneak=" + sprintPauseSneak
                     + "\nsprint.pauseItem=" + sprintPauseItem
@@ -3200,13 +3767,22 @@ public final class OpenMaverFeatures {
                     + "\ncriticals.stopSprint=" + criticalsStopSprint
                     + "\nfastplace.delayTicks=" + fastPlaceDelayTicks
                     + "\nfastplace.onlyBlocks=" + fastPlaceOnlyBlocks
-                    + "\ngodbridge.delayTicks=" + godBridgeDelayTicks
-                    + "\ngodbridge.fastPlace=" + godBridgeFastPlace
-                    + "\ngodbridge.requireEdgeAim=" + godBridgeRequireEdgeAim
-                    + "\ngodbridge.autoRotate=" + godBridgeAutoRotate
-                    + "\ngodbridge.legitAim=" + godBridgeLegitAim
-                    + "\ngodbridge.packetRotation=" + godBridgePacketRotation
-                    + "\nfakeplayer.count=" + fakePlayerCount
+                    + "\nkillaura.range=" + killAuraRange
+                    + "\nkillaura.cpsMin=" + killAuraCpsMin
+                    + "\nkillaura.cpsMax=" + killAuraCpsMax
+                    + "\nkillaura.fov=" + killAuraFov
+                    + "\nkillaura.throughWalls=" + killAuraThroughWalls
+                    + "\nkillaura.players=" + killAuraPlayers
+                    + "\nkillaura.mobs=" + killAuraMobs
+                    + "\nkillaura.animals=" + killAuraAnimals
+                    + "\nkillaura.switch=" + killAuraSwitch
+                    + "\nkillaura.sort=" + killAuraSort
+                    + "\nkillaura.switchDelay=" + killAuraSwitchDelayMs
+                    + "\nkillaura.rotate=" + killAuraRotate
+                    + "\nkillaura.smoothing=" + killAuraSmoothing
+                    + "\nkillaura.requirePress=" + killAuraRequirePress
+                    + "\n" + ScaffoldFeature.save()
+                    + "fakeplayer.count=" + fakePlayerCount
                     + "\nfakeplayer.distance=" + fakePlayerDistance
                     + "\nfakeplayer.showName=" + fakePlayerShowName
                     + "\n").getBytes("UTF-8"));
@@ -3337,7 +3913,7 @@ public final class OpenMaverFeatures {
             }
             float[] rgb = xrayColor(player);
 
-            // 先渲染玩家皮肤模型：关闭深度测试，墙体不会遮挡。
+            // 先渲染玩家皮肤模型：两遍深度法穿墙，并保持模型自身遮挡。
             renderPlayerSkin(renderManager, player, partialTicks);
 
             // 再画 1.5px 实线描边，围在皮肤模型外侧。
@@ -3359,7 +3935,17 @@ public final class OpenMaverFeatures {
 
     /**
      * 用游戏自己的 {@code RenderManager.renderEntitySimple} 画完整玩家皮肤模型。
-     * 临时关闭深度测试实现穿墙；渲染器的状态全部包在 push/pop 中，不影响后续 HUD。
+     *
+     * <p>直接 {@code glDisable(GL_DEPTH_TEST)} 虽然能穿墙，但模型会失去自我遮挡：
+     * 玩家模型各部件按固定顺序绘制，后画的腿/手臂会盖住先画的身体，看起来像
+     * 「模型炸开」。这里改成两遍渲染：
+     * <ol>
+     *   <li>只写深度：{@code GL_ALWAYS} 让模型忽略墙体已有的深度值，但把模型
+     *       自身的深度写进深度缓冲；</li>
+     *   <li>正常上色：用 {@code GL_LEQUAL} 和第一遍留下的模型深度比较，于是墙体
+     *       挡不住玩家，玩家模型内部又保持正确的部件遮挡关系。</li>
+     * </ol>
+     * 渲染器的状态全部包在 push/pop 中，不影响后续 HUD。
      */
     private static void renderPlayerSkin(RenderManager renderManager, EntityPlayer player,
             float partialTicks) {
@@ -3367,13 +3953,40 @@ public final class OpenMaverFeatures {
                 | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_TEXTURE_BIT
                 | GL11.GL_LIGHTING_BIT);
         GlColor.restore();
-        GL11.glDisable(GL11.GL_DEPTH_TEST);
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        GL11.glEnable(GL11.GL_TEXTURE_2D);
-        GL11.glEnable(GL11.GL_CULL_FACE);
-        call(renderManager, "renderEntitySimple", "func_147937_a", null,
-                player, Float.valueOf(partialTicks));
+
+        // renderEntitySimple 末尾会绘制名字标签，而原版渲染器本帧已经画过一次；
+        // 透视 pass 再画就会出现重影。临时清空自定义名，画完立刻恢复。
+        Object nameValue = call(player, "getCustomNameTag", "func_95999_t", "aM");
+        String savedName = nameValue instanceof String ? (String) nameValue : "";
+        if (savedName.length() > 0) {
+            player.setCustomNameTag("");
+        }
+        try {
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+            GL11.glDepthMask(true);
+            GL11.glEnable(GL11.GL_ALPHA_TEST);
+            GL11.glAlphaFunc(GL11.GL_GREATER, 0.1F);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glEnable(GL11.GL_TEXTURE_2D);
+            GL11.glEnable(GL11.GL_CULL_FACE);
+
+            // Pass 1: 只写深度（GL_ALWAYS 忽略墙体深度，仍保留模型自身深度）。
+            GL11.glDepthFunc(GL11.GL_ALWAYS);
+            GL11.glColorMask(false, false, false, false);
+            call(renderManager, "renderEntitySimple", "func_147937_a", null,
+                    player, Float.valueOf(partialTicks));
+
+            // Pass 2: 正常上色，LEQUAL 与模型自身深度比较得到正确的自我遮挡。
+            GL11.glDepthFunc(GL11.GL_LEQUAL);
+            GL11.glColorMask(true, true, true, true);
+            call(renderManager, "renderEntitySimple", "func_147937_a", null,
+                    player, Float.valueOf(partialTicks));
+        } finally {
+            if (savedName.length() > 0) {
+                player.setCustomNameTag(savedName);
+            }
+        }
         GL11.glPopAttrib();
         GlColor.restore();
     }
@@ -3434,7 +4047,16 @@ public final class OpenMaverFeatures {
      * 渲染帧只负责朝缓存角度平滑。
      */
     private static void updateAimTarget(Minecraft mc) {
-        if (!aimEnabled || (aimRequireClick && !Mouse.isButtonDown(0))) {
+        if (!aimEnabled) {
+            clearAimLock();
+            aimHasTarget = false;
+            aimResidualYaw = 0.0F;
+            aimResidualPitch = 0.0F;
+            return;
+        }
+        if (aimRequireClick && !Mouse.isButtonDown(0)) {
+            // 松开攻击键后不再保留锁定：下次按下时按当前准星重新选目标。
+            clearAimLock();
             aimHasTarget = false;
             aimResidualYaw = 0.0F;
             aimResidualPitch = 0.0F;
@@ -3443,24 +4065,51 @@ public final class OpenMaverFeatures {
         EntityLivingBase player = (EntityLivingBase) read(mc, "thePlayer", "field_71439_g", null);
         net.minecraft.world.World world = (net.minecraft.world.World) read(mc, "theWorld", "field_71441_e", null);
         if (player == null || world == null) {
+            clearAimLock();
             aimCachedPlayer = null;
             aimHasTarget = false;
             return;
         }
         aimCachedPlayer = player;
         aimCachedGcd = aimGcdEnabled ? (float) mouseGcd(mc) : 0.0F;
+
+        // 锁定目标只在死亡、离开范围、切换世界/玩家时失效。
+        if (aimLockedTarget != null
+                && (aimLockedWorld != world || aimLockedPlayer != player
+                        || !alive(aimLockedTarget)
+                        || distance(player, aimLockedTarget)
+                                >= (double) aimRange * aimRange)) {
+            clearAimLock();
+        }
+
+        double playerX = number(player, "posX", "field_70165_t");
+        double playerY = number(player, "posY", "field_70163_u") + eyeHeight(player);
+        double playerZ = number(player, "posZ", "field_70161_v");
+        double targetFraction = aimTarget == 0 ? 0.90D : (aimTarget == 1 ? 0.70D : 0.50D);
+        float[] angles = new float[2];
+
+        // 已有锁定目标时直接沿用：即使旁边出现更近的生物也不换人，
+        // 也不再做 FOV 检查（玩家用鼠标移开的情况由帧级手动输入检测处理）。
+        if (aimLockedTarget != null) {
+            if (computeAimAngles(aimLockedTarget, playerX, playerY, playerZ,
+                    targetFraction, angles)) {
+                aimCachedYaw = angles[0];
+                aimCachedPitch = angles[1];
+                aimHasTarget = true;
+                return;
+            }
+            clearAimLock();
+        }
+
         List<?> entities = (List<?>) read(world, "loadedEntityList", "field_72996_f", List.class);
         if (entities == null) {
             aimHasTarget = false;
             return;
         }
         EntityLivingBase nearest = null;
-        double nearestDistance = aimRange * aimRange;
+        double nearestDistance = (double) aimRange * aimRange;
         double yaw = number(player, "rotationYaw", "field_70177_z");
         double pitch = number(player, "rotationPitch", "field_70125_A");
-        double playerX = number(player, "posX", "field_70165_t");
-        double playerZ = number(player, "posZ", "field_70161_v");
-        double targetFraction = aimTarget == 0 ? 0.90D : (aimTarget == 1 ? 0.70D : 0.50D);
         float bestTargetYaw = 0.0F;
         float bestTargetPitch = 0.0F;
         for (int i = 0; i < entities.size(); i++) {
@@ -3476,16 +4125,12 @@ public final class OpenMaverFeatures {
             if (distance >= nearestDistance) {
                 continue;
             }
-
-            double dx = number(living, "posX", "field_70165_t") - playerX;
-            double dz = number(living, "posZ", "field_70161_v") - playerZ;
-            double targetY = number(living, "posY", "field_70163_u")
-                    + number(living, "height", "field_70131_O") * targetFraction;
-            double playerY = number(player, "posY", "field_70163_u") + eyeHeight(player);
-            double dy = targetY - playerY;
-            double horizontal = Math.sqrt(dx * dx + dz * dz);
-            float targetYaw = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
-            float targetPitch = (float) (-Math.atan2(dy, horizontal) * 180.0D / Math.PI);
+            if (!computeAimAngles(living, playerX, playerY, playerZ,
+                    targetFraction, angles)) {
+                continue;
+            }
+            float targetYaw = angles[0];
+            float targetPitch = angles[1];
 
             // FOV 限制：只瞄准当前视角半角范围内的目标
             if (aimFov < 179.9F) {
@@ -3506,9 +4151,38 @@ public final class OpenMaverFeatures {
             aimResidualPitch = 0.0F;
             return;
         }
+        aimLockedTarget = nearest;
+        aimLockedWorld = world;
+        aimLockedPlayer = player;
         aimCachedYaw = bestTargetYaw;
         aimCachedPitch = bestTargetPitch;
         aimHasTarget = true;
+    }
+
+    private static boolean computeAimAngles(EntityLivingBase target, double playerX,
+            double playerY, double playerZ, double targetFraction, float[] out) {
+        double dx = number(target, "posX", "field_70165_t") - playerX;
+        double dz = number(target, "posZ", "field_70161_v") - playerZ;
+        double targetY = number(target, "posY", "field_70163_u")
+                + number(target, "height", "field_70131_O") * targetFraction;
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        if (horizontal < 1.0E-4D) {
+            return false;
+        }
+        out[0] = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
+        out[1] = (float) (-Math.atan2(targetY - playerY, horizontal) * 180.0D / Math.PI);
+        return true;
+    }
+
+    /** 释放粘性锁定并清空手动移动检测状态。 */
+    private static void clearAimLock() {
+        aimLockedTarget = null;
+        aimLockedWorld = null;
+        aimLockedPlayer = null;
+        aimWrittenYaw = Float.NaN;
+        aimWrittenPitch = Float.NaN;
+        aimManualYaw = 0.0F;
+        aimManualPitch = 0.0F;
     }
 
     private static void applyAimRotation(EntityLivingBase player, float oldYaw, float oldPitch,
@@ -3521,6 +4195,9 @@ public final class OpenMaverFeatures {
         float newPitch = Math.max(-90.0F, Math.min(90.0F, oldPitch + stepPitch));
         setNumber(player, "rotationYaw", "field_70177_z", newYaw);
         setNumber(player, "rotationPitch", "field_70125_A", newPitch);
+        // 记录 Aim 写出的绝对视角；下一帧与真实 rotation 的差值就是手动鼠标移动。
+        aimWrittenYaw = newYaw;
+        aimWrittenPitch = newPitch;
         // 与 Entity.setAngles 一样同步 prevRotation：渲染立即使用新角度，
         // 避免 20 TPS 插值造成的“慢半拍 / 每 tick 弹一下”。
         setNumber(player, "prevRotationYaw", "field_70126_B", newYaw);
@@ -3563,6 +4240,24 @@ public final class OpenMaverFeatures {
                         Math.max(0.0D, (now - aimLastFrameNanos) / 1_000_000.0D));
         aimLastFrameNanos = now;
 
+        // 手动鼠标检测：Aim 每帧都会把 rotation 写回目标角度，因此下一帧
+        // rotation 与上一次写入值的差就是玩家自己的鼠标输入。用带泄漏的累计量
+        // 过滤微小抖动，超过阈值就放弃当前锁定目标，让下一 tick 重新选目标。
+        if (!Float.isNaN(aimWrittenYaw)) {
+            float manualYaw = wrapDegrees(oldYaw - aimWrittenYaw);
+            float manualPitch = oldPitch - aimWrittenPitch;
+            float decay = (float) Math.exp(-dtMs / AIM_MANUAL_DECAY_MS);
+            aimManualYaw = aimManualYaw * decay + manualYaw;
+            aimManualPitch = aimManualPitch * decay + manualPitch;
+            if (Math.abs(aimManualYaw) >= AIM_MANUAL_YAW_LIMIT
+                    || Math.abs(aimManualPitch) >= AIM_MANUAL_PITCH_LIMIT) {
+                clearAimLock();
+                aimHasTarget = false;
+                resetAimFrameState();
+                return;
+            }
+        }
+
         // 50ms 内累计的平滑量与旧版“每 tick 一步”保持一致，但分摊到每一帧。
         float factor = aimMode == 1 ? 1.0F : aimSpeed;
         float alpha = factor >= 0.999F ? 1.0F
@@ -3578,6 +4273,10 @@ public final class OpenMaverFeatures {
         aimResidualYaw = 0.0F;
         aimResidualPitch = 0.0F;
         aimLastFrameNanos = 0L;
+        aimWrittenYaw = Float.NaN;
+        aimWrittenPitch = Float.NaN;
+        aimManualYaw = 0.0F;
+        aimManualPitch = 0.0F;
     }
 
     /**
@@ -3671,7 +4370,46 @@ public final class OpenMaverFeatures {
         return Math.max(0.0001D, f * f * f * 1.2D);
     }
 
-    private static Object read(Object target, String mcp, String srg, Class<?> expected) {
+    // ------------------------------------------------------------------
+    // 反射查找缓存
+    //
+    // Scaffold 每 tick 会对 9×5×9 的方块区域做 world/Block/Material 查询，
+    // 再配合 16×16 的射线采点，单 tick 的反射调用可达上万次。原来的
+    // findField/call 每次都遍历 getDeclaredField(s)，字段名不匹配时还会不断
+    // 抛 NoSuchFieldException（带完整栈），在弱 CPU 上直接把 tick 拖到 4~10 TPS，
+    // 表现就是“神桥一开游戏卡死”。这里按 目标类 + 名称 缓存 Field/Method，
+    // 未命中同样缓存，之后只做一次 invoke。
+    // ------------------------------------------------------------------
+
+    private static final Object CACHE_MISS = new Object();
+    private static final Method[] NO_METHODS = new Method[0];
+    private static final Map<String, Object> FIELD_CACHE =
+            new ConcurrentHashMap<String, Object>();
+    private static final Map<String, Object> METHOD_CACHE =
+            new ConcurrentHashMap<String, Object>();
+
+    private static String namesKey(Class<?> type, String[] names) {
+        StringBuilder key = new StringBuilder(type.getName());
+        for (int i = 0; i < names.length; i++) {
+            key.append('|').append(names[i]);
+        }
+        return key.toString();
+    }
+
+    private static String methodKey(Class<?> type, String mcp, String srg, String obf,
+            Object[] args) {
+        StringBuilder key = new StringBuilder(type.getName())
+                .append('|').append(mcp)
+                .append('|').append(srg)
+                .append('|').append(obf);
+        for (int i = 0; i < args.length; i++) {
+            Object arg = args[i];
+            key.append('|').append(arg == null ? "null" : arg.getClass().getName());
+        }
+        return key.toString();
+    }
+
+    static Object read(Object target, String mcp, String srg, Class<?> expected) {
         if (target == null) return null;
         Field field = findField(target, runtimeCandidates(mcp, srg));
         if (field != null) {
@@ -3702,26 +4440,36 @@ public final class OpenMaverFeatures {
     }
 
     /** 沿继承链查找字段。getDeclaredField 不会搜索父类，之前因此读不到 posX/rotationYaw。 */
-    private static Field findField(Object target, String[] names) {
+    static Field findField(Object target, String[] names) {
         if (target == null) return null;
+        String key = namesKey(target.getClass(), names);
+        Object cached = FIELD_CACHE.get(key);
+        if (cached != null) {
+            return cached == CACHE_MISS ? null : (Field) cached;
+        }
+        Field found = null;
         for (String name : names) {
             if (name == null) continue;
             for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
                 try {
-                    Field field = type.getDeclaredField(name);
-                    field.setAccessible(true);
-                    return field;
+                    found = type.getDeclaredField(name);
+                    found.setAccessible(true);
+                    break;
                 } catch (NoSuchFieldException ignored) {
                     // Try the superclass, then the next runtime name.
                 } catch (Throwable ignored) {
-                    return null;
+                    break;
                 }
             }
+            if (found != null) {
+                break;
+            }
         }
-        return null;
+        FIELD_CACHE.put(key, found == null ? CACHE_MISS : found);
+        return found;
     }
 
-    private static boolean alive(Object entity) {
+    static boolean alive(Object entity) {
         Object value = call(entity, "isEntityAlive", "func_70089_S", "E");
         return value instanceof Boolean && ((Boolean) value).booleanValue();
     }
@@ -3731,54 +4479,77 @@ public final class OpenMaverFeatures {
         return value instanceof Number ? ((Number) value).doubleValue() : Double.MAX_VALUE;
     }
 
-    private static AxisAlignedBB boundingBox(Object entity) {
+    static AxisAlignedBB boundingBox(Object entity) {
         Object value = call(entity, "getEntityBoundingBox", "func_174813_aQ", "aQ");
         return value instanceof AxisAlignedBB ? (AxisAlignedBB) value : null;
     }
 
-    private static double eyeHeight(Object entity) {
+    static double eyeHeight(Object entity) {
         Object value = call(entity, "getEyeHeight", "func_70047_e", "bB");
         return value instanceof Number ? ((Number) value).doubleValue() : 0.0D;
     }
 
-    private static Object call(Object target, String mcp, String srg, String obf, Object... args) {
+    static Object call(Object target, String mcp, String srg, String obf, Object... args) {
         if (target == null) return null;
-        for (String name : new String[] {mcp, srg, obf}) {
-            for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
-                for (Method method : type.getDeclaredMethods()) {
-                    if (!method.getName().equals(name) || method.getParameterTypes().length != args.length) continue;
-                    if (!parametersMatch(method.getParameterTypes(), args)) continue;
-                    try {
-                        method.setAccessible(true);
-                        return method.invoke(target, args);
-                    } catch (Throwable ignored) {
-                        // Try another mapping or inherited declaration.
-                    }
-                }
+        Method[] methods = findMethods(target, mcp, srg, obf, args);
+        for (int i = 0; i < methods.length; i++) {
+            try {
+                return methods[i].invoke(target, args);
+            } catch (Throwable ignored) {
+                // Try another mapping or inherited declaration.
             }
         }
         return null;
     }
 
     /** 与 {@link #call} 相同，但用于返回 void 的方法，并明确告知是否调用成功。 */
-    private static boolean callVoid(Object target, String mcp, String srg, String obf, Object... args) {
+    static boolean callVoid(Object target, String mcp, String srg, String obf, Object... args) {
         if (target == null) return false;
-        for (String name : new String[] {mcp, srg, obf}) {
+        Method[] methods = findMethods(target, mcp, srg, obf, args);
+        for (int i = 0; i < methods.length; i++) {
+            try {
+                methods[i].invoke(target, args);
+                return true;
+            } catch (Throwable ignored) {
+                // Try another mapping or inherited declaration.
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 查找所有名称/参数匹配的方法，按 MCP、SRG、混淆名与继承链顺序返回。
+     * 结果按 目标类 + 名称 + 参数运行时类型 缓存，避免每 tick 反复
+     * {@code getDeclaredMethods()} 扫描整个类。
+     */
+    private static Method[] findMethods(Object target, String mcp, String srg,
+            String obf, Object[] args) {
+        String key = methodKey(target.getClass(), mcp, srg, obf, args);
+        Object cached = METHOD_CACHE.get(key);
+        if (cached != null) {
+            return cached == CACHE_MISS ? NO_METHODS : (Method[]) cached;
+        }
+        List<Method> found = new ArrayList<Method>();
+        String[] names = {mcp, srg, obf};
+        for (int n = 0; n < names.length; n++) {
+            String name = names[n];
+            if (name == null) continue;
             for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
                 for (Method method : type.getDeclaredMethods()) {
                     if (!method.getName().equals(name) || method.getParameterTypes().length != args.length) continue;
                     if (!parametersMatch(method.getParameterTypes(), args)) continue;
                     try {
                         method.setAccessible(true);
-                        method.invoke(target, args);
-                        return true;
                     } catch (Throwable ignored) {
-                        // Try another mapping or inherited declaration.
+                        // invoke() will report the real failure.
                     }
+                    found.add(method);
                 }
             }
         }
-        return false;
+        Method[] methods = found.isEmpty() ? NO_METHODS : found.toArray(new Method[found.size()]);
+        METHOD_CACHE.put(key, methods.length == 0 ? CACHE_MISS : methods);
+        return methods;
     }
 
     private static boolean parametersMatch(Class<?>[] types, Object[] args) {
@@ -3803,7 +4574,7 @@ public final class OpenMaverFeatures {
         return false;
     }
 
-    private static String[] runtimeCandidates(String mcp, String srg) {
+    static String[] runtimeCandidates(String mcp, String srg) {
         if ("field_71441_e".equals(srg)) return new String[] {mcp, srg, "f"};
         if ("field_71439_g".equals(srg)) return new String[] {mcp, srg, "i"};
         if ("field_71462_r".equals(srg)) return new String[] {mcp, srg, "h"};
@@ -3837,7 +4608,7 @@ public final class OpenMaverFeatures {
         return new String[] {mcp, srg};
     }
 
-    private static double number(Object target, String mcp, String srg) {
+    static double number(Object target, String mcp, String srg) {
         Field field = findField(target, runtimeCandidates(mcp, srg));
         if (field == null) return 0.0D;
         try {
@@ -3849,7 +4620,7 @@ public final class OpenMaverFeatures {
         }
     }
 
-    private static void setNumber(Object target, String mcp, String srg, double value) {
+    static void setNumber(Object target, String mcp, String srg, double value) {
         Field field = findField(target, runtimeCandidates(mcp, srg));
         if (field == null) return;
         try {
@@ -3890,7 +4661,7 @@ public final class OpenMaverFeatures {
         GL11.glVertex3d(x2, y2, z2);
     }
 
-    private static float wrapDegrees(float angle) {
+    static float wrapDegrees(float angle) {
         angle %= 360.0F;
         if (angle >= 180.0F) {
             angle -= 360.0F;

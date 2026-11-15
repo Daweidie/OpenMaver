@@ -61,6 +61,8 @@ public final class McpReobf {
         final String STACK = "net/minecraft/item/ItemStack";
         final String SESSION = "net/minecraft/util/Session";
         final String DPS = "net/minecraft/client/resources/DefaultPlayerSkin";
+        final String MINPUT = "net/minecraft/util/MovementInput";
+        final String MIFO = "net/minecraft/util/MovementInputFromOptions";
 
         m(MC, "getMinecraft", "func_71410_x");
         m(MC, "displayGuiScreen", "func_147108_a");
@@ -109,6 +111,10 @@ public final class McpReobf {
         m(LIVING, "getTotalArmorValue", "func_70658_aO");
         m(LIVING, "getHeldItem", "func_70694_bm");
         m(LIVING, "canEntityBeSeen", "func_70685_l");
+        // FullBright：isPotionActive 这里只使用 int 重载（Potion 重载未调用）。
+        m(LIVING, "isPotionActive", "func_82165_m");
+        m(LIVING, "addPotionEffect", "func_70690_d");
+        m(LIVING, "removePotionEffect", "func_82170_o");
         m(MC, "getTextureManager", "func_110434_K");
         m(ACP, "getLocationSkin", "func_110311_f");
         m(TM, "bindTexture", "func_110577_a");
@@ -138,6 +144,9 @@ public final class McpReobf {
         f(ENTITY, "posX", "field_70165_t");
         f(ENTITY, "posY", "field_70163_u");
         f(ENTITY, "posZ", "field_70161_v");
+        f(ENTITY, "motionX", "field_70159_w");
+        f(ENTITY, "motionY", "field_70181_x");
+        f(ENTITY, "motionZ", "field_70179_y");
         f(ENTITY, "height", "field_70131_O");
         f(ENTITY, "rotationYaw", "field_70177_z");
         f(ENTITY, "rotationPitch", "field_70125_A");
@@ -152,8 +161,15 @@ public final class McpReobf {
         f(RM, "viewerPosZ", "field_78723_d");
         f(MOP, "typeOfHit", "field_72313_a");
         f(MOP, "entityHit", "field_72308_g");
+        m(MIFO, "updatePlayerMoveState", "func_78898_a");
+        f(MINPUT, "moveForward", "field_78900_b");
+        f(MINPUT, "moveStrafe", "field_78901_c");
+        f(MINPUT, "jump", "field_78903_e");
+        f(MINPUT, "sneak", "field_78899_d");
 
         SUPER.put("GuiOpenMaverClickGui", GS);
+        SUPER.put("ScaffoldMovementInput", MIFO);
+        SUPER.put(MIFO, MINPUT);
         SUPER.put("GuiMaverMainMenu", GS);
         SUPER.put(GS, GUI);
         SUPER.put(GUI, "java/lang/Object");

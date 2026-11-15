@@ -41,6 +41,12 @@ public class GL11 {
     public static final int GL_VIEWPORT_BIT = 0x00000800;
     public static final int GL_SCISSOR_BIT = 0x00001000;
     public static final int GL_ALPHA_TEST = 0x0BC0;
+    public static final int GL_NEVER = 0x0200;
+    public static final int GL_LESS = 0x0201;
+    public static final int GL_EQUAL = 0x0202;
+    public static final int GL_LEQUAL = 0x0203;
+    public static final int GL_GREATER = 0x0204;
+    public static final int GL_ALWAYS = 0x0207;
     public static final int GL_VERTEX_ARRAY = 0x8074;
     public static final int GL_COLOR_ARRAY = 0x8076;
     public static final int GL_TEXTURE_COORD_ARRAY = 0x8078;
@@ -55,6 +61,8 @@ public class GL11 {
     public static void glShadeModel(int mode) {}
     public static void glColorMask(boolean red, boolean green, boolean blue, boolean alpha) {}
     public static void glDepthMask(boolean flag) {}
+    public static void glDepthFunc(int func) {}
+    public static void glAlphaFunc(int func, float ref) {}
     public static void glPushAttrib(int mask) {}
     public static void glPopAttrib() {}
     public static void glPushMatrix() {}
@@ -87,6 +95,7 @@ public class GL11 {
     public static void glTexParameteri(int target, int pname, int param) {}
     public static void glTexEnvi(int target, int pname, int param) {}
     public static int glGetInteger(int pname) { return 4; }
+    public static int glGetError() { return 0; }
     public static void glPixelStorei(int pname, int param) {}
     public static void glTexImage2D(int target, int level, int internalFormat, int width, int height,
             int border, int format, int type, java.nio.ByteBuffer pixels) {}

@@ -51,6 +51,8 @@ public final class TargetHud {
     private static final int TEXT = 0xF2F5FA;
     private static final int HEALTH_TEXT_MAX = 0x9AA4B2;
     private static final int MUTED_BORDER = 0x2E333B;
+    private static final int SHADOW = 0x000000;
+    private static final float SHADOW_ALPHA = 0.28F;
     private static final int TRACK = 0x22262D;
     private static final int GLASS = 0x0D0F13;
     private static final float GLASS_TINT_STRENGTH = 0.62F;
@@ -59,12 +61,21 @@ public final class TargetHud {
     private static final ResourceLocation STEVE_SKIN =
             new ResourceLocation("textures/entity/steve.png");
 
-    private static final long FADE_IN_MS = 120L;
+    /** 与 Scaffold HUD 相同的出现/消失动画：时长 + 从右侧滑入的距离。 */
+    private static final long FADE_IN_MS = 170L;
+    private static final long FADE_OUT_MS = 150L;
+    private static final float SLIDE_DISTANCE = 18.0F;
 
     private static EntityLivingBase target;
     private static long lastFrameNanos;
     private static float visible;
     private static boolean failed;
+
+    /** 淡出期间继续显示最后一次锁定的目标信息。 */
+    private static String cachedName = "";
+    private static String cachedHealthNow = "0";
+    private static String cachedHealthMax = "/20";
+    private static float cachedRatio = 1.0F;
 
     private TargetHud() {
     }
@@ -91,43 +102,64 @@ public final class TargetHud {
         if (failed) {
             return false;
         }
+        // 关闭后仍需在淡出期间继续抓屏，否则卡片背景会先消失、头像却还在。
+        if (visible > 0.01F) {
+            return true;
+        }
         Module module = ModuleManager.getModule("Target HUD");
         return module != null && module.isEnabled();
+    }
+
+    /** 卡片当前是否真的可见（目标锁定且淡入完成）。 */
+    public static boolean isShowing() {
+        return !failed && target != null && visible > 0.01F;
+    }
+
+    /** 缩放后的卡片高度，供其它锚定在准星右侧的 HUD 错开布局。 */
+    public static float cardHeight() {
+        return CARD_H * OpenMaverFeatures.getTargetHudScale();
     }
 
     private static void draw(FontRenderer font, ScaledResolution resolution, long now) {
         Minecraft mc = Minecraft.getMinecraft();
         Module module = ModuleManager.getModule("Target HUD");
-        if (mc == null || module == null || !module.isEnabled()) {
-            reset();
-            return;
-        }
-        Object world = read(mc, "theWorld", "field_71441_e", "f", World.class);
-        Object self = read(mc, "thePlayer", "field_71439_g", "i", EntityPlayer.class);
-        Object screen = read(mc, "currentScreen", "field_71462_r", "h", Object.class);
-        if (world == null || self == null || screen != null) {
-            reset();
-            return;
-        }
+        boolean enabled = mc != null && module != null && module.isEnabled();
+        Object world = mc == null ? null
+                : read(mc, "theWorld", "field_71441_e", "f", World.class);
+        Object self = mc == null ? null
+                : read(mc, "thePlayer", "field_71439_g", "i", EntityPlayer.class);
+        Object screen = mc == null ? null
+                : read(mc, "currentScreen", "field_71462_r", "h", Object.class);
+        EntityPlayer player = self instanceof EntityPlayer ? (EntityPlayer) self : null;
+        EntityLivingBase aimed = !enabled || world == null || player == null
+                || screen != null || !alive(player)
+                ? null
+                : crosshairTarget(mc, player);
+        boolean active = aimed != null;
 
         long frameNanos = lastFrameNanos == 0L ? 16_000_000L : now - lastFrameNanos;
         lastFrameNanos = now;
         float deltaMs = Math.max(1.0F, Math.min(50.0F, frameNanos / 1_000_000.0F));
 
-        EntityPlayer player = self(mc);
-        EntityLivingBase aimed = player == null || !alive(player)
-                ? null
-                : crosshairTarget(mc, player);
-        if (aimed == null) {
-            // 只在准星真正命中生物时显示；移开准星立即隐藏。
-            target = null;
-            visible = 0.0F;
-            return;
+        if (active) {
+            // 只在准星真正命中生物时更新缓存；移开准星后缓存用于淡出。
+            target = aimed;
+            cachedName = trimToWidth(font, displayName(target), 0.95F, (int) CONTENT_W);
+            cachedHealthNow = formatHealth(health(target));
+            cachedHealthMax = "/" + formatHealth(maxHealth(target));
+            cachedRatio = healthRatio(target);
         }
 
-        target = aimed;
-        visible = approach(visible, 1.0F, deltaMs / FADE_IN_MS);
+        float duration = active ? FADE_IN_MS : FADE_OUT_MS;
+        visible = approach(visible, active ? 1.0F : 0.0F, deltaMs / duration);
         if (visible <= 0.01F) {
+            if (!active) {
+                reset();
+            }
+            return;
+        }
+        if (target == null) {
+            reset();
             return;
         }
 
@@ -138,16 +170,15 @@ public final class TargetHud {
         target = null;
         visible = 0.0F;
         lastFrameNanos = 0L;
+        cachedName = "";
+        cachedHealthNow = "0";
+        cachedHealthMax = "/20";
+        cachedRatio = 1.0F;
     }
 
     // ==================================================================
     // 目标选择
     // ==================================================================
-
-    private static EntityPlayer self(Minecraft mc) {
-        Object value = read(mc, "thePlayer", "field_71439_g", "i", EntityPlayer.class);
-        return value instanceof EntityPlayer ? (EntityPlayer) value : null;
-    }
 
     private static EntityLivingBase crosshairTarget(Minecraft mc, EntityPlayer self) {
         Object hitObject = read(mc, "objectMouseOver", "field_71476_x", "s",
@@ -233,11 +264,15 @@ public final class TargetHud {
         float cardY = screenH / 2.0F - drawH / 2.0F;
         cardY = Math.max(4.0F, Math.min(cardY, screenH - drawH - 4.0F));
 
-        float ratio = healthRatio(target);
+        float ratio = cachedRatio;
         int barColor = healthColor(ratio);
-        String name = trimToWidth(font, displayName(target), 0.95F, (int) CONTENT_W);
-        String healthNow = formatHealth(health(target));
-        String healthMax = "/" + formatHealth(maxHealth(target));
+        String name = cachedName;
+        String healthNow = cachedHealthNow;
+        String healthMax = cachedHealthMax;
+
+        // 出现时从右向左滑入，消失时反向滑出，同时淡入淡出（与 Scaffold HUD 一致）。
+        float slide = (1.0F - alpha) * SLIDE_DISTANCE * scale;
+        float drawX = cardX + slide;
 
         GlColor.restore();
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_LINE_BIT);
@@ -249,13 +284,15 @@ public final class TargetHud {
         GL11.glDisable(GL11.GL_LIGHTING);
 
         GL11.glPushMatrix();
-        GL11.glTranslatef(cardX, cardY, 0.0F);
+        GL11.glTranslatef(drawX, cardY, 0.0F);
         GL11.glScalef(scale, scale, 1.0F);
 
-        // 深色毛玻璃底 + 1px 描边：背景取当前世界画面做局部模糊。
+        // 柔和投影 + 低对比描边 + 深色毛玻璃，与 Scaffold HUD 保持同一套卡片语言。
+        roundRect(2.0F, 3.0F, CARD_W, CARD_H, CARD_R,
+                color(SHADOW, SHADOW_ALPHA * alpha));
         roundRect(0.0F, 0.0F, CARD_W, CARD_H, CARD_R,
                 color(MUTED_BORDER, 0.85F * alpha));
-        GuiBlur.draw(Math.round(cardX + scale), Math.round(cardY + scale),
+        GuiBlur.draw(Math.round(drawX + scale), Math.round(cardY + scale),
                 Math.round(drawW - scale * 2.0F), Math.round(drawH - scale * 2.0F),
                 Math.max(0.0F, (CARD_R - 1.0F) * scale), GLASS,
                 GLASS_TINT_STRENGTH, alpha * GLASS_ALPHA);
@@ -431,9 +468,13 @@ public final class TargetHud {
         return value < 0.0F ? 0.0F : (value > 1.0F ? 1.0F : value);
     }
 
+    /** 线性推进，保证淡入/淡出在设定时长内真正到达 0/1。 */
     private static float approach(float value, float goal, float amount) {
         float step = clamp01(amount);
-        return value + (goal - value) * step;
+        if (value < goal) {
+            return Math.min(goal, value + step);
+        }
+        return Math.max(goal, value - step);
     }
 
     /** 满血绿色 → 半血橙色 → 空血深红。 */

@@ -13,6 +13,7 @@ import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
 
 import java.io.IOException;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -63,11 +64,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final int RAIL_NAV_Y = 84;
     private static final int RAIL_NAV_STRIDE = 27;
     private static final int RAIL_NAV_H = 25;
-    private static final int RAIL_SYS_LABEL_Y = 224;
-    private static final int RAIL_SYS_Y = 236;
-    private static final int RAIL_SYS_STRIDE = 25;
-    private static final int RAIL_SYS_H = 22;
-    private static final int RAIL_SYS_MIN_H = 315;
+    private static final int RAIL_SYS_LABEL_Y = 220;
+    private static final int RAIL_SYS_Y = 231;
+    private static final int RAIL_SYS_STRIDE = 23;
+    private static final int RAIL_SYS_H = 21;
+    private static final int RAIL_SYS_MIN_H = 352;
 
     private static final int RADIUS = 22;
     /** 模块卡片使用更饱满的圆角，和左侧圆形开关保持同一套圆润语言。 */
@@ -134,10 +135,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 ACCENT, ACCENT)
     };
 
-    /** 左栏 SYSTEM 入口（对应设计稿的 Configs / Statistics / Settings）。 */
+    /** 左栏 SYSTEM 入口（对应设计稿的 Configs / Statistics / Wallpaper / Settings）。 */
     private static final SystemItem[] SYSTEM_ITEMS = {
         new SystemItem("configs", "Configs", "Profiles, storage and active settings."),
         new SystemItem("stats", "Statistics", "Module counters and category activity."),
+        new SystemItem("wallpaper", "Wallpaper", "Main menu static images and animated backgrounds."),
         new SystemItem("settings", "Settings", "Client preferences and diagnostics.")
     };
 
@@ -150,6 +152,18 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final String[] BYPASS_PROFILES = {"LEGIT", "BALANCED", "AGGRESSIVE"};
     private static final String[] CRITICALS_MODES = {
             "ALWAYS", "NCP", "FALLING", "GRIM", "JUMP", "LOW", "DOWN"};
+    private static final String[] KILLAURA_TARGET_MODES = {"Single", "Switch"};
+    private static final String[] KILLAURA_SORTS = {"Distance", "Health"};
+    private static final String[] SCAFFOLD_ROTATIONS = {
+            "NONE", "DEFAULT", "BACKWARDS", "SIDEWAYS", "OFFSET", "SNAP", "HYPIXEL"};
+    private static final String[] SCAFFOLD_MOVE_FIX = {"NONE", "SILENT"};
+    private static final String[] SCAFFOLD_SPRINT = {"NONE", "VANILLA"};
+    private static final String[] SCAFFOLD_ROTATION_SPEED = {
+            "1TICK", "2TICK", "3TICK", "4TICK", "NORMAL"};
+    private static final String[] SCAFFOLD_TOWER = {
+            "NONE", "VANILLA", "EXTRA", "TELLY", "HYPIXEL"};
+    private static final String[] SCAFFOLD_KEEP_Y = {
+            "NONE", "VANILLA", "EXTRA", "TELLY", "EXTRATELLY"};
 
     // ------------------------------------------------------------------
     // 状态
@@ -175,6 +189,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     private int scroll;
     private float scrollVisual;
+    /** 壁纸页文件列表的滚动偏移。 */
+    private int wallpaperScroll;
     private long lastAnimationAt;
     private long frameNow;
     private float openProgress;
@@ -189,6 +205,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private int dragW;
     private boolean panelDragging;
     private boolean logoSizeDragging;
+    /** 壁纸页的背景模糊进度条是否正在拖动。 */
+    private boolean wallpaperBlurDragging;
     private float logoScale = 1.00F;
     private int panelDragOffsetX;
     private int panelDragOffsetY;
@@ -311,6 +329,14 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     logoSizeDragging = false;
                 }
             }
+            if (wallpaperBlurDragging) {
+                if (Mouse.isButtonDown(0)) {
+                    updateWallpaperBlur(mouseX);
+                } else {
+                    wallpaperBlurDragging = false;
+                    OpenMaverFeatures.flushSettings();
+                }
+            }
             drawGui();
         } catch (Throwable t) {
             failed = true;
@@ -364,16 +390,20 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 addReachSettings(entry);
             } else if ("Criticals".equals(module.getName())) {
                 addCriticalsSettings(entry);
+            } else if ("KillAura".equals(module.getName())) {
+                addKillAuraSettings(entry);
             } else if ("FastPlace".equals(module.getName())) {
                 addFastPlaceSettings(entry);
-            } else if ("GodBridge".equals(module.getName())) {
-                addGodBridgeSettings(entry);
+            } else if ("Scaffold".equals(module.getName())) {
+                addScaffoldSettings(entry);
             } else if ("FakePlayer".equals(module.getName())) {
                 addFakePlayerSettings(entry);
             } else if ("Target HUD".equals(module.getName())) {
                 addTargetHudSettings(entry);
             } else if ("Player X-Ray".equals(module.getName())) {
                 addPlayerXraySettings(entry);
+            } else if ("Motion Blur".equals(module.getName())) {
+                addMotionBlurSettings(entry);
             }
             entries.add(entry);
         }
@@ -516,6 +546,13 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }));
     }
 
+    private void addMotionBlurSettings(Entry entry) {
+        entry.settings.add(Setting.slider("STRENGTH", 0.05F, 1.0F, 0.05F, 2, "", new Binding() {
+            public double get() { return OpenMaverFeatures.getMotionBlurStrength(); }
+            public void set(double value) { OpenMaverFeatures.setMotionBlurStrength((float) value); }
+        }));
+    }
+
     private void addSprintSettings(Entry entry) {
         entry.settings.add(Setting.check("ONLY FORWARD", new Binding() {
             public double get() { return OpenMaverFeatures.isSprintOnlyForward() ? 1.0D : 0.0D; }
@@ -599,30 +636,153 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }));
     }
 
-    private void addGodBridgeSettings(Entry entry) {
-        entry.settings.add(Setting.slider("DELAY", 0.0F, 4.0F, 1.0F, 0, "t", new Binding() {
-            public double get() { return OpenMaverFeatures.getGodBridgeDelayTicks(); }
-            public void set(double value) { OpenMaverFeatures.setGodBridgeDelayTicks((int) Math.round(value)); }
+    private void addScaffoldSettings(Entry entry) {
+        entry.settings.add(Setting.select("ROTATIONS", SCAFFOLD_ROTATIONS, new Binding() {
+            public double get() { return ScaffoldFeature.getRotations(); }
+            public void set(double value) { ScaffoldFeature.setRotations((int) Math.round(value)); }
         }));
-        entry.settings.add(Setting.check("FAST PLACE", new Binding() {
-            public double get() { return OpenMaverFeatures.isGodBridgeFastPlace() ? 1.0D : 0.0D; }
-            public void set(double value) { OpenMaverFeatures.setGodBridgeFastPlace(value > 0.5D); }
+        entry.settings.add(Setting.select("MOVE FIX", SCAFFOLD_MOVE_FIX, new Binding() {
+            public double get() { return ScaffoldFeature.getMoveFix(); }
+            public void set(double value) { ScaffoldFeature.setMoveFix((int) Math.round(value)); }
         }));
-        entry.settings.add(Setting.check("REQUIRE EDGE AIM", new Binding() {
-            public double get() { return OpenMaverFeatures.isGodBridgeRequireEdgeAim() ? 1.0D : 0.0D; }
-            public void set(double value) { OpenMaverFeatures.setGodBridgeRequireEdgeAim(value > 0.5D); }
+        entry.settings.add(Setting.select("SPRINT", SCAFFOLD_SPRINT, new Binding() {
+            public double get() { return ScaffoldFeature.getSprintMode(); }
+            public void set(double value) { ScaffoldFeature.setSprintMode((int) Math.round(value)); }
         }));
-        entry.settings.add(Setting.check("AUTO ROTATE", new Binding() {
-            public double get() { return OpenMaverFeatures.isGodBridgeAutoRotate() ? 1.0D : 0.0D; }
-            public void set(double value) { OpenMaverFeatures.setGodBridgeAutoRotate(value > 0.5D); }
+        entry.settings.add(Setting.slider("GROUND MOTION", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
+            public double get() { return ScaffoldFeature.getGroundMotion(); }
+            public void set(double value) { ScaffoldFeature.setGroundMotion((int) Math.round(value)); }
         }));
-        entry.settings.add(Setting.check("LEGIT AIM", new Binding() {
-            public double get() { return OpenMaverFeatures.isGodBridgeLegitAim() ? 1.0D : 0.0D; }
-            public void set(double value) { OpenMaverFeatures.setGodBridgeLegitAim(value > 0.5D); }
+        entry.settings.add(Setting.slider("AIR MOTION", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
+            public double get() { return ScaffoldFeature.getAirMotion(); }
+            public void set(double value) { ScaffoldFeature.setAirMotion((int) Math.round(value)); }
         }));
-        entry.settings.add(Setting.check("PACKET ROTATION", new Binding() {
-            public double get() { return OpenMaverFeatures.isGodBridgePacketRotation() ? 1.0D : 0.0D; }
-            public void set(double value) { OpenMaverFeatures.setGodBridgePacketRotation(value > 0.5D); }
+        entry.settings.add(Setting.slider("SPEED MOTION", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
+            public double get() { return ScaffoldFeature.getSpeedMotion(); }
+            public void set(double value) { ScaffoldFeature.setSpeedMotion((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("KEEP Y ON PRESS", new Binding() {
+            public double get() { return ScaffoldFeature.isKeepYonPress() ? 1.0D : 0.0D; }
+            public void set(double value) { ScaffoldFeature.setKeepYonPress(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("MULTI PLACE", new Binding() {
+            public double get() { return ScaffoldFeature.isMultiPlace() ? 1.0D : 0.0D; }
+            public void set(double value) { ScaffoldFeature.setMultiPlace(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("SAFE WALK", new Binding() {
+            public double get() { return ScaffoldFeature.isSafeWalk() ? 1.0D : 0.0D; }
+            public void set(double value) { ScaffoldFeature.setSafeWalk(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("SWING", new Binding() {
+            public double get() { return ScaffoldFeature.isSwing() ? 1.0D : 0.0D; }
+            public void set(double value) { ScaffoldFeature.setSwing(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("ITEM SPOOF", new Binding() {
+            public double get() { return ScaffoldFeature.isItemSpoof() ? 1.0D : 0.0D; }
+            public void set(double value) { ScaffoldFeature.setItemSpoof(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("BLOCK COUNTER", new Binding() {
+            public double get() { return ScaffoldFeature.isBlockCounter() ? 1.0D : 0.0D; }
+            public void set(double value) { ScaffoldFeature.setBlockCounter(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("CANDIFFPLACE", new Binding() {
+            public double get() { return ScaffoldFeature.isCandiffplace() ? 1.0D : 0.0D; }
+            public void set(double value) { ScaffoldFeature.setCandiffplace(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("DELAY TICKS", 0.0F, 20.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return ScaffoldFeature.getTowerFlatTicks(); }
+            public void set(double value) { ScaffoldFeature.setTowerFlatTicks((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("ANGLE DIFF", 0.0F, 180.0F, 1.0F, 0, "\u00B0", new Binding() {
+            public double get() { return ScaffoldFeature.getAngleDiff(); }
+            public void set(double value) { ScaffoldFeature.setAngleDiff((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("TELLY START MIN", 1.0F, 180.0F, 1.0F, 0, "\u00B0", new Binding() {
+            public double get() { return ScaffoldFeature.getTellyStartRotMinSpeed(); }
+            public void set(double value) { ScaffoldFeature.setTellyStartRotMinSpeed((float) value); }
+        }));
+        entry.settings.add(Setting.slider("TELLY START MAX", 1.0F, 180.0F, 1.0F, 0, "\u00B0", new Binding() {
+            public double get() { return ScaffoldFeature.getTellyStartRotMaxSpeed(); }
+            public void set(double value) { ScaffoldFeature.setTellyStartRotMaxSpeed((float) value); }
+        }));
+        entry.settings.add(Setting.slider("TELLY NORMAL MIN", 1.0F, 180.0F, 1.0F, 0, "\u00B0", new Binding() {
+            public double get() { return ScaffoldFeature.getTellyNormalRotMinSpeed(); }
+            public void set(double value) { ScaffoldFeature.setTellyNormalRotMinSpeed((float) value); }
+        }));
+        entry.settings.add(Setting.slider("TELLY NORMAL MAX", 1.0F, 180.0F, 1.0F, 0, "\u00B0", new Binding() {
+            public double get() { return ScaffoldFeature.getTellyNormalRotMaxSpeed(); }
+            public void set(double value) { ScaffoldFeature.setTellyNormalRotMaxSpeed((float) value); }
+        }));
+        entry.settings.add(Setting.select("ROTATION SPEED", SCAFFOLD_ROTATION_SPEED, new Binding() {
+            public double get() { return ScaffoldFeature.getRotationSpeed(); }
+            public void set(double value) { ScaffoldFeature.setRotationSpeed((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.select("TOWER", SCAFFOLD_TOWER, new Binding() {
+            public double get() { return ScaffoldFeature.getTower(); }
+            public void set(double value) { ScaffoldFeature.setTower((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.select("KEEP Y", SCAFFOLD_KEEP_Y, new Binding() {
+            public double get() { return ScaffoldFeature.getKeepY(); }
+            public void set(double value) { ScaffoldFeature.setKeepY((int) Math.round(value)); }
+        }));
+    }
+
+    private void addKillAuraSettings(Entry entry) {
+        entry.settings.add(Setting.slider("RANGE", 3.0F, 6.0F, 0.1F, 1, " m", new Binding() {
+            public double get() { return OpenMaverFeatures.getKillAuraRange(); }
+            public void set(double value) { OpenMaverFeatures.setKillAuraRange((float) value); }
+        }));
+        entry.settings.add(Setting.slider("CPS MIN", 1.0F, 20.0F, 1.0F, 0, "", new Binding() {
+            public double get() { return OpenMaverFeatures.getKillAuraCpsMin(); }
+            public void set(double value) { OpenMaverFeatures.setKillAuraCpsMin((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("CPS MAX", 1.0F, 20.0F, 1.0F, 0, "", new Binding() {
+            public double get() { return OpenMaverFeatures.getKillAuraCpsMax(); }
+            public void set(double value) { OpenMaverFeatures.setKillAuraCpsMax((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("FOV", 30.0F, 360.0F, 5.0F, 0, "\u00B0", new Binding() {
+            public double get() { return OpenMaverFeatures.getKillAuraFov(); }
+            public void set(double value) { OpenMaverFeatures.setKillAuraFov((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.select("TARGET", KILLAURA_TARGET_MODES, new Binding() {
+            public double get() { return OpenMaverFeatures.isKillAuraSwitch() ? 1.0D : 0.0D; }
+            public void set(double value) { OpenMaverFeatures.setKillAuraSwitch(Math.round(value) == 1); }
+        }));
+        entry.settings.add(Setting.select("SORT", KILLAURA_SORTS, new Binding() {
+            public double get() { return OpenMaverFeatures.getKillAuraSort(); }
+            public void set(double value) { OpenMaverFeatures.setKillAuraSort((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("SWITCH DELAY", 0.0F, 1000.0F, 50.0F, 0, " ms", new Binding() {
+            public double get() { return OpenMaverFeatures.getKillAuraSwitchDelay(); }
+            public void set(double value) { OpenMaverFeatures.setKillAuraSwitchDelay((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("THROUGH WALLS", new Binding() {
+            public double get() { return OpenMaverFeatures.isKillAuraThroughWalls() ? 1.0D : 0.0D; }
+            public void set(double value) { OpenMaverFeatures.setKillAuraThroughWalls(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("PLAYERS", new Binding() {
+            public double get() { return OpenMaverFeatures.isKillAuraPlayers() ? 1.0D : 0.0D; }
+            public void set(double value) { OpenMaverFeatures.setKillAuraPlayers(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("MOBS", new Binding() {
+            public double get() { return OpenMaverFeatures.isKillAuraMobs() ? 1.0D : 0.0D; }
+            public void set(double value) { OpenMaverFeatures.setKillAuraMobs(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("ANIMALS", new Binding() {
+            public double get() { return OpenMaverFeatures.isKillAuraAnimals() ? 1.0D : 0.0D; }
+            public void set(double value) { OpenMaverFeatures.setKillAuraAnimals(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("ROTATE", new Binding() {
+            public double get() { return OpenMaverFeatures.isKillAuraRotate() ? 1.0D : 0.0D; }
+            public void set(double value) { OpenMaverFeatures.setKillAuraRotate(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("SMOOTH", 0.05F, 1.0F, 0.05F, 2, "", new Binding() {
+            public double get() { return OpenMaverFeatures.getKillAuraSmoothing(); }
+            public void set(double value) { OpenMaverFeatures.setKillAuraSmoothing((float) value); }
+        }));
+        entry.settings.add(Setting.check("REQUIRE PRESS", new Binding() {
+            public double get() { return OpenMaverFeatures.isKillAuraRequirePress() ? 1.0D : 0.0D; }
+            public void set(double value) { OpenMaverFeatures.setKillAuraRequirePress(value > 0.5D); }
         }));
     }
 
@@ -969,6 +1129,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             drawStatsPage(font, x, y, w, h);
         } else if ("configs".equals(systemPage)) {
             drawConfigsPage(font, x, y, w, h);
+        } else if ("wallpaper".equals(systemPage)) {
+            drawWallpaperPage(font, x, y, w, h);
         } else {
             drawSettingsPage(font, x, y, w, h);
         }
@@ -1082,6 +1244,221 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         drawSettingsRow(font, x, y + rowH + gap, w, rowH, 1, "DEBUG LOG");
         drawSettingsRow(font, x, y + (rowH + gap) * 2, w, rowH, 2, "BYPASS PROFILE");
         drawSettingsRow(font, x, y + (rowH + gap) * 3, w, rowH, 3, "GUI KEY");
+    }
+
+    // ------------------------------------------------------------------
+    // 壁纸设置页
+    // ------------------------------------------------------------------
+
+    private int wallpaperRowH() {
+        int h = panelH - HEADER_H - FOOTER_H - 16;
+        return clampInt((h - 96) / 7, 24, 42);
+    }
+
+    private int wallpaperRowGap() {
+        return 6;
+    }
+
+    private int wallpaperListTop() {
+        int y = panelY + HEADER_H + 8;
+        return y + 5 * (wallpaperRowH() + wallpaperRowGap()) + 10;
+    }
+
+    private int wallpaperListBottom() {
+        return panelY + panelH - FOOTER_H - 8;
+    }
+
+    private int wallpaperBlurRowY() {
+        int y = panelY + HEADER_H + 8;
+        return y + 4 * (wallpaperRowH() + wallpaperRowGap());
+    }
+
+    private int wallpaperBlurBarX() {
+        return listX + Math.round(listW * 0.40F);
+    }
+
+    private int wallpaperBlurBarW() {
+        return Math.max(56, listX + listW - 52 - wallpaperBlurBarX());
+    }
+
+    private int wallpaperBlurBarY() {
+        return wallpaperBlurRowY() + wallpaperRowH() / 2 - 2;
+    }
+
+    private int wallpaperFileRowH() {
+        int height = Math.max(1, wallpaperListBottom() - wallpaperListTop() - 18);
+        return clampInt(height / 4, 24, 34);
+    }
+
+    private void clampWallpaperScroll(int fileCount) {
+        int visibleHeight = Math.max(1, wallpaperListBottom() - wallpaperListTop() - 18);
+        int content = fileCount * wallpaperFileRowH();
+        int max = Math.max(0, content - visibleHeight);
+        wallpaperScroll = Math.max(0, Math.min(max, wallpaperScroll));
+    }
+
+    private void drawWallpaperPage(FontRenderer font, int x, int y, int w, int h) {
+        int rowH = wallpaperRowH();
+        int gap = wallpaperRowGap();
+        drawWallpaperRow(font, x, y, w, rowH, 0, "MODE",
+                MaverWallpaper.getModeName(), false);
+        drawWallpaperRow(font, x, y + rowH + gap, w, rowH, 1, "FIT",
+                MaverWallpaper.getFitName(), false);
+        drawWallpaperRow(font, x, y + (rowH + gap) * 2, w, rowH, 2, "SOURCE",
+                MaverWallpaper.getDisplayName(), MaverWallpaper.isBuiltIn());
+        drawWallpaperRow(font, x, y + (rowH + gap) * 3, w, rowH, 3, "FOLDER",
+                "OPEN", false);
+        drawWallpaperBlurRow(font, x, wallpaperBlurRowY(), w, rowH);
+
+        int listTop = wallpaperListTop();
+        int listBottom = wallpaperListBottom();
+        int listHeight = Math.max(1, listBottom - listTop);
+        roundRect(x, listTop, w, listHeight, 8, withAlpha(0xFFFFFF, 0x08));
+        roundRect(x, listTop + 2, 2, listHeight - 4, 1, withAlpha(ACCENT, 0x55));
+        micro(font, "WALLPAPERS", x + 12, listTop + 5, FAINT);
+        String hint = "PNG / JPG / GIF";
+        micro(font, hint, x + w - 12 - microWidth(font, hint), listTop + 5, 0xFF596272);
+
+        List<File> files = MaverWallpaper.listWallpapers();
+        clampWallpaperScroll(files.size());
+        int fileRowH = wallpaperFileRowH();
+        int rowTop = listTop + 16 - wallpaperScroll;
+        pushScissor(x, listTop + 14, w, Math.max(1, listHeight - 14));
+        for (int i = 0; i < files.size(); i++) {
+            if (rowTop + fileRowH > listTop + 14 && rowTop < listBottom) {
+                drawWallpaperFileRow(font, x, rowTop, w, fileRowH, files.get(i));
+            }
+            rowTop += fileRowH;
+        }
+        popScissor();
+
+        if (files.isEmpty()) {
+            String empty = "Drop images into " + MaverWallpaper.getWallpaperFolderDisplay();
+            micro(font, ellipsizeMicro(font, empty, w - 28), x + 14, listTop + 26,
+                    0xFF7C8798);
+            micro(font, "Then reopen this page / restart the client.", x + 14,
+                    listTop + 40, 0xFF596272);
+        }
+    }
+
+    private void drawWallpaperRow(FontRenderer font, int x, int y, int w, int rowH,
+            int index, String label, String value, boolean active) {
+        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
+        boolean hovered = isHovered(lastMouseX, lastMouseY, x, y, w, rowH);
+        ControlAnim anim = control("wallrow:" + index, hovered, active, now);
+        float on = anim.active;
+        float hover = anim.hover * (1.0F - on * 0.5F);
+
+        roundRect(x, y, w, rowH, 8,
+                withAlpha(active ? ACCENT : 0xFFFFFF,
+                        Math.round((active ? 0x11 : 0x08) + 0x07 * hover)));
+        roundRect(x, y + 2, 2, rowH - 4, 1,
+                withAlpha(ACCENT, Math.round((active ? 0x88 : 0x44) + 0x40 * hover)));
+        if (anim.press > 0.01F) {
+            roundRect(x, y, w, rowH, 8,
+                    withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
+        }
+        hud(font, label, x + 14, y + (rowH - 11) / 2 + 2,
+                blendColor(TEXT, 0xFFFFFFFF, hover * 0.6F));
+
+        int right = x + w - 14;
+        String shown = ellipsizeMicro(font, value, Math.max(40, w / 2));
+        int pillW = microWidth(font, shown) + 16;
+        int controlY = y + (rowH - 16) / 2;
+        roundRect(right - pillW, controlY, pillW, 16, 6,
+                withAlpha(active ? ACCENT : 0xFFFFFF,
+                        Math.round((active ? 0x20 : 0x10) + 0x0C * hover)));
+        micro(font, shown, right - pillW + 8, controlY + 4,
+                active ? withAlpha(ACCENT, 0xF0)
+                        : blendColor(TEXT_2, TEXT, hover * 0.65F));
+    }
+
+    /** 壁纸页底部的背景模糊进度条。 */
+    private void drawWallpaperBlurRow(FontRenderer font, int x, int y, int w, int rowH) {
+        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
+        int barX = wallpaperBlurBarX();
+        int barY = wallpaperBlurBarY();
+        int barW = wallpaperBlurBarW();
+        boolean hovered = isHovered(lastMouseX, lastMouseY, x, y, w, rowH);
+        ControlAnim anim = control("wallrow:4", hovered || wallpaperBlurDragging,
+                wallpaperBlurDragging, now);
+        float hover = Math.max(anim.hover, wallpaperBlurDragging ? 1.0F : 0.0F);
+
+        roundRect(x, y, w, rowH, 8,
+                withAlpha(0xFFFFFF, Math.round(0x08 + 0x07 * hover)));
+        roundRect(x, y + 2, 2, rowH - 4, 1,
+                withAlpha(ACCENT, Math.round(0x44 + 0x40 * hover)));
+        hud(font, "BLUR", x + 14, y + (rowH - 11) / 2 + 2,
+                blendColor(TEXT, 0xFFFFFFFF, hover * 0.6F));
+
+        int trackH = Math.max(3, Math.round(4.0F * Math.min(1.2F, rowH / 30.0F)));
+        roundRect(barX, barY, barW, trackH, trackH / 2,
+                withAlpha(0xFFFFFF, Math.round(0x20 + 0x16 * hover)));
+        float value = MaverWallpaper.getBlurStrength();
+        int fill = Math.round(barW * value);
+        if (fill > 0) {
+            roundRect(barX, barY, fill, trackH, trackH / 2,
+                    withAlpha(ACCENT, Math.round(0xCC + 0x2A * hover)));
+            roundRect(barX, barY, fill, Math.max(1, trackH / 2),
+                    Math.max(1, trackH / 2), withAlpha(0xFFFFFF, 0x24));
+        }
+        int knob = clampInt(Math.round(7.0F + 2.0F * hover), 7, 10);
+        int knobX = barX + fill;
+        int knobY = barY + trackH / 2;
+        roundRect(knobX - knob / 2 - 2, knobY - knob / 2 - 2, knob + 4, knob + 4,
+                (knob + 4) / 2, withAlpha(ACCENT, Math.round(0x20 + 0x20 * hover)));
+        roundRect(knobX - knob / 2, knobY - knob / 2, knob, knob, knob / 2, ACCENT);
+
+        String percent = MaverWallpaper.getBlurPercent() + "%";
+        int textY = y + (rowH - 8) / 2;
+        micro(font, percent, x + w - 14 - microWidth(font, percent), textY,
+                blendColor(TEXT_2, TEXT, hover * 0.65F));
+    }
+
+    private void updateWallpaperBlur(int mouseX) {
+        int barX = wallpaperBlurBarX();
+        int barW = wallpaperBlurBarW();
+        if (barW <= 0) {
+            return;
+        }
+        float percent = (mouseX - barX) / (float) barW;
+        percent = Math.max(0.0F, Math.min(1.0F, percent));
+        MaverWallpaper.setBlurStrength(Math.round(percent * 100.0F) / 100.0F);
+    }
+
+    private void drawWallpaperFileRow(FontRenderer font, int x, int y, int w,
+            int rowH, File file) {
+        int rowY = y + 1;
+        int rowHeight = rowH - 2;
+        boolean selected = MaverWallpaper.isSelected(file);
+        boolean hovered = isHovered(lastMouseX, lastMouseY, x + 4, rowY, w - 8, rowHeight);
+        int fill = selected ? withAlpha(ACCENT, 0x16)
+                : withAlpha(0xFFFFFF, hovered ? 0x10 : 0x06);
+        roundRect(x + 4, rowY, w - 8, rowHeight, 6, fill);
+        if (selected) {
+            roundRect(x + 4, rowY + 4, 2, rowHeight - 8, 1, withAlpha(ACCENT, 0xCC));
+        }
+
+        String name = file.getName();
+        String label = ellipsizeHud(font, name, w - 84);
+        int textY = rowY + (rowHeight - 11) / 2 + 1;
+        hud(font, label, x + 13, textY,
+                selected ? TEXT : (hovered ? 0xFFE4EBF6 : TEXT_2));
+
+        int dot = name.lastIndexOf('.');
+        String extension = dot >= 0 && dot + 1 < name.length()
+                ? name.substring(dot + 1).toUpperCase(Locale.ROOT) : "IMG";
+        if (extension.length() > 5) {
+            extension = extension.substring(0, 5);
+        }
+        int badgeW = Math.max(26, microWidth(font, extension) + 12);
+        int badgeX = x + w - 12 - badgeW;
+        int badgeY = rowY + (rowHeight - 13) / 2;
+        roundRect(badgeX, badgeY, badgeW, 13, 5,
+                withAlpha("GIF".equals(extension) ? 0xBFE9FF : 0xFFFFFF,
+                        selected ? 0x28 : 0x12));
+        micro(font, extension, badgeX + (badgeW - microWidth(font, extension)) / 2,
+                badgeY + 3, selected ? withAlpha(ACCENT, 0xF0) : 0xFF8B96A6);
     }
 
     private void drawSettingsRow(FontRenderer font, int x, int y, int w, int rowH,
@@ -1782,6 +2159,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 selectSetting = null;
                 selectEntry = null;
                 scroll = 0;
+                wallpaperScroll = 0;
                 press("sysnav:" + systemPage);
                 return true;
             }
@@ -1790,7 +2168,14 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private void handleSystemPageClick(int mouseX, int mouseY, int button) {
-        if (!"settings".equals(systemPage) || button != 0) {
+        if (button != 0) {
+            return;
+        }
+        if ("wallpaper".equals(systemPage)) {
+            handleWallpaperPageClick(mouseX, mouseY);
+            return;
+        }
+        if (!"settings".equals(systemPage)) {
             return;
         }
         int x = listX;
@@ -1814,6 +2199,65 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             }
             press("sysrow:" + i);
             return;
+        }
+    }
+
+    private void handleWallpaperPageClick(int mouseX, int mouseY) {
+        int x = listX;
+        int y = panelY + HEADER_H + 8;
+        int w = listW;
+        int rowH = wallpaperRowH();
+        int gap = wallpaperRowGap();
+
+        for (int i = 0; i < 5; i++) {
+            int rowY = y + i * (rowH + gap);
+            if (!isHovered(mouseX, mouseY, x, rowY, w, rowH)) {
+                continue;
+            }
+            wallpaperBlurDragging = false;
+            if (i == 0) {
+                MaverWallpaper.nextMode();
+                wallpaperScroll = 0;
+            } else if (i == 1) {
+                MaverWallpaper.nextFit();
+            } else if (i == 2) {
+                // SOURCE 行点击恢复内置背景；选择具体文件请点下面的列表。
+                MaverWallpaper.setFilePath("");
+                wallpaperScroll = 0;
+            } else if (i == 3) {
+                MaverWallpaper.refreshFiles();
+                MaverWallpaper.openFolder();
+            } else {
+                // BLUR 进度条：按下立即跳到对应百分比，拖动由 drawScreen 持续更新。
+                wallpaperBlurDragging = true;
+                updateWallpaperBlur(mouseX);
+            }
+            press("wallrow:" + i);
+            return;
+        }
+
+        int listTop = wallpaperListTop();
+        int listBottom = wallpaperListBottom();
+        if (!isHovered(mouseX, mouseY, x, listTop + 14, w,
+                Math.max(1, listBottom - listTop - 14))) {
+            return;
+        }
+        List<File> files = MaverWallpaper.listWallpapers();
+        clampWallpaperScroll(files.size());
+        int fileRowH = wallpaperFileRowH();
+        int rowTop = listTop + 16 - wallpaperScroll;
+        for (int i = 0; i < files.size(); i++) {
+            if (isHovered(mouseX, mouseY, x + 4, rowTop + 1, w - 8, fileRowH - 2)) {
+                File file = files.get(i);
+                MaverWallpaper.setFilePath(file.getName());
+                if (MaverWallpaper.getMode() == MaverWallpaper.MODE_PANORAMA) {
+                    MaverWallpaper.setMode(MaverWallpaper.isAnimatedFile(file.getName())
+                            ? MaverWallpaper.MODE_DYNAMIC : MaverWallpaper.MODE_STATIC);
+                }
+                press("wallfile:" + file.getName());
+                return;
+            }
+            rowTop += fileRowH;
         }
     }
 
@@ -1974,6 +2418,15 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 int max = Math.max(0, contentHeight(visible) - listH);
                 scroll = Math.max(0, Math.min(max, scroll - Integer.signum(wheel) * 18));
                 selectSetting = null;
+            } else if ("wallpaper".equals(systemPage)
+                    && isHovered(lastMouseX, lastMouseY, listX, wallpaperListTop(),
+                            listW, Math.max(1, wallpaperListBottom() - wallpaperListTop()))) {
+                int visibleHeight = Math.max(1, wallpaperListBottom()
+                        - wallpaperListTop() - 18);
+                int content = MaverWallpaper.listWallpapers().size() * wallpaperFileRowH();
+                int max = Math.max(0, content - visibleHeight);
+                wallpaperScroll = Math.max(0,
+                        Math.min(max, wallpaperScroll - Integer.signum(wheel) * 18));
             }
         } catch (Throwable t) {
             failed = true;
@@ -2587,6 +3040,17 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             line(x + 3.4F, y + 9, x + 3.4F, y + 6, color);
             line(x + 5.8F, y + 9, x + 5.8F, y + 3.6F, color);
             line(x + 8.2F, y + 9, x + 8.2F, y + 6.6F, color);
+        } else if ("wallpaper".equals(id)) {
+            // 相框 + 小山：壁纸页入口。
+            line(x, y + 1, x + 10, y + 1, color);
+            line(x + 10, y + 1, x + 10, y + 9, color);
+            line(x + 10, y + 9, x, y + 9, color);
+            line(x, y + 9, x, y + 1, color);
+            line(x + 2, y + 7, x + 4.5F, y + 4.2F, color);
+            line(x + 4.5F, y + 4.2F, x + 6.6F, y + 6.4F, color);
+            line(x + 6.6F, y + 6.4F, x + 8.2F, y + 4.8F, color);
+            line(x + 8.2F, y + 4.8F, x + 8.2F, y + 7, color);
+            fillCircle(x + 7, y + 3, 1, color);
         } else {
             float cx = x + 5.0F;
             float cy = y + 5.0F;

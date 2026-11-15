@@ -84,7 +84,6 @@ public final class GuiMaverMainMenu extends GuiScreen {
     private static final String TITLE = "Maver";
     private static final String SUBTITLE = "A Open Src Cheat Client";
 
-    private static final int PANORAMA_GRID = 6;
     /**
      * 每个全景面比单位立方体略大。原版是在 256×256 的 FBO 里画完再裁切缩放，
      * 直接画到全屏时单位立方体覆盖不到 120° 视场的边缘，底部会出现一条硬缝。
@@ -109,6 +108,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
     private static final int ACTION_CONFIGS = 4;
     private static final int ACTION_OPTIONS = 5;
     private static final int ACTION_QUIT = 6;
+    private static final int ACTION_WALLPAPER = 7;
 
     private static final int DROPDOWN_NONE = 0;
     private static final int DROPDOWN_HAMBURGER = 1;
@@ -116,11 +116,11 @@ public final class GuiMaverMainMenu extends GuiScreen {
 
     private static final int[] HAMBURGER_ACTIONS = {
         ACTION_SINGLEPLAYER, ACTION_MULTIPLAYER, ACTION_CLIENT,
-        ACTION_CONFIGS, ACTION_OPTIONS, ACTION_QUIT
+        ACTION_WALLPAPER, ACTION_CONFIGS, ACTION_OPTIONS, ACTION_QUIT
     };
     private static final String[] HAMBURGER_LABELS = {
         "Singleplayer", "Multiplayer", "Client Settings",
-        "Configs", "Options", "Quit Game"
+        "Wallpaper", "Configs", "Options", "Quit Game"
     };
 
     private static final int[] ACCOUNT_ACTIONS = {
@@ -751,16 +751,44 @@ public final class GuiMaverMainMenu extends GuiScreen {
     }
 
     private void drawBackground() {
+        boolean custom = false;
         try {
-            drawPanorama();
-            // 项目现有的毛玻璃实现：抓取刚画好的全景图并做两遍高斯模糊。
-            // 原版在最终合成时会水平翻转全景图，这里通过 drawMirrored 保持一致。
-            GuiBlur.beginFrame(width, height, 1);
-            GuiBlur.drawMirrored(0, 0, width, height, 0.0F, 0x0A0F16, 0.22F, 1.0F);
+            // 自定义壁纸（静态图片 / GIF / 内置动态背景）直接铺满全屏；
+            // 没启用时继续走原版全景图 + 毛玻璃。
+            custom = MaverWallpaper.draw(mc, width, height);
         } catch (Throwable ignored) {
-            // 模糊不可用时下面的深色渐变仍然保证界面可读。
+            custom = false;
         }
-        drawVerticalGradient(0, 0, width, height, 0x66080B12, 0xA0080B12);
+        float blur = MaverWallpaper.getBlurStrength();
+        if (!custom) {
+            try {
+                drawPanorama();
+                if (blur > 0.01F) {
+                    // 项目现有的毛玻璃实现：抓取刚画好的全景图做高斯模糊。
+                    // 原版在最终合成时会水平翻转全景图，这里通过 drawMirrored 保持一致。
+                    GuiBlur.beginFrame(width, height, 1);
+                    GuiBlur.drawMirrored(0, 0, width, height, 0.0F,
+                            0x0A0F16, 0.22F, 1.0F, blur);
+                }
+            } catch (Throwable ignored) {
+                // 模糊不可用时下面的深色渐变仍然保证界面可读。
+            }
+        } else if (blur > 0.01F) {
+            try {
+                // 自定义壁纸不镜像；模糊强度与底部的进度条保持一致。
+                GuiBlur.beginFrame(width, height, 1);
+                GuiBlur.draw(0, 0, width, height, 0.0F,
+                        0x0A0F16, 0.18F, 1.0F, blur);
+            } catch (Throwable ignored) {
+                // 模糊不可用时直接显示清晰的壁纸。
+            }
+        }
+        if (custom) {
+            // 自定义壁纸保留更多画面细节，只压一层较轻的暗色蒙版。
+            drawVerticalGradient(0, 0, width, height, 0x55080B12, 0x94080B12);
+        } else {
+            drawVerticalGradient(0, 0, width, height, 0x66080B12, 0xA0080B12);
+        }
         // 顶部和底部再压一层，让标题与按钮从背景里浮出来。
         drawVerticalGradient(0, 0, width, Math.max(1, height / 4), 0x5003070C, 0x0003070C);
         drawVerticalGradient(0, height - Math.max(1, height / 4), width,
@@ -799,51 +827,40 @@ public final class GuiMaverMainMenu extends GuiScreen {
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             GlColor.restore();
 
-            for (int layer = 0; layer < PANORAMA_GRID * PANORAMA_GRID; layer++) {
-                float offsetX = ((layer % PANORAMA_GRID) / (float) PANORAMA_GRID - 0.5F)
-                        / 64.0F;
-                float offsetY = ((layer / PANORAMA_GRID) / (float) PANORAMA_GRID - 0.5F)
-                        / 64.0F;
+            // 只绘制一次全景立方体。之前叠加 36 层不同角度的半透明副本会在
+            // 模糊度调到 0 时仍然显得发糊；模糊交给 GuiBlur 按滑块强度处理。
+            GL11.glRotatef((float) Math.sin(ticks / 400.0D) * 25.0F + 20.0F,
+                    1.0F, 0.0F, 0.0F);
+            GL11.glRotatef(-ticks * 0.1F, 0.0F, 1.0F, 0.0F);
+
+            for (int face = 0; face < 6; face++) {
                 GL11.glPushMatrix();
                 try {
-                    GL11.glTranslatef(offsetX, offsetY, 0.0F);
-                    GL11.glRotatef((float) Math.sin(ticks / 400.0D) * 25.0F + 20.0F,
-                            1.0F, 0.0F, 0.0F);
-                    GL11.glRotatef(-ticks * 0.1F, 0.0F, 1.0F, 0.0F);
-
-                    for (int face = 0; face < 6; face++) {
-                        GL11.glPushMatrix();
-                        try {
-                            if (face == 1) {
-                                GL11.glRotatef(90.0F, 0.0F, 1.0F, 0.0F);
-                            } else if (face == 2) {
-                                GL11.glRotatef(180.0F, 0.0F, 1.0F, 0.0F);
-                            } else if (face == 3) {
-                                GL11.glRotatef(-90.0F, 0.0F, 1.0F, 0.0F);
-                            } else if (face == 4) {
-                                GL11.glRotatef(90.0F, 1.0F, 0.0F, 0.0F);
-                            } else if (face == 5) {
-                                GL11.glRotatef(-90.0F, 1.0F, 0.0F, 0.0F);
-                            }
-
-                            GlStateManager.bindTexture(0);
-                            mc.getTextureManager().bindTexture(PANORAMA[face]);
-                            float alpha = 1.0F / (layer + 1);
-                            GL11.glBegin(GL11.GL_QUADS);
-                            setVertexColor(0xFFFFFFFF, alpha);
-                            GL11.glTexCoord2f(0.0F, 0.0F);
-                            GL11.glVertex3f(-PANORAMA_SCALE, -PANORAMA_SCALE, 1.0F);
-                            GL11.glTexCoord2f(1.0F, 0.0F);
-                            GL11.glVertex3f(PANORAMA_SCALE, -PANORAMA_SCALE, 1.0F);
-                            GL11.glTexCoord2f(1.0F, 1.0F);
-                            GL11.glVertex3f(PANORAMA_SCALE, PANORAMA_SCALE, 1.0F);
-                            GL11.glTexCoord2f(0.0F, 1.0F);
-                            GL11.glVertex3f(-PANORAMA_SCALE, PANORAMA_SCALE, 1.0F);
-                            GL11.glEnd();
-                        } finally {
-                            GL11.glPopMatrix();
-                        }
+                    if (face == 1) {
+                        GL11.glRotatef(90.0F, 0.0F, 1.0F, 0.0F);
+                    } else if (face == 2) {
+                        GL11.glRotatef(180.0F, 0.0F, 1.0F, 0.0F);
+                    } else if (face == 3) {
+                        GL11.glRotatef(-90.0F, 0.0F, 1.0F, 0.0F);
+                    } else if (face == 4) {
+                        GL11.glRotatef(90.0F, 1.0F, 0.0F, 0.0F);
+                    } else if (face == 5) {
+                        GL11.glRotatef(-90.0F, 1.0F, 0.0F, 0.0F);
                     }
+
+                    GlStateManager.bindTexture(0);
+                    mc.getTextureManager().bindTexture(PANORAMA[face]);
+                    GL11.glBegin(GL11.GL_QUADS);
+                    setVertexColor(0xFFFFFFFF, 1.0F);
+                    GL11.glTexCoord2f(0.0F, 0.0F);
+                    GL11.glVertex3f(-PANORAMA_SCALE, -PANORAMA_SCALE, 1.0F);
+                    GL11.glTexCoord2f(1.0F, 0.0F);
+                    GL11.glVertex3f(PANORAMA_SCALE, -PANORAMA_SCALE, 1.0F);
+                    GL11.glTexCoord2f(1.0F, 1.0F);
+                    GL11.glVertex3f(PANORAMA_SCALE, PANORAMA_SCALE, 1.0F);
+                    GL11.glTexCoord2f(0.0F, 1.0F);
+                    GL11.glVertex3f(-PANORAMA_SCALE, PANORAMA_SCALE, 1.0F);
+                    GL11.glEnd();
                 } finally {
                     GL11.glPopMatrix();
                 }
@@ -1192,6 +1209,8 @@ public final class GuiMaverMainMenu extends GuiScreen {
                 mc.displayGuiScreen(new GuiMultiplayer(this));
             } else if (action == ACTION_CLIENT) {
                 openClientGui(null);
+            } else if (action == ACTION_WALLPAPER) {
+                openClientGui("wallpaper");
             } else if (action == ACTION_CONFIGS) {
                 openClientGui("configs");
             } else if (action == ACTION_OPTIONS) {

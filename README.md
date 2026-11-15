@@ -3,7 +3,7 @@
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
 > 说明：本仓库包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接）
-> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、Reach、Criticals、GodBridge、FastPlace、FakePlayer、Target HUD、Player X-Ray、FPS / CPS 统计）
+> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、FPS / CPS 统计）
 > 以及 `legit / balanced / aggressive` 三档 Grim 对测 profile。
 > 请仅在你拥有或获得明确授权的服务器上进行测试。
 
@@ -34,7 +34,8 @@ OpenMaver/
 │       ├── Module.java            # 模块抽象基类（按包名约定推导配置路径）
 │       ├── ModuleManager.java     # 模块注册表 + 统一驱动
 │       ├── movement/AutoSprint.java  # 示例模块（链路验证器）
-│       ├── movement/GodBridge.java # 神桥开关（MC 侧逻辑在 OpenMaverFeatures）
+│       ├── combat/KillAura.java  # 自动攻击开关（MC 侧逻辑在 OpenMaverFeatures）
+│       ├── movement/Scaffold.java # 自动搭路/神桥开关（MC 侧逻辑在 ScaffoldFeature）
 │       ├── player/FastPlace.java  # 快速右键开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── render/TargetHud.java  # 目标信息面板开关（MC 侧绘制在 mc/TargetHud）
 │       ├── render/PlayerXray.java # 玩家透视开关（MC 侧绘制在 OpenMaverFeatures）
@@ -51,6 +52,7 @@ OpenMaver/
 │   ├── StatsHud.java              # 左上角 FPS 胶囊 + CPS 小方块（灰色毛玻璃）
 │   ├── GuiOpenMaverClickGui.java  # 游戏内 ClickGUI（分类 / 搜索 / 展开设置）
 │   ├── GuiMaverMainMenu.java      # Badlion 风格主菜单（Logo / 按钮 / 账号 / 快捷菜单）
+│   ├── MaverWallpaper.java        # 主菜单壁纸（静态图片 / GIF / 内置动态背景）
 │   └── MaverLogo.java             # 打包的 Maver Logo 纹理绘制
 ├── mcstubs/                       # 编译 mc/ 用的 API stub（仅编译期，不进 jar）
 ├── tools/McpReobf.java            # MCP -> SRG reobf（Forge 1.8.9 运行期需要）
@@ -245,11 +247,13 @@ java -Djava.library.path=build/lib \
   `A Open Src Cheat Client` 副标题、
   Singleplayer / Multiplayer / Client Settings / Configs / Options / Quit Game 按钮，
   右上角账号胶囊（从微软 / Mojang 官方皮肤服务获取的账号头像 + 用户名）与左上角快捷菜单。
-  Client Settings / Configs 会直接打开对应页面的 ClickGUI。
+  Client Settings / Configs 会直接打开对应页面的 ClickGUI；快捷菜单里的 **Wallpaper**
+  会直接打开壁纸设置页。背景可以替换成静态图片、动态 GIF 或内置动态渐变，
+  详见下面「主菜单壁纸」。
 - **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关。
   纯灰色面板 + 中性灰描边，全部强调色统一为白色；左侧 Combat / Movement / Render /
-  Player / Misc 分类栏，以及 SYSTEM → Configs / Statistics / Settings 页面
-  （配置概览、模块统计与客户端设置），顶部搜索（`Ctrl+K`）、ALL / ENABLED /
+  Player / Misc 分类栏，以及 SYSTEM → Configs / Statistics / Wallpaper / Settings 页面
+  （配置概览、模块统计、主菜单壁纸与客户端设置），顶部搜索（`Ctrl+K`）、ALL / ENABLED /
   DISABLED 筛选与排序；点击行展开设置在
   `Gui.drawRect` 自绘的滑块 / 下拉 / 复选框中直接调参。分类、SYSTEM 入口、筛选页签、
   排序、模块行、搜索框、开关与全部设置控件都有统一的悬停 / 激活 / 按压过渡，
@@ -257,6 +261,32 @@ java -Djava.library.path=build/lib \
   `ModuleManager`，Aim Assist、Player ESP、Grim Bypass、AutoSprint、AutoClicker、Reach、
   Criticals、FastPlace、Target HUD 与 Player X-Ray 的设置直接绑定 `OpenMaverFeatures`，参数写入
   `config/openmaver.properties`（拖拽结束与关闭 GUI 时落盘）。
+- **主菜单壁纸** `mc/MaverWallpaper.java`：ClickGUI 的 **SYSTEM → Wallpaper**
+  （或主菜单左上角快捷菜单的 **Wallpaper**）可以切换开始菜单背景：
+
+  | 模式 | 效果 |
+  |---|---|
+  | `PANORAMA` | 原版旋转全景图 + 毛玻璃（默认） |
+  | `STATIC` | 静态 PNG / JPG / BMP 图片；GIF 只显示第一帧 |
+  | `DYNAMIC` | 动态 GIF 循环播放；普通图片做缓慢平移 / 缩放；未选文件时使用内置动态极光渐变 |
+
+  把图片放到 `config/openmaver/wallpapers/`（支持 `.png` / `.jpg` / `.jpeg` / `.bmp` / `.gif`），
+  然后在 Wallpaper 页选择文件即可。`FIT` 可设为 `COVER`（裁切铺满）、`CONTAIN`（完整显示、留黑边）
+  或 `STRETCH`（拉伸铺满）。GIF 会在后台线程解码并限制到 720px 边长 / 64 帧，避免大文件拖慢主菜单。
+  主菜单的模糊度在 ClickGUI 的 **SYSTEM → Wallpaper → BLUR** 进度条中调整
+  （0% 完全清晰，100% 最模糊）；自定义壁纸同样生效，拖动结束后自动保存。
+  配置写入 `config/openmaver.properties`：
+
+  ```properties
+  menu.wallpaper.mode=static          # panorama | static | dynamic
+  menu.wallpaper.file=my-wallpaper.png
+  menu.wallpaper.fit=cover            # cover | contain | stretch
+  menu.wallpaper.blur=35              # 背景模糊度 0 ~ 100
+  ```
+
+  `menu.wallpaper.file` 也支持绝对路径和 `~/` 开头的路径；相对路径优先在
+  `config/openmaver/wallpapers/` 下查找。壁纸解码失败或文件被删除时会自动回退到内置渐变背景，
+  不会让主菜单黑屏。壁纸目录也可以通过 `-Dopenmaver.wallpapers=<dir>` 覆盖。
 - **模块键位**：`config/default.jsonc` 中的 `<分类>.<模块>.key`（如
   `movement.autosprint.key = "V"`）会在游戏内绑定到该键；键位提示不再显示在 HUD 上。
 
@@ -292,11 +322,11 @@ bypass.profile=balanced     # legit | balanced | aggressive
 debug.enabled=false         # true 时写入 logs/openmaver-debug.log
 ```
 
-| profile | Reach 实际上限 | Aim 单 tick 上限 | AutoClicker | FastPlace / GodBridge fastPlace | Placement rotation |
+| profile | Reach 实际上限 | Aim 单 tick 上限 | AutoClicker / KillAura | FastPlace | Placement rotation |
 |---|---|---|---|---|---|
 | `legit` | 3.00（Grim 扩张箱） | yaw 18° / pitch 12° | 使用配置 CPS（1~20），抖动+停顿 | 完全不改 `rightClickDelayTimer` | 仅真实准星 |
-| `balanced`（默认） | 3.00（Grim 扩张箱） | yaw 35° / pitch 20° | 使用配置 CPS（1~20），抖动+停顿 | FastPlace / 右键点击保持原版 4 tick；GodBridge 不压 0 | 仅真实准星 |
-| `aggressive` | ≤3.30（仅对比测试） | 上限放宽 | 使用配置 CPS（1~20） | 允许压到 0 | 允许 auto-rotate / packetRotation |
+| `balanced`（默认） | 3.00（Grim 扩张箱） | yaw 35° / pitch 20° | 使用配置 CPS（1~20），抖动+停顿 | FastPlace / 右键点击保持原版 4 tick | Scaffold 直接走 onPlayerRightClick |
+| `aggressive` | ≤3.30（仅对比测试） | 上限放宽 | 使用配置 CPS（1~20） | 允许压到 0 | 同左（Scaffold 始终直接发包） |
 
 > `bypass.enabled=false` 会恢复旧的对比行为（Reach 最高 5.9），**不要**在正式
 > 对测中关闭。`aggressive` 会主动越过 Grim 的 Reach 阈值，只用于记录 flag 差异。
@@ -311,10 +341,12 @@ debug.enabled=false         # true 时写入 logs/openmaver-debug.log
   rotation 字段。
 - `aim/AimModulo360`：`|deltaYaw| > 320` 会 flag；所有自动 yaw 都 wrap 到
   `[-180, 180)`，并且单 tick 限速。
-- `scaffolding/RotationPlace`：C08 使用服务端已收到的 yaw/pitch 做 ray trace；
-  因此 `legit/balanced` 下自动搭路只使用真实准星，不再“只改客户端视角”。
-- `timer/Timer`：每个 tick 包固定按 50ms 计费；本项目在安全 profile 下不额外发
-  `C05PacketPlayerLook`。
+- `scaffolding/RotationPlace`：C08 使用服务端已收到的 yaw/pitch 做 ray trace，
+  而 1.8 的 C08 在 C03 之前到达服务端，因此校验时只有**上一 tick**的 rotation。
+  Scaffold 现在把 aim 写进本 tick 正常的 C03，放置延迟到下一 tick，用同一个
+  aim 重新做 ray trace，不再补发 C05。
+- `timer/Timer`：每个 tick 包固定按 50ms 计费；Scaffold 不再额外发
+  `C05PacketPlayerLook`，每 tick 只有一条 C03 族包。
 - `multiactions/*`：使用物品时攻击/挥击、同 tick 方块+实体交互、移动中开背包都会
   flag；AutoClicker/Reach 已加入互斥与使用物品保护。
 
@@ -325,37 +357,64 @@ IO 失败只记录一次并自动停用 debug。
 完整审计、Grim commit、checks.yml 对照项与对测记录模板见
 `design/GRIM_BYPASS_HANDOFF.md`。
 
-### GodBridge 神桥
+### Scaffold 自动搭路（Myau 全量行为移植）
 
-- 配置路径：`movement.godbridge`，默认关闭，默认键位 **B**。
+- 配置路径：`movement.scaffold`，默认关闭，默认键位 **B**。
+- 由原 `GodBridge` 重命名而来；当前实现按 `OpenMyau-Fix` 的 `Scaffold` **逐项移植**：
+  - 7 种旋转模式：`NONE / DEFAULT / BACKWARDS / SIDEWAYS / OFFSET / SNAP / HYPIXEL`
+  - `MoveFix`、`Sprint`、`Ground/Air/Speed Motion`
+  - `Tower`：`VANILLA / EXTRA / HYPIXEL`，以及 `KeepY`：`VANILLA / EXTRA / TELLY / EXTRATELLY`
+  - Telly 起步/常规旋转速度、`AngleDiff`、`Candiffplace`
+  - `MultiPlace`、`SafeWalk`、`Swing`、`ItemSpoof`、`BlockCounter`
+  - 自动切换快捷栏方块、方块数量提示
+  - Scaffold 开启期间接管左/右键和挖方块，避免原版抢占放置
+- 与 Myau 的差异：OpenMaver 没有 Mixin/EventManager，旋转、Strafe、SafeWalk、
+  输入拦截用 ClientTickEvent + 反射近似。
+  - 静默旋转采用 **tick 内换视角**：`ScaffoldMovementInput` 在原版
+    `updatePlayerMoveState()` 之后把 aim 写进 `rotationYaw/Pitch`，本 tick 的 C03
+    自然携带；ClientTickEvent.END（渲染之前）再恢复相机角度。第一人称视角不变，
+    F5 身体/头保留服务端最后收到的 aim。
+  - `MoveFix` 在同一个 hook 里按 Myau 的 `fixStrafe` 把 `movementInput` 吸附到
+    相对 aim 的 8 个整数方向之一，WASD 的世界方向仍然跟相机。**不能连续旋转**，
+    否则客户端会以任意角度移动，Grim 的 `Simulation` 只能尝试 8 个整数方向，
+    会产生 `.002 ~ .03` 的持续位移误差。
+  - 放置目标选择：支撑方块必须与目标空气格直接相邻，并对每个候选面做真实
+    `rayTrace` 校验；被脚下方块挡住的侧面会自动换下一个支撑面（以前只取“最近
+    的支撑方块”，平桥上前方一格经常因为侧面被顶面遮挡而放置失败）。
+  - 放置节奏：玩家还站在实心方块上时，用**下一 tick 的预测位置**提前把 aim 写进
+    C03，下一 tick 开头再用同一角度 flush，因此走/跑/转头都能跟上。预测优先使用
+    当前实际速度（惯性），快速转头时不会再按新按键方向把目标格算到错误一侧；
+    瞄准点优先取面中心，flush 失败时会用当前眼睛重算 aim 并重排一次。
+  - 在方块边缘原地转头时，如果距离相机方向的边缘 ≤0.55 格，会把相机前方一格
+    也作为目标，因此在边缘停下转身也能继续铺路。
+  - 对 Grim：开启 bypass 时不即时放置、不在 flush 时换角度/换 hitVec（否则会触发
+    `PositionPlace`/`RotationPlace`），只保留“预测 aim → 下一 tick 同一角度放置”；
+    玩家已经踏空时也排队一 tick。
+  - `SafeWalk` 改为原版潜行防边缘的收缩步长，不再在离边缘 0.45 格时清空
+    `motionX/Z`。**开启 bypass 时 SafeWalk 会自动禁用**，因为它直接改 motion，
+    是 `Simulation` 的主要来源。
 - 使用方式：
-  1. 手持可放置方块，按住 **Shift** 蹲在方块边缘；
-  2. 视角瞄准方块边缘，并按住 **D**（右平移）；
-  3. 松开 **Shift** 立即开始神桥，模块会按当前移动方向在脚下/前方铺路；
-  4. 神桥期间可以正常跳跃，或用 **A/D** 改变铺设方向；再次按下 **Shift** 停止。
-- 触发校验：蹲下、地面站立、按住 D、视线命中方块边缘（可在 ClickGUI 关闭
-  `REQUIRE EDGE AIM` 放宽为“瞄准任意方块”）。
-- 默认 `LEGIT AIM` 开启：模块不会自动转视角，只会在你真实准星已经命中
-  可放置支撑面时右键；请保持准星在方块边缘，桥速接近正常玩家。
-- 稳定性：每 tick 最多放置一次，GUI/聊天/死亡/空手/切换物品时立即停止；
-  是否压缩 `rightClickDelayTimer` 由 profile 决定，停止时恢复原版 4 tick。
-- 设置项（ClickGUI 中展开 GodBridge）：
-  - `DELAY`：`godbridge.delayTicks`，0~4 tick，默认 `0`。
-  - `FAST PLACE`：`godbridge.fastPlace`，默认 `true`；仅在 `aggressive` profile
-    或关闭 bypass 时才会把冷却压到 0。`legit/balanced` 下等待原版冷却自然归零。
-  - `REQUIRE EDGE AIM`：`godbridge.requireEdgeAim`，默认 `true`。
-  - `AUTO ROTATE`：`godbridge.autoRotate`，默认 `true`。`legit/balanced` 下
-    自动旋转会被抑制，只使用真实准星；`aggressive` 才允许临时改视角并恢复。
-  - `LEGIT AIM`：`godbridge.legitAim`，默认 `true`，只使用玩家真实准星放置，
-    不自动转视角、不补发飞行包；对 Grim 最干净。
-  - `PACKET ROTATION`：`godbridge.packetRotation`，默认 `false`，实验性模式，
-    在 C08 前补发一次 `C05PacketPlayerLook`（不再发 placement 后的重复 C05）。
-    `legit/balanced` 下会被强制抑制；只有 `aggressive` 才实际发送。额外 flying packet
-    会被 Grim 的 `Timer` 计数，也可能触发 `AimDuplicateLook` / `AimModulo360`，仅用于对比。
-- 实现说明：`design/GODBRIDGE_HANDOFF.md` 记录了状态机、放置顺序与反射/SRG 名称。
-- Grim 对测结论：C05 补发包虽然能让服务端在 C08 前看到旋转，但会直接触发
-  `Timer`，并可能触发 `AimDuplicateLook` / `AimModulo360`，因此默认关闭；
-  `legit/balanced` 建议保持 `LEGIT AIM`。
+  1. 手持可放置方块，正常行走、后退或起塔；
+  2. 默认 `rotations=DEFAULT` 会自动转向对角线/桥面方向；
+  3. `tower` 设为 `VANILLA/EXTRA/HYPIXEL` 后按住空格起塔；
+  4. `keepY` 用于在跳跃/起塔期间保持桥面高度；
+  5. 打开 GUI/聊天、死亡、空手时停止；关闭模块会恢复原快捷栏槽位。
+- 主要设置（ClickGUI 中展开 Scaffold，写入 `config/openmaver.properties`）：
+  - `ROTATIONS`：`scaffold.rotations`，默认 `DEFAULT`。
+  - `MOVE FIX`：`scaffold.moveFix`，默认 `SILENT`。
+  - `SPRINT`：`scaffold.sprint`，默认 `VANILLA`（保留冲刺；需要 Grim 对测可改回 `NONE`）。
+  - `GROUND/AIR/SPEED MOTION`：`scaffold.groundMotion/airMotion/speedMotion`，0~100%，默认 100。
+  - `KEEP Y ON PRESS`：`scaffold.keepYonPress`，默认 false。
+  - `MULTI PLACE` / `SAFE WALK` / `SWING` / `ITEM SPOOF` / `BLOCK COUNTER` / `CANDIFFPLACE`。
+  - `DELAY TICKS`：`scaffold.towerFlatTicks`，0~20 tick，默认 4。
+  - `ANGLE DIFF`：`scaffold.angleDiff`，0~180°，默认 50。
+  - `TELLY START/NORMAL MIN/MAX`：`scaffold.tellyStartRotMin/Max`、`scaffold.tellyNormalRotMin/Max`。
+  - `ROTATION SPEED`：`scaffold.rotationSpeed`，默认 `NORMAL`。
+  - `TOWER`：`scaffold.tower`，默认 `NONE`。
+  - `KEEP Y`：`scaffold.keepY`，默认 `NONE`。
+- 实现位置：`mc/ScaffoldFeature.java`（完整行为），`java/module/movement/Scaffold.java`
+  只负责模块开关；`OpenMaverFeatures.onTickStart()` 每 tick 驱动。
+- 实现说明：`design/SCAFFOLD_HANDOFF.md` 记录了状态机、旋转模式、Tower/KeepY 与反射/SRG 名称。
 
 ### FPS / CPS 统计 HUD
 
@@ -394,8 +453,12 @@ IO 失败只记录一次并自动停用 debug。
 
 - 配置路径：`render.playerxray`，默认关闭，默认键位 **J**。
 - 行为：每帧扫描 `World.loadedEntityList` 中的其他 `EntityPlayer`（排除自己与死亡玩家），
-  在 `range` 内关闭深度测试，通过 `RenderManager.renderEntitySimple` 渲染完整玩家模型，
+  在 `range` 内通过 `RenderManager.renderEntitySimple` 渲染完整玩家模型，
   因此可以穿墙看到玩家皮肤、装备和手持物品；模型外侧绘制 1.5px 描边。
+- 穿墙但保持模型完整：透视 pass 不直接关闭深度测试，而是两遍渲染——第一遍
+  `GL_ALWAYS` 只写模型自身深度（忽略墙体），第二遍 `GL_LEQUAL` 正常上色，
+  这样墙体挡不住玩家，玩家模型内部（头/身体/四肢/帽子层）仍保持正确的遮挡关系。
+  透视 pass 会临时清空自定义名，避免与原版名字标签重复绘制。
 - 颜色：描边颜色 `COLOR = Health`（默认）时按目标血量在绿 / 琥珀 / 红之间切换；
   也可固定为 Orange / Cyan / Violet / Red。皮肤模型本身保持原版材质颜色。
 - 设置项（ClickGUI 中展开 Player X-Ray）：
@@ -406,6 +469,27 @@ IO 失败只记录一次并自动停用 debug。
 - 实现说明：`mc/OpenMaverFeatures.renderPlayerXray()`，开关模块为
   `java/module/render/PlayerXray.java`。
 
+### Motion Blur 运动模糊
+
+- 配置路径：`render.motionblur`，默认关闭，默认键位 **M**。
+- 效果：转头、跑动时世界画面沿运动方向拉出方向性拖影（快速甩视角时边缘
+  拖得更长），移动停下后立刻恢复清晰。只使用当前帧，**不做历史帧累积**，
+  因此没有残影 / 双影 /“晕糊”的观感。HUD、ClickGUI、聊天栏不会被模糊。
+- 实现（`mc/MotionBlur.java`）：
+  - 把当前世界画面整帧拷贝到 **全分辨率纹理**，然后在一个全屏 pass 里沿
+    运动方向做 **12 次采样**，用固定抖动打散条带，再按 alpha 叠回主帧缓冲。
+  - 拖影由两部分合成：相机 yaw / pitch 角速度（大头靠近屏幕边缘的径向拖影，
+    小头为全屏统一位移）和玩家水平 / 前后移动速度（平移拖影 + zoom 拖影）。
+  - 角速度做 ~50ms 指数平滑，避免 20 TPS 下视角只在 tick 跳变造成的闪烁。
+  - 玩家静止时整条管线直接跳过：不抓帧、不跑 shader、不占显存带宽。
+  - 优先使用 `EXT_framebuffer_blit` 拷贝主帧缓冲；不支持时回退到
+    `glCopyTexSubImage2D`，两者都不可用时静默停用。
+- 设置项（ClickGUI 中展开 Motion Blur）：
+  - `STRENGTH`：`motionblur.strength`，0.05~1.0，默认 `0.70`；同时影响拖影
+    长度与模糊叠加强度，调低更清爽，调高更明显。
+- 实现说明：渲染挂在 `RenderWorldLastEvent` 之后（`OpenMaverClientHandler`），
+  开关模块为 `java/module/render/MotionBlur.java`，不依赖 Mixin，纯 Forge 事件可用。
+
 ### FastPlace 快速右键
 
 - 配置路径：`player.fastplace`，默认关闭，默认键位 **F**。
@@ -415,7 +499,7 @@ IO 失败只记录一次并自动停用 debug。
   - `legit`：完全不修改 `rightClickDelayTimer`。
   - `balanced`：不低于原版 **4 tick** 冷却。Matrix / Grim 的 `block.fastplace`
     按 C08 间隔判定，2~3 tick 的连续放置会稳定吃 flag，因此默认档位不再加速。
-    与 GodBridge 同时启用时仍会让位（不修改 timer）。
+    与 Scaffold 同时启用时仍会让位（不修改 timer）。
   - `aggressive` / 关闭 bypass：按 `DELAY` 设置，允许压到 0。
 - 设置项（ClickGUI 中展开 FastPlace）：
   - `DELAY`：`fastplace.delayTicks`，0~4 tick，默认 `4`。
@@ -577,8 +661,8 @@ IO 失败只记录一次并自动停用 debug。
   如果关闭 `STOP SPRINT`，客户端检测到玩家仍在冲刺时会**直接跳过这次刀暴**
   （按普通攻击结算），避免发送无效移动包；`/server legacy`（1.8）不检查冲刺，
   可以关闭它对比 1.8 行为。
-- 注入点：只接在真正发送 `C02` 的路径上——AutoClicker 的 `clickMouse()` 前、Reach 的
-  `PlayerControllerMP.attackEntity()` 前。`WAIT FOR HURT` 的 swing-only 分支没有 `C02`，
+- 注入点：只接在真正发送 `C02` 的路径上——AutoClicker 的 `clickMouse()` 前、Reach 与
+  KillAura 的 `PlayerControllerMP.attackEntity()` 前。`WAIT FOR HURT` 的 swing-only 分支没有 `C02`，
   不会发送伪造移动包；手动点击暂未 hook，需要单独的事件/mixin，不在本模块范围内。
 - 1.9+ 的攻击冷却不会被绕过：`attackStrengthScale` 不足时依然不是满伤害，需要配合
   `WAIT FOR HURT`、降低 CPS 或使用 legacy 服务端。
@@ -615,6 +699,35 @@ IO 失败只记录一次并自动停用 debug。
     或在 `/server legacy` 等检测较弱的服务端对比测试。本模块保留多种模式就是
     为了记录这些 flag 差异；v6 起默认与 `balanced` 档都只走 `JUMP`，packet 模式仅在
     `aggressive` 档可选。
+
+### KillAura 自动攻击（刀暴）
+
+- 配置路径：`combat.killaura`，默认关闭，默认不绑定按键（`key: ""`），位于
+  ClickGUI 的 **Combat** 分类。
+- 行为参考 `OpenMyau-Fix` 的 `KillAura`，按 OpenMaver 的反射架构重写为稳定核心版：
+  - 从 `loadedEntityList` 中按距离/血量选择目标，支持 Single / Switch；
+  - FOV、攻击距离、穿墙、玩家/怪物/动物过滤；
+  - 可选平滑转向（复用 Aim 的 profile 单 tick 步长上限）；
+  - 按配置 CPS 攻击，但至少等待目标 10 tick 受击无敌帧；
+  - 与 Criticals 联动：`JUMP` 模式先真实起跳，下一次 tick START 再补 `C02`；
+  - KillAura 启用时 AutoClicker 自动让位，避免同一 tick 发出两条攻击包。
+- 设置项（ClickGUI 中展开 KillAura）：
+  - `RANGE`：`killaura.range`，3.0~6.0 格，默认 `3.0`；`legit/balanced` 实际生效
+    距离仍限制在 Grim 3.0 扩张箱内，只有 `aggressive` 才允许更高配置值。
+  - `CPS MIN` / `CPS MAX`：`killaura.cpsMin` / `killaura.cpsMax`，1~20，默认 `8~12`。
+    受击无敌帧会进一步把实际伤害频率压到约 1.8 次/秒。
+  - `FOV`：`killaura.fov`，30~360°，默认 `360`。
+  - `TARGET`：`killaura.switch`，`Single` / `Switch`，默认 `Single`。
+  - `SORT`：`killaura.sort`，`Distance` / `Health`，默认 `Distance`。
+  - `SWITCH DELAY`：`killaura.switchDelay`，0~1000ms，默认 `150`。
+  - `THROUGH WALLS`：`killaura.throughWalls`，默认 `true`。
+  - `PLAYERS` / `MOBS` / `ANIMALS`：默认只攻击玩家。
+  - `ROTATE` / `SMOOTH`：`killaura.rotate` / `killaura.smoothing`，默认开启、`0.45`。
+    攻击使用“本 tick 转向之前”的视角判断，等服务端收到上一 tick 的 C03 后再结算，
+    避免 RotationPlace / Aim 类误判。
+  - `REQUIRE PRESS`：`killaura.requirePress`，默认 `false`；开启后只在按住左键时攻击。
+- 未移植 Myau 的 AutoBlock / Blink / BackTrack / Teams 等重型逻辑，以稳定、可编译、
+  不高频刷包为优先。
 
 ### FakePlayer 假人玩家
 
@@ -848,6 +961,7 @@ public final class Example extends Module {
 | `module.combat.Reach` | `combat.reach` |
 | `module.combat.Criticals` | `combat.criticals` |
 | `module.render.Esp` | `render.esp` |
+| `module.render.MotionBlur` | `render.motionblur` |
 | `module.tools.Logger` | `tools.logger` |
 
 需要自定义时用 `super("Name", "explicit.key")` 显式指定。

@@ -52,6 +52,7 @@ public final class OpenMaverClientHandler {
     private boolean failed = false;
     private boolean keyFailed = false;
     private boolean renderTickFailed = false;
+    private boolean motionBlurFailed = false;
     private boolean tickSeen = false;
     private boolean renderSeen = false;
 
@@ -299,6 +300,14 @@ public final class OpenMaverClientHandler {
         try {
             OpenMaverFeatures.onRender(event);
             ModuleManager.onRender();
+            if (!motionBlurFailed) {
+                try {
+                    MotionBlur.onRenderWorldLast(Minecraft.getMinecraft());
+                } catch (Throwable t) {
+                    motionBlurFailed = true;
+                    debug("motion blur disabled: " + t, t);
+                }
+            }
         } catch (Throwable t) {
             failed = true;
             debug("world render bridge disabled: " + t, t);

@@ -3,13 +3,16 @@ import module.Module;
 import module.ModuleManager;
 import module.combat.AutoClicker;
 import module.combat.Criticals;
+import module.combat.KillAura;
 import module.combat.Reach;
 import module.movement.AutoSprint;
-import module.movement.GodBridge;
+import module.movement.Scaffold;
 import module.misc.FakePlayer;
 import module.player.FastPlace;
 import module.render.Cps;
 import module.render.Fps;
+import module.render.FullBright;
+import module.render.MotionBlur;
 import module.render.PlayerXray;
 import module.render.TargetHud;
 import util.Logger;
@@ -295,8 +298,11 @@ public final class OpenMaver {
         // 战斗模块：Criticals Packet 刀暴（配置路径 combat.criticals；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new Criticals());
 
-        // 移动模块：GodBridge 神桥（配置路径 movement.godbridge；MC 侧逻辑在 OpenMaverFeatures）
-        ModuleManager.register(new GodBridge());
+        // 战斗模块：KillAura 自动攻击（配置路径 combat.killaura；MC 侧逻辑在 OpenMaverFeatures）
+        ModuleManager.register(new KillAura());
+
+        // 移动模块：Scaffold 自动搭路/神桥（配置路径 movement.scaffold；MC 侧逻辑在 OpenMaverFeatures）
+        ModuleManager.register(new Scaffold());
 
         // 玩家模块：FastPlace 快速右键（配置路径 player.fastplace）
         ModuleManager.register(new FastPlace());
@@ -307,8 +313,14 @@ public final class OpenMaver {
         // 渲染模块：Target HUD 目标信息面板（配置路径 render.targethud；MC 侧绘制在 mc/TargetHud）
         ModuleManager.register(new TargetHud());
 
+        // 渲染模块：FullBright 全亮/夜视（配置路径 render.fullbright；MC 侧逻辑在 OpenMaverFeatures）
+        ModuleManager.register(new FullBright());
+
         // 渲染模块：Player X-Ray 玩家透视（配置路径 render.playerxray；MC 侧绘制在 OpenMaverFeatures）
         ModuleManager.register(new PlayerXray());
+
+        // 渲染模块：Motion Blur 运动模糊（配置路径 render.motionblur；MC 侧绘制在 mc/MotionBlur）
+        ModuleManager.register(new MotionBlur());
 
         // 渲染模块：左上角 FPS / CPS 统计（配置路径 render.fps / render.cps；MC 侧绘制在 mc/StatsHud）
         ModuleManager.register(new Fps());

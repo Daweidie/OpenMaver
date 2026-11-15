@@ -59,6 +59,14 @@ public final class OpenMaverDebug {
         log("NOTICE", message);
     }
 
+    /** 通用诊断输出；调用方负责限频，避免刷爆日志。 */
+    public static void trace(String tag, String message) {
+        if (!enabled || failed) {
+            return;
+        }
+        log(tag, message);
+    }
+
     public static void rotation(String source, float oldYaw, float oldPitch,
             float newYaw, float newPitch, double gcd) {
         if (!enabled || failed) {

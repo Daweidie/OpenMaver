@@ -60,10 +60,14 @@ Grim `combat/Reach` 对 1.8 客户端：
 
 本项目策略：
 
-- `legit/balanced` 强制只使用真实准星放置，自动旋转/C05 被抑制。
-- 每 tick 最多一次放置，使用游戏自身 `rightClickMouse`，因此 cursor/face/reach
-  都由 vanilla 生成。
-- 放置结束始终恢复临时 rotation 与 `objectMouseOver`。
+- 旧的 `OpenMaverFeatures.tryPlaceBlock` 路径在 `legit/balanced` 下只使用真实
+  准星，自动旋转/C05 被抑制。
+- `ScaffoldFeature` 使用 **tick 内换视角**：aim 写进本 tick 正常的 C03，
+  C08 延迟到下一 tick、用服务端已收到的同一个 aim 重新 ray trace。每 tick
+  只有一条 C03 族包，没有额外 C05，因此不再触发 `Timer`/`Post`。
+- 每 tick 最多一次放置；`MultiPlace` 在新旋转模式下不产生额外 C08。
+- C08 使用 `PlayerControllerMP.onPlayerRightClick`，cursor/face/reach 由
+  vanilla 生成；放置结束不需要恢复临时 rotation（rotation 在 tick END 恢复）。
 
 ### 1.5 Timer / Movement
 
@@ -88,9 +92,10 @@ debug.enabled=false
 | AutoClicker 上限 | 8 CPS | 12 CPS | 20 CPS |
 | 最小点击间隔 | 115ms | 75ms | 45ms |
 | FastPlace | 不改 timer | 最低 2 tick | 按配置，可 0 |
-| GodBridge fastPlace | 不改 timer | 不改 timer | 可压 0 |
-| Placement 自动旋转 | 强制 legit | 强制 legit | 允许 |
-| Placement C05 | 强制抑制 | 强制抑制 | 允许（实验） |
+| Scaffold 放置 | C03 携带 aim + 延迟 1 tick | 同左 | 同左（Myau 全量） |
+| Placement 自动旋转 | 强制 legit（旧路径） | 强制 legit（旧路径） | 允许 |
+| Scaffold C05 | 不再发送 | 不再发送 | 不再发送 |
+| Placement C05（旧路径） | 强制抑制 | 强制抑制 | 允许（实验） |
 | packetRotation 默认 | 关闭 | 关闭 | 仍默认关闭 |
 
 `bypass.enabled=false` 恢复旧的对比行为（Reach 5.9、旧 FastPlace/放置逻辑），
@@ -100,7 +105,7 @@ debug.enabled=false
 
 - `mc/OpenMaverFeatures.java`
   - `onTickStart`：autoclicker / aim / sprint（均需在 vanilla C03 之前）
-  - `onTick`：fastplace / godbridge / scaffold / reach
+  - `onTick`：fastplace / scaffold / reach
   - `updateReach` / `attackNearestEntityInReach`：Grim 扩张箱 ray trace
   - `aimAtNearest` / `stepAim` / `mouseGcd`：GCD + 限速
   - `updateAutoClicker`：CPS 上限、抖动、停顿、同 tick 互斥、MISS 保护
@@ -136,7 +141,7 @@ cmake --build build -j
 | Aim Assist 平滑 | `AimDuplicateLook` / `AimModulo360` / `AimProcessor` |
 | AutoClicker 30s | 点击间隔、CPS、是否有 `PacketOrder` / `MultiActions` |
 | Scaffold 连续放置 | `RotationPlace` / `FarPlace` / `PositionPlace` / `MultiPlace` |
-| GodBridge 连续放置 | 同上 + `Timer` / `GroundSpoof` |
+| KillAura 连续攻击 | `RotationPlace` / `Aim` / `PacketOrder` |
 | FastPlace | 右键频率、`PacketOrderI/N` |
 | 打开 GUI/聊天/死亡 | 是否残留 rotation、timer、点击 |
 
@@ -163,7 +168,7 @@ cmake --build build -j
    的 C03；它主要配合 `packetRotation` 做对比，仍会触发 `Timer`/Aim 类检查。
 4. `AimProcessor` 的 GCD 反推依赖鼠标灵敏度；如果用户使用系统鼠标加速/自定义
    驱动，量化步长可能与服务端统计不完全一致。
-5. GodBridge 在 `legit/balanced` 下不再压缩右键冷却，桥速会明显低于旧版本；
+5. Scaffold 在 `legit/balanced` 下不再压缩右键冷却，桥速会明显低于旧版本；
    这是有意为之，优先降低 `PacketOrder`/`Timer`/`RotationPlace` 检测面。
 6. `OpenMaverDebug` 不注入网络层，C03/C05 只能记录本项目主动产生或按 tick
    节奏推断，不等同于抓包。
