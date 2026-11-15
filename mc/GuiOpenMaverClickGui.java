@@ -30,7 +30,7 @@ import java.util.Set;
  * 顶部搜索与筛选、模块行 + 可展开设置区。全部由 {@link Gui#drawRect} 与立即模式
  * 线段自绘，不依赖 GuiButton / 纹理资源，因此运行期注入也能用。
  *
- * <p>字体：模块名 / 分类名用打包的 Lucida Sans Typewriter（{@link HudFont}），
+ * <p>字体：模块名 / 分类名用打包的 Source Code Pro（{@link HudFont}），
  * 微型标签、数值、键帽用 Minecraft 自带字体，形成第二层级（数值天然接近等宽）。
  *
  * <p>真实数据：模块来自 {@link ModuleManager}，Aim Assist / Player ESP 来自
@@ -70,7 +70,20 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final int RAIL_SYS_MIN_H = 315;
 
     private static final int RADIUS = 22;
-    private static final int CARD_RADIUS = 13;
+    /** 模块卡片使用更饱满的圆角，和左侧圆形开关保持同一套圆润语言。 */
+    private static final int CARD_RADIUS = 16;
+    /** 模块行左侧开关图标的半径（含外圈）。 */
+    private static final int TOGGLE_RADIUS = 10;
+    /** 圆角/圆形的边缘羽化宽度（GUI 单位），只在外侧做很窄的抗锯齿过渡。 */
+    private static final float AA_FEATHER = 0.25F;
+    /** 每个圆角使用的圆弧段数；越高越圆滑。 */
+    private static final int AA_ARC_SEGMENTS = 16;
+    /** 圆角多边形的采样点数量（4 个角 × 每个角的采样点）。 */
+    private static final int AA_POINT_COUNT = 4 * (AA_ARC_SEGMENTS + 1);
+    private static final float[] AA_INNER_X = new float[AA_POINT_COUNT];
+    private static final float[] AA_INNER_Y = new float[AA_POINT_COUNT];
+    private static final float[] AA_OUTER_X = new float[AA_POINT_COUNT];
+    private static final float[] AA_OUTER_Y = new float[AA_POINT_COUNT];
 
     // ------------------------------------------------------------------
     // 配色
@@ -143,6 +156,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     // ------------------------------------------------------------------
 
     private final GuiScreen returnScreen;
+    private final String initialSystemPage;
     private final List<Entry> entries = new ArrayList<Entry>();
     private final Set<String> expanded = new HashSet<String>();
 
@@ -206,7 +220,13 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private boolean drawLogged;
 
     public GuiOpenMaverClickGui(GuiScreen returnScreen) {
+        this(returnScreen, null);
+    }
+
+    /** Opens the ClickGUI directly on one of the SYSTEM pages ({@code configs}/{@code stats}/{@code settings}). */
+    public GuiOpenMaverClickGui(GuiScreen returnScreen, String initialSystemPage) {
         this.returnScreen = returnScreen;
+        this.initialSystemPage = initialSystemPage;
     }
 
     // ==================================================================
@@ -219,7 +239,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         this.openedAt = System.currentTimeMillis();
         this.lastAnimationAt = this.openedAt;
         this.openProgress = 0.0F;
-        this.systemPage = null;
+        this.systemPage = initialSystemPage;
         Keyboard.enableRepeatEvents(true);
         layout();
         buildEntries();
@@ -1315,43 +1335,57 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     withAlpha(0xFFFFFF, Math.round(0x10 * (0.5F + glow))));
         }
 
-        // 开关圆点：外层光晕 + 实心核心。
+        // 开关图标：更大的圆形底板 + 柔和外圈，开启时用强调色光晕替代原来的小圆点。
         float toggleProgress = entry.toggleProgress;
         int dotX = x + 17;
         int dotY = y + ROW_H / 2;
+        int orbRadius = TOGGLE_RADIUS - 2;
+        int offRing = withAlpha(0xFFFFFF, Math.round(0x48 + 0x20 * hoverProgress));
+        int onRing = withAlpha(accent, Math.round(0xC8 + 0x28 * hoverProgress));
+        fillCircle(dotX, dotY, orbRadius, blendColor(
+                withAlpha(0xFFFFFF, 0x0A + Math.round(0x08 * hoverProgress)),
+                withAlpha(accent, 0x1A), toggleProgress));
+        ringCircle(dotX, dotY, orbRadius, blendColor(offRing, onRing, toggleProgress));
+        fillCircle(dotX, dotY, 3, blendColor(
+                withAlpha(0xFFFFFF, 0x70), accent, toggleProgress));
         if (toggleProgress > 0.01F) {
-            fillCircle(dotX, dotY, 7, withAlpha(accent, Math.round(0x18 * toggleProgress)));
-            fillCircle(dotX, dotY, 4, withAlpha(accent, Math.round(0x3C * toggleProgress)));
-            fillCircle(dotX, dotY, 2, withAlpha(accent, Math.round(255 * toggleProgress)));
-        }
-        if (toggleProgress < 0.99F) {
-            float off = 1.0F - toggleProgress;
-            fillCircle(dotX, dotY, 4, withAlpha(0xFFFFFF, Math.round(0x1C * off)));
-            fillCircle(dotX, dotY, 2, withAlpha(0xFFFFFF, Math.round(0x32 * off)));
+            // 左上角一点柔和高光，让开关看起来更像一枚圆润的玻璃按钮。
+            fillCircle(dotX - 2, dotY - 2, 1,
+                    withAlpha(0xFFFFFF, Math.round(0x70 * toggleProgress)));
         }
 
         hud(font, ellipsizeHud(font, entry.name, w - 100), x + 32, y + 13,
                 on ? TEXT : 0xFFB3BCCB);
 
-        // 键帽
+        // 键帽：胶囊状圆角，悬停展开时也保持和卡片一致的圆润感。
         String keybind = entry.keybind();
         int keyX = x + w - 48;
         if (keybind != null) {
-            int keyW = Math.min(26, Math.max(15, microWidth(font, keybind) + 8));
+            int keyW = Math.min(26, Math.max(16, microWidth(font, keybind) + 9));
             int kx = keyX + (15 - keyW) / 2;
-            roundRect(kx, y + 10, keyW, 14, 5, withAlpha(0xFFFFFF, 0x18));
-            roundRect(kx + 1, y + 11, keyW - 2, 12, 4, 0xFF4A4A4A);
-            Gui.drawRect(kx + 3, y + 11, kx + keyW - 3, y + 12,
-                    withAlpha(0xFFFFFF, 0x10));
+            int keyY = y + 9;
+            int keyH = 16;
+            roundRect(kx, keyY, keyW, keyH, keyH / 2, withAlpha(0xFFFFFF, 0x1E));
+            roundRect(kx + 1, keyY + 1, keyW - 2, keyH - 2, (keyH - 2) / 2, 0xFF484848);
+            Gui.drawRect(kx + 4, keyY + 1, kx + keyW - 4, keyY + 2,
+                    withAlpha(0xFFFFFF, 0x12));
             String keyText = ellipsizeMicro(font, keybind, keyW - 6);
             micro(font, keyText, kx + (keyW - microWidth(font, keyText)) / 2,
-                    y + 13, KEYCAP_TEXT);
+                    keyY + 4, KEYCAP_TEXT);
         } else {
             Gui.drawRect(keyX + 5, y + 16, keyX + 10, y + 17,
                     withAlpha(0xFFFFFF, 0x18));
         }
 
-        drawChevronProgress(x + w - 18, y + ROW_H / 2, openProgress,
+        // 右侧展开箭头：悬停 / 展开时出现圆形底光，和左侧开关图标呼应。
+        int chevX = x + w - 18;
+        int chevY = y + ROW_H / 2;
+        float chevronGlow = Math.max(hoverProgress, openProgress);
+        if (chevronGlow > 0.01F) {
+            ringCircle(chevX, chevY, 8,
+                    withAlpha(0xFFFFFF, Math.round(0x12 * chevronGlow)));
+        }
+        drawChevronProgress(chevX, chevY, openProgress,
                 blendColor(MUTED, accent, openProgress));
 
         if (openProgress > 0.01F && !entry.settings.isEmpty()) {
@@ -1369,8 +1403,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int w = cardW - 44;
         int accent = accentFor(entry);
 
-        roundRect(x, y, w, panelH, 8, withAlpha(0xFFFFFF, 0x0C));
-        roundRect(x + 1, y + 1, w - 2, panelH - 2, 7, 0xE62A2A2A);
+        roundRect(x, y, w, panelH, 12, withAlpha(0xFFFFFF, 0x0C));
+        roundRect(x + 1, y + 1, w - 2, panelH - 2, 11, 0xE62A2A2A);
         // 和上方开关圆点连成一条的强调色细线。
         int connectorX = x - 15;
         roundRect(connectorX, y + 2, 2, panelH - 4, 1, withAlpha(accent, 0x26));
@@ -1410,12 +1444,12 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     blendColor(SLIDER_VALUE, 0xFFFFFFFF, hi * 0.55F));
 
             int trackY = y + 15;
-            roundRect(x, trackY, w, 4, 2,
+            roundRect(x, trackY, w, 5, 3,
                     blendColor(withAlpha(0xFFFFFF, 0x12), withAlpha(0xFFFFFF, 0x26), hi));
             double pct = setting.percent();
             int fillW = (int) Math.round((w - 1) * pct);
             if (fillW > 0) {
-                roundRect(x, trackY, fillW, 4, 2,
+                roundRect(x, trackY, fillW, 5, 3,
                         withAlpha(accent, Math.round(0xE2 + 0x1D * hi)));
                 if (fillW > 5) {
                     Gui.drawRect(x + 2, trackY, x + fillW - 1, trackY + 1,
@@ -1423,12 +1457,12 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 }
             }
             int thumbX = x + clampInt((int) Math.round((w - 1) * pct), 0, w - 1);
-            int glow = 6 + Math.round(hi * 2.0F);
+            int glow = 7 + Math.round(hi * 2.0F);
             fillCircle(thumbX, trackY + 2, glow,
                     withAlpha(accent, Math.round(0x18 + 0x12 * hi)));
-            fillCircle(thumbX, trackY + 2, 4,
+            fillCircle(thumbX, trackY + 2, 5,
                     withAlpha(accent, Math.round(0x40 + 0x28 * hi)));
-            fillCircle(thumbX, trackY + 2, 2, 0xFFFFFFFF);
+            fillCircle(thumbX, trackY + 2, 3, 0xFFFFFFFF);
         } else if (setting.kind == Setting.SELECT) {
             int fieldY = y + 9;
             boolean hovered = isHovered(lastMouseX, lastMouseY, x, fieldY, w, 16);
@@ -1443,13 +1477,13 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             int fieldBorder = blendColor(withAlpha(0xFFFFFF, 0x14),
                     withAlpha(accent, 0x66), focus);
             fieldBorder = blendColor(fieldBorder, withAlpha(0xFFFFFF, 0x3C), hover * 0.7F);
-            roundRect(x, fieldY, w, 16, 6, fieldBorder);
-            roundRect(x + 1, fieldY + 1, w - 2, 14, 5,
+            roundRect(x, fieldY, w, 16, 8, fieldBorder);
+            roundRect(x + 1, fieldY + 1, w - 2, 14, 7,
                     blendColor(FIELD_SOLID, FIELD_HOVER, hi));
             Gui.drawRect(x + 4, fieldY + 1, x + w - 4, fieldY + 2,
                     withAlpha(0xFFFFFF, Math.round(0x0A + 0x0A * hi)));
             if (anim.press > 0.01F) {
-                roundRect(x, fieldY, w, 16, 6,
+                roundRect(x, fieldY, w, 16, 8,
                         withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
             }
             String value = setting.display();
@@ -1470,15 +1504,15 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             int border = blendColor(withAlpha(0xFFFFFF, 0x22),
                     withAlpha(accent, 0xF0), on);
             border = blendColor(border, withAlpha(0xFFFFFF, 0x48), hover * 0.7F);
-            roundRect(boxX, boxY, box, box, 3, border);
-            roundRect(boxX + 1, boxY + 1, box - 2, box - 2, 2,
+            roundRect(boxX, boxY, box, box, 4, border);
+            roundRect(boxX + 1, boxY + 1, box - 2, box - 2, 3,
                     withAlpha(0x000000, 0x50));
             if (on > 0.01F) {
-                roundRect(boxX - 1, boxY - 1, box + 2, box + 2, 4,
+                roundRect(boxX - 1, boxY - 1, box + 2, box + 2, 5,
                         withAlpha(accent, Math.round(0x2E * on)));
-                roundRect(boxX, boxY, box, box, 3,
+                roundRect(boxX, boxY, box, box, 4,
                         withAlpha(accent, Math.round(0xF0 * on)));
-                roundRect(boxX, boxY, box, 4, 3,
+                roundRect(boxX, boxY, box, 4, 4,
                         withAlpha(0xFFFFFF, Math.round(0x30 * on)));
                 drawCheck(boxX + 3, boxY + 6,
                         withAlpha(0xFF151515, Math.round(0xFF * on)));
@@ -1800,8 +1834,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     return; // 点在设置面板空白处，不折叠
                 }
 
-                boolean onDot = mouseX >= x + 10 && mouseX < x + 24
-                        && mouseY >= y + 8 && mouseY < y + 24;
+                boolean onDot = mouseX >= x + 6 && mouseX < x + 28
+                        && mouseY >= y + 6 && mouseY < y + 28;
                 if (onDot && button == 0) {
                     entry.toggle();
                     return;
@@ -2214,41 +2248,118 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     /**
-     * 抗锯齿圆角多边形。四角用 8 段圆弧逼近，配合 GL_POLYGON_SMOOTH，
-     * 任意尺寸下边缘都是连续过渡，不会出现逐行矩形的台阶。
+     * 抗锯齿圆角多边形。
+     *
+     * <p>核心形状保持原有圆角，外面再加一圈 1px 的羽化带：内圈顶点 alpha 为 1，
+     * 外圈顶点 alpha 为 0，由 GPU 插值出连续的覆盖率。这样不依赖
+     * {@code GL_POLYGON_SMOOTH}（很多驱动会直接忽略它），圆角和直边都不会再出现台阶。
      */
     private static void shapePolygon(int x, int y, int w, int h,
             float tl, float tr, float br, float bl, int color) {
+        if (w <= 0 || h <= 0 || (color >>> 24) == 0) {
+            return;
+        }
+        float maxRadius = Math.min(w / 2.0F, h / 2.0F);
+        float innerTl = Math.min(tl, maxRadius);
+        float innerTr = Math.min(tr, maxRadius);
+        float innerBr = Math.min(br, maxRadius);
+        float innerBl = Math.min(bl, maxRadius);
+
+        float ox = x - AA_FEATHER;
+        float oy = y - AA_FEATHER;
+        float ow = w + AA_FEATHER * 2.0F;
+        float oh = h + AA_FEATHER * 2.0F;
+        float outerMax = Math.min(ow / 2.0F, oh / 2.0F);
+        float outerTl = Math.min(innerTl + AA_FEATHER, outerMax);
+        float outerTr = Math.min(innerTr + AA_FEATHER, outerMax);
+        float outerBr = Math.min(innerBr + AA_FEATHER, outerMax);
+        float outerBl = Math.min(innerBl + AA_FEATHER, outerMax);
+
+        float[] innerX = AA_INNER_X;
+        float[] innerY = AA_INNER_Y;
+        float[] outerX = AA_OUTER_X;
+        float[] outerY = AA_OUTER_Y;
+        appendRoundedRect(innerX, innerY, 0, x, y, w, h,
+                innerTl, innerTr, innerBr, innerBl);
+        appendRoundedRect(outerX, outerY, 0, ox, oy, ow, oh,
+                outerTl, outerTr, outerBr, outerBl);
+
+        aaBegin();
+
+        // 实心内部：保持原始尺寸，白色/彩色区域不会被羽化带吃掉。
+        GL11.glBegin(GL11.GL_TRIANGLE_FAN);
+        setVertexColor(color, 1.0F);
+        GL11.glVertex2f(x + w / 2.0F, y + h / 2.0F);
+        for (int i = 0; i < AA_POINT_COUNT; i++) {
+            setVertexColor(color, 1.0F);
+            GL11.glVertex2f(innerX[i], innerY[i]);
+        }
+        GL11.glVertex2f(innerX[0], innerY[0]);
+        GL11.glEnd();
+
+        // 外侧很窄的羽化带：内沿不透明，外沿透明，只负责抹掉像素台阶。
+        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
+        for (int i = 0; i <= AA_POINT_COUNT; i++) {
+            int index = i == AA_POINT_COUNT ? 0 : i;
+            setVertexColor(color, 1.0F);
+            GL11.glVertex2f(innerX[index], innerY[index]);
+            setVertexColor(color, 0.0F);
+            GL11.glVertex2f(outerX[index], outerY[index]);
+        }
+        GL11.glEnd();
+
+        aaEnd();
+    }
+
+    /** 按顺时针把四个圆角的采样点写入数组。直边由相邻圆角端点直接连接。 */
+    private static void appendRoundedRect(float[] xs, float[] ys, int offset,
+            float x, float y, float w, float h,
+            float tl, float tr, float br, float bl) {
+        int index = offset;
+        index = appendCorner(xs, ys, index, x + tl, y + tl, tl, 180.0F);
+        index = appendCorner(xs, ys, index, x + w - tr, y + tr, tr, 270.0F);
+        index = appendCorner(xs, ys, index, x + w - br, y + h - br, br, 0.0F);
+        appendCorner(xs, ys, index, x + bl, y + h - bl, bl, 90.0F);
+    }
+
+    private static int appendCorner(float[] xs, float[] ys, int index,
+            float cx, float cy, float radius, float startAngle) {
+        for (int i = 0; i <= AA_ARC_SEGMENTS; i++) {
+            double angle = Math.toRadians(startAngle
+                    + i * (90.0F / AA_ARC_SEGMENTS));
+            xs[index] = cx + (float) Math.cos(angle) * radius;
+            ys[index] = cy + (float) Math.sin(angle) * radius;
+            index++;
+        }
+        return index;
+    }
+
+    /** 进入逐顶点 alpha 的抗锯齿绘制状态。 */
+    private static void aaBegin() {
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
                 | GL11.GL_TEXTURE_BIT);
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         GL11.glDisable(GL11.GL_DEPTH_TEST);
         GL11.glDisable(GL11.GL_CULL_FACE);
+        GL11.glDisable(GL11.GL_ALPHA_TEST);
+        // 我们自己用顶点 alpha 做边缘羽化；开启多边形平滑反而会在三角形接缝处产生亮线。
+        GL11.glDisable(GL11.GL_POLYGON_SMOOTH);
+        GL11.glDisable(GL11.GL_LINE_SMOOTH);
         GL11.glEnable(GL11.GL_BLEND);
-        GL11.glEnable(GL11.GL_POLYGON_SMOOTH);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        GlColor.set(color);
-        GL11.glBegin(GL11.GL_POLYGON);
-        cornerArc(x + tl, y + tl, tl, 180.0F);
-        cornerArc(x + w - tr, y + tr, tr, 270.0F);
-        cornerArc(x + w - br, y + h - br, br, 0.0F);
-        cornerArc(x + bl, y + h - bl, bl, 90.0F);
-        GL11.glEnd();
+    }
+
+    private static void aaEnd() {
         GL11.glPopAttrib();
         GlColor.restore();
     }
 
-    private static void cornerArc(float cx, float cy, float radius, float startAngle) {
-        if (radius <= 0.5F) {
-            GL11.glVertex2f(cx, cy);
-            return;
-        }
-        final int segments = 8;
-        for (int i = 0; i <= segments; i++) {
-            double angle = Math.toRadians(startAngle + i * (90.0F / segments));
-            GL11.glVertex2f(cx + (float) Math.cos(angle) * radius,
-                    cy + (float) Math.sin(angle) * radius);
-        }
+    /** 写入一个带 alpha 缩放的顶点颜色；alphaScale=0 即完全透明。 */
+    private static void setVertexColor(int argb, float alphaScale) {
+        float alpha = ((argb >>> 24) / 255.0F) * alphaScale;
+        GL11.glColor4f((argb >> 16 & 0xFF) / 255.0F,
+                (argb >> 8 & 0xFF) / 255.0F,
+                (argb & 0xFF) / 255.0F, alpha);
     }
 
     /** 圆角行内缩量，四舍五入到像素，用于内阴影。 */
@@ -2286,55 +2397,71 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         if (radius <= 0 || (color >>> 24) == 0) {
             return;
         }
-        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
-                | GL11.GL_TEXTURE_BIT);
-        GL11.glDisable(GL11.GL_TEXTURE_2D);
-        GL11.glDisable(GL11.GL_DEPTH_TEST);
-        GL11.glDisable(GL11.GL_CULL_FACE);
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glEnable(GL11.GL_POLYGON_SMOOTH);
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        GlColor.set(color);
-        int steps = Math.max(16, Math.min(48, radius * 8));
-        GL11.glBegin(GL11.GL_POLYGON);
-        for (int i = 0; i < steps; i++) {
+        int steps = Math.max(24, Math.min(96, radius * 6));
+        float inner = radius;
+        float outer = radius + AA_FEATHER;
+
+        aaBegin();
+        // 内层实心圆保持原始半径，避免小圆点/滑块被羽化带“吃掉”。
+        GL11.glBegin(GL11.GL_TRIANGLE_FAN);
+        setVertexColor(color, 1.0F);
+        GL11.glVertex2f(cx, cy);
+        for (int i = 0; i <= steps; i++) {
             double angle = Math.PI * 2.0D * i / steps;
-            GL11.glVertex2f(cx + (float) Math.cos(angle) * radius,
-                    cy + (float) Math.sin(angle) * radius);
+            setVertexColor(color, 1.0F);
+            GL11.glVertex2f(cx + (float) Math.cos(angle) * inner,
+                    cy + (float) Math.sin(angle) * inner);
         }
         GL11.glEnd();
-        GL11.glPopAttrib();
-        GlColor.restore();
+
+        // 外侧窄羽化带，只抹平边缘像素。
+        aaRingStrip(cx, cy, inner, outer, 1.0F, 0.0F, steps, color);
+        aaEnd();
     }
 
     private static void ringCircle(int cx, int cy, int radius, int color) {
-        if (radius <= 0 || (color >>> 24) == 0) {
-            return;
-        }
-        int steps = Math.max(24, radius * 10);
-        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
-                | GL11.GL_LINE_BIT | GL11.GL_TEXTURE_BIT);
-        GL11.glDisable(GL11.GL_TEXTURE_2D);
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glEnable(GL11.GL_LINE_SMOOTH);
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        GL11.glHint(GL11.GL_LINE_SMOOTH_HINT, GL11.GL_NICEST);
-        GlColor.set(color);
-        GL11.glLineWidth(1.0F);
-        GL11.glBegin(GL11.GL_LINE_LOOP);
-        for (int i = 0; i < steps; i++) {
-            double angle = Math.PI * 2.0D * i / steps;
-            GL11.glVertex2f(cx + (float) Math.cos(angle) * radius,
-                    cy + (float) Math.sin(angle) * radius);
-        }
-        GL11.glEnd();
-        GL11.glPopAttrib();
-        GlColor.restore();
+        ringCircle((float) cx, (float) cy, (float) radius, color);
     }
 
-    /** 小图标用的浮点版本；像素级绘制取整即可。 */
+    /** 浮点版本让图标圆心可以落在半像素上，避免整像素取整带来的轻微偏移。 */
     private static void ringCircle(float cx, float cy, float radius, int color) {
-        ringCircle(Math.round(cx), Math.round(cy), Math.round(radius), color);
+        if (radius <= 0.0F || (color >>> 24) == 0) {
+            return;
+        }
+        int steps = Math.max(32, Math.min(128, Math.round(radius * 10.0F)));
+        float core = 0.5F;
+        float innerFeather = 0.2F;
+        float outerFeather = AA_FEATHER;
+        float inner = Math.max(0.0F, radius - core - innerFeather);
+        float innerSolid = radius - core;
+        float outerSolid = radius + core;
+        float outer = radius + core + outerFeather;
+
+        aaBegin();
+        aaRingStrip(cx, cy, inner, innerSolid, 0.0F, 1.0F, steps, color);
+        aaRingStrip(cx, cy, innerSolid, outerSolid, 1.0F, 1.0F, steps, color);
+        aaRingStrip(cx, cy, outerSolid, outer, 1.0F, 0.0F, steps, color);
+        aaEnd();
+    }
+
+    /** 用三角带画一条圆环，内外半径分别使用不同的顶点 alpha。 */
+    private static void aaRingStrip(float cx, float cy, float innerRadius,
+            float outerRadius, float innerAlpha, float outerAlpha,
+            int steps, int color) {
+        if (outerRadius <= innerRadius) {
+            return;
+        }
+        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
+        for (int i = 0; i <= steps; i++) {
+            double angle = Math.PI * 2.0D * i / steps;
+            float cos = (float) Math.cos(angle);
+            float sin = (float) Math.sin(angle);
+            setVertexColor(color, innerAlpha);
+            GL11.glVertex2f(cx + cos * innerRadius, cy + sin * innerRadius);
+            setVertexColor(color, outerAlpha);
+            GL11.glVertex2f(cx + cos * outerRadius, cy + sin * outerRadius);
+        }
+        GL11.glEnd();
     }
 
     private static void drawChevron(int cx, int cy, boolean up, int color) {
@@ -2366,26 +2493,37 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         line(x + 7, y + 7, x + 10, y + 10, color);
     }
 
+    /**
+     * 抗锯齿线段：用一条 4 行的三角带模拟 1px 宽的线，外沿 alpha=0、内沿 alpha=1。
+     * 比 {@code GL_LINES + GL_LINE_SMOOTH} 可靠，后者在多数驱动上会被忽略。
+     */
     private static void line(float x1, float y1, float x2, float y2, int color) {
-        float alpha = (color >>> 24) / 255.0F;
-        float red = (color >> 16 & 0xFF) / 255.0F;
-        float green = (color >> 8 & 0xFF) / 255.0F;
-        float blue = (color & 0xFF) / 255.0F;
-        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
-                | GL11.GL_LINE_BIT | GL11.GL_TEXTURE_BIT);
-        GL11.glDisable(GL11.GL_TEXTURE_2D);
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glEnable(GL11.GL_LINE_SMOOTH);
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        GL11.glHint(GL11.GL_LINE_SMOOTH_HINT, GL11.GL_NICEST);
-        GlColor.set(red, green, blue, alpha);
-        GL11.glLineWidth(1.2F);
-        GL11.glBegin(GL11.GL_LINES);
-        GL11.glVertex2f(x1, y1);
-        GL11.glVertex2f(x2, y2);
+        if ((color >>> 24) == 0) {
+            return;
+        }
+        float dx = x2 - x1;
+        float dy = y2 - y1;
+        float length = (float) Math.sqrt(dx * dx + dy * dy);
+        if (length < 0.0001F) {
+            return;
+        }
+        float nx = -dy / length;
+        float ny = dx / length;
+        final float half = 0.4F;
+        final float feather = 0.2F;
+        float[] offsets = {-half - feather, -half, half, half + feather};
+        float[] alphas = {0.0F, 1.0F, 1.0F, 0.0F};
+
+        aaBegin();
+        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
+        for (int i = 0; i < offsets.length; i++) {
+            float offset = offsets[i];
+            setVertexColor(color, alphas[i]);
+            GL11.glVertex2f(x1 + nx * offset, y1 + ny * offset);
+            GL11.glVertex2f(x2 + nx * offset, y2 + ny * offset);
+        }
         GL11.glEnd();
-        GL11.glPopAttrib();
-        GlColor.restore();
+        aaEnd();
     }
 
     private static void drawCategoryIcon(String id, int x, int y, int color) {

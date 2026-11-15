@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# OpenMaver V2.0 —— 顶层构建脚本
+# OpenMaver B2.1.2 —— 顶层构建脚本
 #
 # 技术栈：C++17（关闭异常/RTTI） + Java 8 + JNI，使用 CMake 构建。
 #
@@ -15,7 +15,7 @@
 
 cmake_minimum_required(VERSION 3.16)
 
-project(OpenMaver VERSION 2.0.0 LANGUAGES CXX)
+project(OpenMaver VERSION 2.1.2 LANGUAGES CXX)
 
 # —— C++ 标准 ——
 set(CMAKE_CXX_STANDARD 17)

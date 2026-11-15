@@ -4,4 +4,7 @@ package net.minecraft.util;
 public class ResourceLocation {
     public ResourceLocation(String location) {
     }
+
+    public ResourceLocation(String domain, String path) {
+    }
 }

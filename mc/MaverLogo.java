@@ -9,6 +9,8 @@ import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.HashSet;
+import java.util.Set;
 
 import javax.imageio.ImageIO;
 
@@ -20,9 +22,7 @@ public final class MaverLogo {
     private static int textureId;
     private static int imageWidth;
     private static int imageHeight;
-    private static int lastLoggedWidth = -1;
-    private static int lastLoggedHeight = -1;
-    private static float lastLoggedScale = -1.0F;
+    private static final Set<String> LOGGED_SIZES = new HashSet<String>();
     private static boolean failed;
 
     private MaverLogo() {
@@ -38,14 +38,31 @@ public final class MaverLogo {
         float fit = Math.min(maxWidth / (float) imageWidth, maxHeight / (float) imageHeight);
         int width = Math.max(1, Math.round(imageWidth * fit * scale));
         int height = Math.max(1, Math.round(imageHeight * fit * scale));
+        int drawX = x + Math.max(0, (maxWidth - width) / 2);
+        return drawScaled(fallback, drawX, y, width, height, scale);
+    }
 
-        if (width != lastLoggedWidth || height != lastLoggedHeight
-                || scale != lastLoggedScale) {
+    /** Draws the logo centered on the given GUI point (used by the title screen badge). */
+    public static boolean drawCentered(FontRenderer fallback, int centerX, int centerY,
+            int maxWidth, int maxHeight, float scale, int fallbackColor) {
+        if (!ensureLoaded()) {
+            fallback.drawStringWithShadow("maver", centerX - 18, centerY, fallbackColor);
+            return false;
+        }
+
+        float fit = Math.min(maxWidth / (float) imageWidth, maxHeight / (float) imageHeight);
+        int width = Math.max(1, Math.round(imageWidth * fit * scale));
+        int height = Math.max(1, Math.round(imageHeight * fit * scale));
+        return drawScaled(fallback, centerX - width / 2, centerY - height / 2, width, height,
+                scale);
+    }
+
+    private static boolean drawScaled(FontRenderer fallback, int drawX, int y, int width,
+            int height, float scale) {
+        String sizeKey = width + "x" + height + "@" + scale;
+        if (LOGGED_SIZES.add(sizeKey)) {
             Logger.info("Logo", String.format(java.util.Locale.ROOT,
                     "显示尺寸 %.2fx, %d x %d GUI px", scale, width, height));
-            lastLoggedWidth = width;
-            lastLoggedHeight = height;
-            lastLoggedScale = scale;
         }
 
         GlColor.restore();
@@ -58,7 +75,6 @@ public final class MaverLogo {
         GL11.glDisable(GL11.GL_LIGHTING);
         GlColor.set(1.0F, 1.0F, 1.0F, 1.0F);
         GlStateManager.bindTexture(textureId);
-        int drawX = x + Math.max(0, (maxWidth - width) / 2);
         // This helper derives UVs from the destination size, so use that size
         // for the texture span as well to sample the entire logo when scaled.
         Gui.drawModalRectWithCustomSizedTexture(drawX, y, 0.0F, 0.0F, width, height,

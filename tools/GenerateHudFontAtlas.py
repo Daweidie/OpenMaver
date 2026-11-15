@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Generate OpenMaver's packed font atlases using Pillow.
 
-Latin glyphs come from tools/fonts/LucidaTypewriter.ttf (Lucida Sans
-Typewriter). It has no CJK coverage, so every non-ASCII character used by the
-UI (currently Chinese) is rendered with a CJK fallback font instead. The
-generated PNG/metrics are the only runtime dependencies; the Latin/CJK font
-files themselves are not shipped in the mod jar.
+Latin glyphs come from tools/fonts/SourceCodePro-Regular.ttf (Source Code Pro).
+It has no CJK coverage, so every non-ASCII character used by the UI (currently
+Chinese) is rendered with a CJK fallback font instead. The generated
+PNG/metrics are the only runtime dependencies; the Latin/CJK font files
+themselves are not shipped in the mod jar.
 
 One atlas is generated per Minecraft GUI scale (1x..8x). The runtime picks the
 atlas matching the current GUI scale, so a glyph texel maps to exactly one
@@ -28,10 +28,10 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 FONT_DIR = ROOT / "mc/resources/assets/openmaver/font"
-# Kept outside mc/resources so the proprietary Lucida font file is not packaged
-# into the mod jar; only the generated atlas bitmaps ship.
+# Kept outside mc/resources so the font file is not packaged into the mod jar;
+# only the generated atlas bitmaps ship.
 LATIN_FONT = Path(os.environ.get("OPENMAVER_LATIN_FONT",
-                                 ROOT / "tools/fonts/LucidaTypewriter.ttf"))
+                                 ROOT / "tools/fonts/SourceCodePro-Regular.ttf"))
 SOURCE_DIR = ROOT / "mc"
 
 FIRST_CHAR = 32
@@ -71,8 +71,8 @@ def ui_characters():
 def load_latin_font(size):
     if not LATIN_FONT.is_file():
         raise SystemExit(
-            "找不到拉丁字体 {}；请把 Lucida Console 的 lucon.ttf 放到该路径，"
-            "或用 OPENMAVER_LATIN_FONT 指定一个 TTF 文件".format(LATIN_FONT))
+            "找不到拉丁字体 {}；请把 Source Code Pro 的 TTF 放到该路径，"
+            "或用 OPENMAVER_LATIN_FONT 指定一个 TTF/OTF 文件".format(LATIN_FONT))
     return ImageFont.truetype(str(LATIN_FONT), size)
 
 

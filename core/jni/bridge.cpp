@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// OpenMaver V2.0 —— JNI 桥接层实现
+// OpenMaver B2.1.2 —— JNI 桥接层实现
 //
 // 职责：
 //   1. 导出 Java 侧声明的 native 方法：init / shutdown / getVersion
@@ -69,7 +69,7 @@ constexpr obf::XorStr<sizeof("[OpenMaver] Core initialized\n")> kMsgInit(
     "[OpenMaver] Core initialized\n");
 constexpr obf::XorStr<sizeof("[OpenMaver] Core shutdown\n")> kMsgShutdown(
     "[OpenMaver] Core shutdown\n");
-constexpr obf::XorStr<sizeof("2.0.0")> kVersion("2.0.0");
+constexpr obf::XorStr<sizeof("B2.1.2")> kVersion("B2.1.2");
 
 // 核心是否已初始化（单线程初始化，简单布尔即可）
 bool g_initialized = false;
@@ -139,7 +139,7 @@ jstring JNICALL Java_OpenMaver_getVersion(JNIEnv* env, jclass clazz) {
     (void)clazz;
 
     // 版本号同样以密文形式存放，运行时还原
-    char buf[obf::XorStr<sizeof("2.0.0")>::length()];
+    char buf[obf::XorStr<sizeof("B2.1.2")>::length()];
     obf::decode(kVersion, buf);
     return env->NewStringUTF(buf);
 }

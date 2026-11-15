@@ -27,8 +27,9 @@ import java.util.Set;
  * <p>视觉稿：
  * <ul>
  *   <li>每个启用功能是一枚独立的深灰色圆角卡片，右对齐垂直堆叠，卡片之间留出细缝</li>
- *   <li>模块名使用白色 Lucida Sans Typewriter 字体，右侧是一枚短白色竖条作为启用指示</li>
- *   <li>键位绑定以较淡的白色显示在竖条左侧；没有绑定键位时只保留竖条</li>
+ *   <li>模块名使用白色 Source Code Pro 字体，右侧是一枚短白色竖条作为启用指示</li>
+ *   <li>模块的当前参数摘要（如 AutoClicker 的 CPS 区间）以较淡的白色显示在竖条左侧；
+ *       不再显示键位提示</li>
  *   <li>卡片带轻微投影与顶部高光，启用/关闭时从右侧滑入或淡出</li>
  * </ul>
  *
@@ -67,7 +68,8 @@ public final class OpenMaverHud {
     private static final int ROW_BAR_H = 11;
     private static final int ROW_BAR_INSET = 9;
     private static final int ROW_BAR_ALPHA = 0xF0;
-    private static final int KEY_GAP = 8;
+    /** 功能参数摘要与模块名之间的间距。 */
+    private static final int INFO_GAP = 8;
 
     // ------------------------------------------------------------------
     // 动效时长
@@ -194,13 +196,15 @@ public final class OpenMaverHud {
                     continue;
                 }
                 entries.add(new HudEntry(module.getConfigKey() + "#" + module.getName(),
-                        module.getName(), keyLabel(module)));
+                        module.getName(), moduleInfo(module)));
             }
             if (OpenMaverFeatures.isAimEnabled()) {
-                entries.add(new HudEntry("feature#aim", "Aim Assist", "--"));
+                entries.add(new HudEntry("feature#aim", "Aim Assist",
+                        aimInfo()));
             }
             if (OpenMaverFeatures.isEspEnabled()) {
-                entries.add(new HudEntry("feature#esp", "Player ESP", "--"));
+                entries.add(new HudEntry("feature#esp", "Player ESP",
+                        espInfo()));
             }
 
             // 先抓一张世界快照：功能栏卡片、提示卡都从这份快照里取背景，
@@ -286,11 +290,11 @@ public final class OpenMaverHud {
 
         final int count = display.size();
         final String[] labels = new String[count];
-        final String[] keys = new String[count];
+        final String[] infos = new String[count];
         for (int i = 0; i < count; i++) {
             HudEntry entry = display.get(i);
             labels[i] = entry.name;
-            keys[i] = entry.key;
+            infos[i] = entry.info;
         }
 
         int totalHeight = count * ROW_H + (count - 1) * ROW_GAP;
@@ -335,10 +339,10 @@ public final class OpenMaverHud {
 
             // 右边缘固定对齐，每行宽度由自身文字决定，形成参考图里的阶梯感。
             int nameW = HudFont.getStringWidth(font, labels[i], ROW_TEXT_SIZE);
-            int keyW = hasKey(keys[i])
-                    ? HudFont.getStringWidth(font, keys[i], ROW_TEXT_SIZE) : 0;
+            int infoW = hasInfo(infos[i])
+                    ? HudFont.getStringWidth(font, infos[i], ROW_TEXT_SIZE) : 0;
             int rowWidth = nameW + ROW_PAD_LEFT
-                    + (keyW > 0 ? KEY_GAP + keyW : 0) + ROW_PAD_RIGHT;
+                    + (infoW > 0 ? INFO_GAP + infoW : 0) + ROW_PAD_RIGHT;
             int rowX = rowRight - rowWidth;
 
             // 柔和投影 + 毛玻璃卡片 + 极淡白色描边，右侧再放一枚白色竖条。
@@ -368,9 +372,9 @@ public final class OpenMaverHud {
             texts.add(new TextDraw(labels[i], rowX + ROW_PAD_LEFT, textY,
                     withAlpha(0xFFFFFF, clamp255((int) (alpha * 255.0F))),
                     ROW_TEXT_SIZE));
-            if (keyW > 0) {
-                int keyX = rowRight - ROW_PAD_RIGHT - keyW;
-                texts.add(new TextDraw(keys[i], keyX, textY,
+            if (infoW > 0) {
+                int infoX = rowRight - ROW_PAD_RIGHT - infoW;
+                texts.add(new TextDraw(infos[i], infoX, textY,
                         withAlpha(0xFFFFFF,
                                 clamp255((int) (alpha * 0xB8))),
                         ROW_TEXT_SIZE));
@@ -391,8 +395,8 @@ public final class OpenMaverHud {
         return value + (target - value) * clamped;
     }
 
-    private static boolean hasKey(String key) {
-        return key != null && !key.isEmpty() && !"--".equals(key);
+    private static boolean hasInfo(String info) {
+        return info != null && !info.isEmpty();
     }
 
     private static RowAnim rowAnim(HudEntry entry, long now) {
@@ -404,9 +408,71 @@ public final class OpenMaverHud {
         return anim;
     }
 
-    private static String keyLabel(Module module) {
-        String key = module.getKeybind();
-        return (key == null || key.isEmpty()) ? "--" : key;
+    // ------------------------------------------------------------------
+    // 功能参数摘要（替代原来的键位提示）
+    // ------------------------------------------------------------------
+
+    /**
+     * 每个功能右侧显示一行当前参数，例如 AutoClicker 的 {@code 6-10}。
+     * 没有可展示数值的功能返回空字符串，HUD 只保留模块名与启用竖条。
+     */
+    private static String moduleInfo(Module module) {
+        String name = module.getName();
+        if ("AutoClicker".equals(name)) {
+            int min = Math.min(OpenMaverFeatures.getAutoClickerCpsMin(),
+                    OpenMaverFeatures.getAutoClickerCpsMax());
+            int max = Math.max(OpenMaverFeatures.getAutoClickerCpsMin(),
+                    OpenMaverFeatures.getAutoClickerCpsMax());
+            return min == max ? Integer.toString(min) : min + "-" + max;
+        }
+        if ("Reach".equals(name)) {
+            return number(OpenMaverFeatures.getEffectiveReachDistance()) + "m";
+        }
+        if ("Criticals".equals(name)) {
+            return OpenMaverFeatures.getCriticalsModeName();
+        }
+        if ("FastPlace".equals(name)) {
+            return OpenMaverFeatures.getFastPlaceDelayTicks() + "t";
+        }
+        if ("GodBridge".equals(name)) {
+            return OpenMaverFeatures.getGodBridgeDelayTicks() + "t";
+        }
+        if ("FakePlayer".equals(name)) {
+            return OpenMaverFeatures.getFakePlayerCount() + "x "
+                    + number(OpenMaverFeatures.getFakePlayerDistance()) + "m";
+        }
+        if ("Target HUD".equals(name)) {
+            return Math.round(OpenMaverFeatures.getTargetHudRange()) + "m";
+        }
+        if ("Player X-Ray".equals(name)) {
+            return Math.round(OpenMaverFeatures.getPlayerXrayRange()) + "m";
+        }
+        if ("Grim Bypass".equals(name)) {
+            return OpenMaverFeatures.getBypassProfileName();
+        }
+        return "";
+    }
+
+    private static String aimInfo() {
+        return number(OpenMaverFeatures.getAimRange()) + "m";
+    }
+
+    private static String espInfo() {
+        return Math.round(OpenMaverFeatures.getEspRange()) + "m";
+    }
+
+    /** 最多保留两位小数，并去掉无意义的尾随 0（3.20 -> 3.2，3.00 -> 3）。 */
+    private static String number(float value) {
+        int hundredths = Math.round(value * 100.0F);
+        int whole = hundredths / 100;
+        int fraction = Math.abs(hundredths % 100);
+        if (fraction == 0) {
+            return Integer.toString(whole);
+        }
+        if (fraction % 10 == 0) {
+            return whole + "." + (fraction / 10);
+        }
+        return whole + "." + (fraction < 10 ? "0" + fraction : Integer.toString(fraction));
     }
 
     // ==================================================================
@@ -701,12 +767,12 @@ public final class OpenMaverHud {
     private static final class HudEntry {
         final String id;
         final String name;
-        final String key;
+        final String info;
 
-        HudEntry(String id, String name, String key) {
+        HudEntry(String id, String name, String info) {
             this.id = id;
             this.name = name;
-            this.key = key;
+            this.info = info;
         }
     }
 

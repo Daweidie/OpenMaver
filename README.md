@@ -1,4 +1,4 @@
-# OpenMaver V2.0
+# OpenMaver B2.1.2
 
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
@@ -47,9 +47,11 @@ OpenMaver/
 │   ├── mcmod.info                 # Forge mod 元数据（打包进 mod jar）
 │   ├── OpenMaverMod.java          # @Mod 入口
 │   ├── OpenMaverClientHandler.java# 客户端 tick / 渲染事件桥接 + 进入世界启动
-│   ├── OpenMaverHud.java          # 右侧 ModuleList（胶囊列表 + 键位 + 启用动效）
+│   ├── OpenMaverHud.java          # 右侧 ModuleList（胶囊列表 + 参数摘要 + 启用动效）
 │   ├── StatsHud.java              # 左上角 FPS 胶囊 + CPS 小方块（灰色毛玻璃）
-│   └── GuiOpenMaverClickGui.java  # 游戏内 ClickGUI（分类 / 搜索 / 展开设置）
+│   ├── GuiOpenMaverClickGui.java  # 游戏内 ClickGUI（分类 / 搜索 / 展开设置）
+│   ├── GuiMaverMainMenu.java      # Badlion 风格主菜单（Logo / 按钮 / 账号 / 快捷菜单）
+│   └── MaverLogo.java             # 打包的 Maver Logo 纹理绘制
 ├── mcstubs/                       # 编译 mc/ 用的 API stub（仅编译期，不进 jar）
 ├── tools/McpReobf.java            # MCP -> SRG reobf（Forge 1.8.9 运行期需要）
 ├── config/default.jsonc           # 默认配置
@@ -106,6 +108,7 @@ mc/*.java --javac(对 MCP API)--> mc-classes --McpReobf(MCP->SRG)--> mc-classes-
 | 事件总线 | `net.minecraftforge.common.MinecraftForge.EVENT_BUS` |
 | 事件注解 | `net.minecraftforge.fml.common.eventhandler.SubscribeEvent` |
 | 客户端 tick | `net.minecraftforge.fml.common.gameevent.TickEvent.ClientTickEvent` |
+| 打开界面（主菜单替换） | `net.minecraftforge.client.event.GuiOpenEvent` |
 | HUD 覆盖层 | `net.minecraftforge.client.event.RenderGameOverlayEvent.Post` |
 | 世界渲染 | `net.minecraftforge.client.event.RenderWorldLastEvent` |
 | 客户端判定 | `net.minecraftforge.fml.relauncher.SideOnly` / `Side` |
@@ -172,7 +175,7 @@ java -Djava.library.path=build/lib \
 
 ```
 [OpenMaver] Core initialized
-[2026-... ] [INFO] [OpenMaver] 版本 2.0.0 启动完成
+[2026-... ] [INFO] [OpenMaver] 版本 B2.1.2 启动完成
 [2026-... ] [INFO] [OpenMaver] 配置加载完成: .../config/default.jsonc
 [2026-... ] [INFO] [OpenMaver] 独立运行模式：未检测到游戏主循环
 [OpenMaver] Core shutdown
@@ -212,8 +215,9 @@ java -Djava.library.path=build/lib \
 按需求，OpenMaver 的核心**延迟到玩家真正进入世界**时才启动，并给出可视反馈：
 
 - **ModuleList** `mc/OpenMaverHud.java`：屏幕右侧垂直堆叠的**已启用功能**列表。
-  每行是深色毛玻璃圆角卡片，右边缘严格对齐，宽度随文字长短变化；模块名与键位统一使用
-  白色（键位更淡），右侧是一枚白色竖条；禁用功能不会出现在列表中。每行拥有独立
+  每行是深色毛玻璃圆角卡片，右边缘严格对齐，宽度随文字长短变化；模块名使用白色，
+  右侧以较淡的白色显示该功能的当前参数摘要（例如 AutoClicker 的 CPS 区间、Reach 的
+  实际距离），最右侧是一枚白色竖条；不再显示键位提示。禁用功能不会出现在列表中。每行拥有独立
   动画状态：启用时从右侧平滑淡入，禁用时先淡出再移除，剩余行平滑上移换位。
   所有动画基于 `System.nanoTime()`，与帧率无关。ClickGUI 打开时隐藏该列表，
   避免被全屏毛玻璃糊成一层残影。
@@ -236,6 +240,12 @@ java -Djava.library.path=build/lib \
   从下往上叠加，每张卡片拥有独立时间线，旧卡片退场后其余卡片平滑补位。
   游戏内启用 / 禁用功能时也会弹出「xxx enabled / xxx disabled」。
   绘制在 `RenderGameOverlayEvent.Post`（`type == ALL`）里，ClickGUI 内由 GUI 自己绘制。
+- **Maver 主菜单** `mc/GuiMaverMainMenu.java`：替换原版标题界面（`GuiOpenEvent`），
+  使用原版全景图 + 高斯模糊背景，正上方六边形 Maver Logo、`Maver` 标题、
+  `A Open Src Cheat Client` 副标题、
+  Singleplayer / Multiplayer / Client Settings / Configs / Options / Quit Game 按钮，
+  右上角账号胶囊（从微软 / Mojang 官方皮肤服务获取的账号头像 + 用户名）与左上角快捷菜单。
+  Client Settings / Configs 会直接打开对应页面的 ClickGUI。
 - **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关。
   纯灰色面板 + 中性灰描边，全部强调色统一为白色；左侧 Combat / Movement / Render /
   Player / Misc 分类栏，以及 SYSTEM → Configs / Statistics / Settings 页面
@@ -248,11 +258,11 @@ java -Djava.library.path=build/lib \
   Criticals、FastPlace、Target HUD 与 Player X-Ray 的设置直接绑定 `OpenMaverFeatures`，参数写入
   `config/openmaver.properties`（拖拽结束与关闭 GUI 时落盘）。
 - **模块键位**：`config/default.jsonc` 中的 `<分类>.<模块>.key`（如
-  `movement.autosprint.key = "V"`）既会显示在 HUD 右侧，也会在游戏内绑定到该键。
+  `movement.autosprint.key = "V"`）会在游戏内绑定到该键；键位提示不再显示在 HUD 上。
 
-HUD 与 ClickGUI 都在 `OpenMaverMod.init()` 里注册到 `MinecraftForge.EVENT_BUS`；
-进入世界由 `OpenMaverClientHandler.onClientTick()` 首次检测到 `theWorld/thePlayer`
-非空时触发：
+HUD、ClickGUI 与主菜单替换逻辑都在 `OpenMaverMod.init()` 里注册到
+`MinecraftForge.EVENT_BUS`；进入世界由 `OpenMaverClientHandler.onClientTick()` 首次检测到
+`theWorld/thePlayer` 非空时触发：
 
 ```java
 if (!worldEntered) {
@@ -730,7 +740,7 @@ build/bin/openmaver_injector --re-self \
 > 请用 `--list` 确认，必要时显式 `--pid`。真实 MC 1.8.9 由启动器拉起时，
 > 命令行通常包含 `net.minecraft.launchwrapper.Launch`，会被稳定识别。
 
-目标进程的标准输出会打印 `[OpenMaver] Core initialized`、`版本 2.0.0`、
+目标进程的标准输出会打印 `[OpenMaver] Core initialized`、`版本 B2.1.2`、
 `已注册模块 AutoSprint`、`独立驱动线程已启动` 等，表示注入成功。
 
 ### 自研 vs jattach：重复代码在哪
@@ -766,7 +776,7 @@ java -Djava.library.path=build/lib -cp build/java-classes OpenMaver
 
 ```
 [OpenMaver] Core initialized                                  # JNI 加载 ✓
-[INFO] [OpenMaver] 版本 2.0.0 启动完成
+[INFO] [OpenMaver] 版本 B2.1.2 启动完成
 [INFO] [OpenMaver] 配置加载完成: .../config/default.jsonc       # Config 读取 ✓
 [INFO] [ModuleManager] 已注册模块 AutoSprint (configKey=movement.autosprint, enabled=false)
 [DEBUG] [OpenMaver] 调试查询 getModule("AutoSprint") -> movement.autosprint, enabled=false
@@ -802,7 +812,7 @@ java -Djava.library.path=build/lib -Dopenmaver.config=/tmp/om-enabled.jsonc \
 | 环节 | 验证点 |
 |---|---|
 | JNI 加载 | 控制台出现 `[OpenMaver] Core initialized` |
-| 云端库版本 | 日志中打印 `版本 2.0.0` 与 `getVersion()` 一致 |
+| 云端库版本 | 日志中打印 `版本 B2.1.2` 与 `getVersion()` 一致 |
 | Config 读取 | 注册日志里的 `configKey=movement.autosprint` 与 `enabled=` 等于 jsonc 的值 |
 | 事件/循环触发 | `链路验证统计: tick 循环=… render 循环=…` 均大于 0 |
 | Module 基类驱动 | `enabled=true` 时出现 `onEnable` 与递增的 `tick #N`，退出时 `onDisable` |

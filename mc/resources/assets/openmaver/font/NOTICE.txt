@@ -1,10 +1,10 @@
 HudFontAtlas*.png contain rasterized glyphs from:
 
-- Lucida Sans Typewriter (Lucida is a registered trademark or trademark of
-  Bigelow & Holmes in the U.S. and other countries), and
+- Source Code Pro (Copyright Adobe, licensed under the SIL Open Font License
+  1.1), and
 - Noto Sans CJK SC (Copyright Adobe and Google).
 
 Noto Sans CJK is licensed under the SIL Open Font License 1.1; the full license
 text is in OFL.txt. Only the generated atlas bitmaps are packaged into the mod
-jar, not the original font files. The Lucida TTF used to regenerate the atlases
-lives in tools/fonts/ and is intentionally kept out of mc/resources.
+jar, not the original font files. The Source Code Pro TTF used to regenerate
+the atlases lives in tools/fonts/ and is intentionally kept out of mc/resources.

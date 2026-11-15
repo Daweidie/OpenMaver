@@ -2,8 +2,8 @@
     {
         "modid": "openmaver",
         "name": "OpenMaver",
-        "description": "OpenMaver V2.0 client skeleton (authorized anti-cheat research only)",
-        "version": "2.0.0",
+        "description": "OpenMaver B2.1.2 client skeleton (authorized anti-cheat research only)",
+        "version": "B2.1.2",
         "mcversion": "1.8.9",
         "authorList": ["OpenMaver"],
         "credits": "",

@@ -19,6 +19,7 @@ public class GL11 {
     public static final int GL_LINE_LOOP = 2;
     public static final int GL_LINE_STRIP = 3;
     public static final int GL_TRIANGLES = 4;
+    public static final int GL_TRIANGLE_STRIP = 5;
     public static final int GL_TRIANGLE_FAN = 6;
     public static final int GL_LINE_SMOOTH = 0x0B20;
     public static final int GL_LINE_SMOOTH_HINT = 0x0C52;
@@ -46,10 +47,17 @@ public class GL11 {
     public static final int GL_CULL_FACE = 0x0B44;
     public static final int GL_POLYGON_SMOOTH = 0x0B41;
     public static final int GL_SCISSOR_TEST = 0x0C11;
+    public static final int GL_PROJECTION = 0x1701;
+    public static final int GL_MODELVIEW = 0x1700;
     public static void glPushAttrib(int mask) {}
     public static void glPopAttrib() {}
     public static void glPushMatrix() {}
     public static void glPopMatrix() {}
+    public static void glLoadIdentity() {}
+    public static void glMatrixMode(int mode) {}
+    public static void glFrustum(double left, double right, double bottom, double top,
+            double near, double far) {}
+    public static void glRotatef(float angle, float x, float y, float z) {}
     public static void glTranslatef(float x, float y, float z) {}
     public static void glScalef(float x, float y, float z) {}
     public static void glScissor(int x, int y, int width, int height) {}
@@ -65,6 +73,7 @@ public class GL11 {
     public static void glColor4f(float r, float g, float b, float a) {}
     public static void glBegin(int m) {}
     public static void glVertex2f(float x, float y) {}
+    public static void glVertex3f(float x, float y, float z) {}
     public static void glVertex3d(double x, double y, double z) {}
     public static void glTexCoord2f(float u, float v) {}
     public static int glGenTextures() { return 0; }

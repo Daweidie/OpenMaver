@@ -3,6 +3,7 @@ import module.ModuleManager;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
+import net.minecraftforge.client.event.GuiOpenEvent;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.InputEvent;
@@ -80,6 +81,7 @@ public final class OpenMaverClientHandler {
             if (mc == null) {
                 return;
             }
+            ensureCustomMainMenu(mc);
             // START：在 vanilla 发送 C03 之前应用 aim / sprint。
             if (event.phase == TickEvent.Phase.START) {
                 syncHeldKeys();
@@ -118,6 +120,35 @@ public final class OpenMaverClientHandler {
         int enabled = OpenMaverHud.enabledFeatureCount();
         OpenMaverHud.success("Loaded successfully, " + enabled
                 + (enabled == 1 ? " feature enabled!" : " features enabled!"));
+    }
+
+    /**
+     * Replaces vanilla's title screen with the Maver menu.
+     *
+     * <p>Forge fires {@link GuiOpenEvent} for the initial title screen, but a runtime-injected
+     * client can attach after that event has already passed. The tick-side check below catches
+     * both cases; it only ever replaces the exact vanilla {@code GuiMainMenu}, so sub-screens
+     * and other mods' menus are left alone.
+     */
+    @SubscribeEvent
+    public void onGuiOpen(GuiOpenEvent event) {
+        if (event == null || event.gui == null) {
+            return;
+        }
+        if (isVanillaMainMenu(event.gui)) {
+            event.gui = new GuiMaverMainMenu();
+        }
+    }
+
+    private void ensureCustomMainMenu(Minecraft mc) {
+        GuiScreen current = (GuiScreen) readField(mc, "currentScreen", "field_71462_r");
+        if (current != null && isVanillaMainMenu(current)) {
+            mc.displayGuiScreen(new GuiMaverMainMenu());
+        }
+    }
+
+    private static boolean isVanillaMainMenu(GuiScreen screen) {
+        return "net.minecraft.client.gui.GuiMainMenu".equals(screen.getClass().getName());
     }
 
     /**

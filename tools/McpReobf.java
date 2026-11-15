@@ -59,9 +59,16 @@ public final class McpReobf {
         final String WCLIENT = "net/minecraft/client/multiplayer/WorldClient";
         final String TM = "net/minecraft/client/renderer/texture/TextureManager";
         final String STACK = "net/minecraft/item/ItemStack";
+        final String SESSION = "net/minecraft/util/Session";
+        final String DPS = "net/minecraft/client/resources/DefaultPlayerSkin";
 
         m(MC, "getMinecraft", "func_71410_x");
         m(MC, "displayGuiScreen", "func_147108_a");
+        m(MC, "getSession", "func_110432_I");
+        m(MC, "shutdown", "func_71400_g");
+        m(SESSION, "getUsername", "func_111285_a");
+        m(SESSION, "getProfile", "func_148256_e");
+        m(DPS, "getDefaultSkin", "func_177334_a");
         m(GS, "initGui", "func_73866_w_");
         m(GS, "drawScreen", "func_73863_a");
         m(GS, "drawDefaultBackground", "func_146276_q_");
@@ -104,6 +111,7 @@ public final class McpReobf {
         m(MC, "getTextureManager", "func_110434_K");
         m(ACP, "getLocationSkin", "func_110311_f");
         m(TM, "bindTexture", "func_110577_a");
+        m(TM, "loadTexture", "func_110579_a");
         m(STACK, "getDisplayName", "func_82833_r");
         m(STACK, "getUnlocalizedName", "func_77977_a");
         m(STACK, "getMaxDamage", "func_77658_a");
@@ -117,6 +125,7 @@ public final class McpReobf {
         f(MC, "theWorld", "field_71441_e");
         f(MC, "thePlayer", "field_71439_g");
         f(MC, "objectMouseOver", "field_71476_x");
+        f(MC, "gameSettings", "field_71474_y");
         f(GS, "fontRendererObj", "field_146289_q");
         f(GS, "buttonList", "field_146292_n");
         f(GS, "width", "field_146294_l");
@@ -144,6 +153,7 @@ public final class McpReobf {
         f(MOP, "entityHit", "field_72308_g");
 
         SUPER.put("GuiOpenMaverClickGui", GS);
+        SUPER.put("GuiMaverMainMenu", GS);
         SUPER.put(GS, GUI);
         SUPER.put(GUI, "java/lang/Object");
         SUPER.put(LIVING, ENTITY);

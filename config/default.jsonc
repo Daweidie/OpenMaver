@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// OpenMaver V2.0 默认配置（JSONC：支持 // 行注释与 /* */ 块注释）
+// OpenMaver B2.1.2 默认配置（JSONC：支持 // 行注释与 /* */ 块注释）
 //
 // 大多数功能模块默认 enabled: false；FPS / CPS 统计与日志工具默认开启。
 // 嵌套 key 通过点号访问，例如：combat.aimassist.enabled
@@ -18,7 +18,7 @@
   "movement": {
     "autosprint": {
       "enabled": false,        // 示例模块 AutoSprint：默认关闭（链路验证时可临时改为 true）
-      "key": "V"               // 绑定键位（HUD 右侧显示，按 V 切换）
+      "key": "V"               // 绑定键位（按 V 切换）
     },
     "godbridge": {
       "enabled": false,        // GodBridge 神桥：默认关闭（按 B 切换）

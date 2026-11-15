@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// OpenMaver V2.0 —— JVMTI agent 入口
+// OpenMaver B2.1.2 —— JVMTI agent 入口
 //
 // 作用：让 libopenmaver_core.so 同时充当 **JVMTI agent**。通过 JVM Dynamic Attach
 //       机制（自研注入器 inject/injector.cpp 或外部 jattach）加载本库时，

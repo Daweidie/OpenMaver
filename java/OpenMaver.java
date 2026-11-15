@@ -21,7 +21,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 /**
- * OpenMaver V2.0 入口 / 核心门面。
+ * OpenMaver B2.1.2 入口 / 核心门面。
  *
  * <p>既可作为独立程序运行（{@link #main(String[])}），也可作为 Minecraft 1.8.9 Forge mod
  * 的核心被 {@code OpenMaverMod} 驱动：
@@ -40,7 +40,7 @@ public final class OpenMaver {
     public static final String NAME = "OpenMaver";
 
     /** 版本号，与本地核心库返回的值保持一致。 */
-    public static final String VERSION = "2.0.0";
+    public static final String VERSION = "B2.1.2";
 
     /** 默认配置路径（相对当前工作目录；在 .minecraft 下即为 .minecraft/config/default.jsonc）。 */
     private static final String DEFAULT_CONFIG_PATH = "config/default.jsonc";

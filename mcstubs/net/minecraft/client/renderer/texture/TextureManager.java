@@ -6,4 +6,8 @@ import net.minecraft.util.ResourceLocation;
 public class TextureManager {
     public void bindTexture(ResourceLocation location) {
     }
+
+    public boolean loadTexture(ResourceLocation location, ITextureObject texture) {
+        return false;
+    }
 }
