@@ -19,4 +19,9 @@ public class Session {
     public GameProfile getProfile() {
         return profile;
     }
+
+    /** Access token used by the official Minecraft services API (Microsoft / Mojang). */
+    public String getToken() {
+        return "";
+    }
 }

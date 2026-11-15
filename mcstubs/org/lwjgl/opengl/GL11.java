@@ -46,9 +46,15 @@ public class GL11 {
     public static final int GL_TEXTURE_COORD_ARRAY = 0x8078;
     public static final int GL_CULL_FACE = 0x0B44;
     public static final int GL_POLYGON_SMOOTH = 0x0B41;
+    public static final int GL_COLOR_LOGIC_OP = 0x0BF2;
+    public static final int GL_SMOOTH = 0x1D01;
+    public static final int GL_FLAT = 0x1D00;
     public static final int GL_SCISSOR_TEST = 0x0C11;
     public static final int GL_PROJECTION = 0x1701;
     public static final int GL_MODELVIEW = 0x1700;
+    public static void glShadeModel(int mode) {}
+    public static void glColorMask(boolean red, boolean green, boolean blue, boolean alpha) {}
+    public static void glDepthMask(boolean flag) {}
     public static void glPushAttrib(int mask) {}
     public static void glPopAttrib() {}
     public static void glPushMatrix() {}

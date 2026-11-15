@@ -162,6 +162,23 @@ public final class GuiBlur {
      */
     public static void draw(int x, int y, int w, int h, float radius,
             int tintRgb, float tintStrength, float alpha) {
+        draw(x, y, w, h, radius, tintRgb, tintStrength, alpha, false);
+    }
+
+    /**
+     * 与 {@link #draw} 相同，但把采样到的整张背景水平镜像。
+     *
+     * <p>原版主菜单先把全景图渲染到 FBO，再在最终绘制时把 U 轴反过来，
+     * 用来抵消立方体内部视角产生的镜像。Maver 直接绘制全景图再模糊，
+     * 因此主菜单必须显式做同样的水平翻转，否则背景会和游戏内视角左右相反。
+     */
+    public static void drawMirrored(int x, int y, int w, int h, float radius,
+            int tintRgb, float tintStrength, float alpha) {
+        draw(x, y, w, h, radius, tintRgb, tintStrength, alpha, true);
+    }
+
+    private static void draw(int x, int y, int w, int h, float radius,
+            int tintRgb, float tintStrength, float alpha, boolean mirrorX) {
         if (w <= 0 || h <= 0 || alpha <= 0.001F) {
             return;
         }
@@ -212,8 +229,15 @@ public final class GuiBlur {
             float u1 = (x + w) / (float) screenWidth;
             float vTop = 1.0F - y / (float) screenHeight;
             float vBottom = 1.0F - (y + h) / (float) screenHeight;
-            GL20.glUniform2f(drawUvMinLocation, u0, vBottom);
-            GL20.glUniform2f(drawUvSizeLocation, u1 - u0, vTop - vBottom);
+            if (mirrorX) {
+                // Negative U span samples the same rectangle right-to-left. The rounded-corner
+                // mask still uses the original UVs, so only the background content is mirrored.
+                GL20.glUniform2f(drawUvMinLocation, u1, vBottom);
+                GL20.glUniform2f(drawUvSizeLocation, u0 - u1, vTop - vBottom);
+            } else {
+                GL20.glUniform2f(drawUvMinLocation, u0, vBottom);
+                GL20.glUniform2f(drawUvSizeLocation, u1 - u0, vTop - vBottom);
+            }
 
             GL11.glBegin(GL11.GL_QUADS);
             GL11.glTexCoord2f(0.0F, 1.0F);

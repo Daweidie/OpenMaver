@@ -294,6 +294,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
         }
         profileResolved = true;
         GameProfile profile = null;
+        String token = null;
         try {
             Minecraft minecraft = Minecraft.getMinecraft();
             if (minecraft != null) {
@@ -307,23 +308,25 @@ public final class GuiMaverMainMenu extends GuiScreen {
                     if (profile != null && profile.getId() != null) {
                         profileId = profile.getId();
                     }
+                    token = session.getToken();
                 }
             }
         } catch (Throwable ignored) {
             // 离线或映射缺失时继续使用占位名，不影响菜单显示。
         }
-        startSkinFetch(username, profile);
+        startSkinFetch(username, profile, token);
     }
 
     /**
      * 异步获取当前账号在微软 / Mojang 官方服务上的皮肤。
      *
-     * <p>优先读取登录会话里已经由微软下发的 {@code textures} 属性；离线会话没有该属性时，
-     * 再通过 Mojang 官方 profile API 按用户名查询。图片最终来自官方的
-     * {@code textures.minecraft.net} 皮肤 CDN，因此账号名称与官方皮肤保持一致。
-     * 网络或解码失败时 {@link #skinImage} 保持为空，绘制阶段会自动退回默认皮肤。
+     * <p>微软登录的 1.8.9 会话里通常没有 {@code textures} 属性，直接按用户名查询
+     * 又容易被 sessionserver 限流。这里优先用会话 access token 调用官方
+     * {@code api.minecraftservices.com/minecraft/profile}，拿到当前账号正在使用的
+     * SKIN.url；失败后再退回 profile 属性、UUID 和用户名三条旧路径。
      */
-    private void startSkinFetch(final String name, final GameProfile profile) {
+    private void startSkinFetch(final String name, final GameProfile profile,
+            final String token) {
         if (skinFetchStarted) {
             return;
         }
@@ -337,7 +340,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
             @Override
             public void run() {
                 try {
-                    BufferedImage image = loadOfficialSkin(name, profile);
+                    BufferedImage image = loadOfficialSkin(name, profile, token);
                     if (image != null) {
                         cacheSkin(name, image);
                         skinImage = image;
@@ -369,12 +372,61 @@ public final class GuiMaverMainMenu extends GuiScreen {
         }
     }
 
-    private static BufferedImage loadOfficialSkin(String name, GameProfile profile) {
-        String url = skinUrlFromProfile(profile);
+    private static BufferedImage loadOfficialSkin(String name, GameProfile profile,
+            String token) {
+        // 微软账号最可靠的路径：带 Bearer token 查询当前账号的 profile，直接拿到
+        // skins[].url。这条接口返回的就是游戏内正在使用的皮肤。
+        String url = skinUrlFromServices(token);
+        if (url == null) {
+            url = skinUrlFromProfile(profile);
+        }
+        if (url == null) {
+            url = skinUrlFromId(profile == null ? null : profile.getId());
+        }
         if (url == null && name != null && name.length() > 0) {
             url = skinUrlFromName(name);
         }
         return url == null ? null : readSkinImage(url);
+    }
+
+    /**
+     * 使用登录会话 access token 调用官方 Minecraft Services profile 接口。
+     * 返回示例：{@code {"skins":[{"state":"ACTIVE","url":"http://textures..."}]}}。
+     */
+    private static String skinUrlFromServices(String token) {
+        if (token == null || token.length() == 0 || "0".equals(token)) {
+            return null;
+        }
+        String json = fetchText("https://api.minecraftservices.com/minecraft/profile",
+                "Bearer " + token);
+        if (json == null) {
+            return null;
+        }
+        int skins = json.indexOf("\"skins\"");
+        if (skins < 0) {
+            return null;
+        }
+        int url = json.indexOf("\"url\"", skins);
+        if (url < 0) {
+            return null;
+        }
+        return readJsonStringAfter(json, url + 5);
+    }
+
+    /** 按 UUID 查询 sessionserver profile；比用户名查询少一次请求。 */
+    private static String skinUrlFromId(UUID id) {
+        if (id == null || (id.getMostSignificantBits() == 0L
+                && id.getLeastSignificantBits() == 0L)) {
+            return null;
+        }
+        try {
+            String hex = id.toString().replace("-", "");
+            String profileJson = fetchText(
+                    "https://sessionserver.mojang.com/session/minecraft/profile/" + hex);
+            return skinUrlFromTexturesValue(texturesValue(profileJson));
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     /** 从登录会话的 {@code textures} 属性里取出官方皮肤地址（不依赖编译期 authlib API）。 */
@@ -426,6 +478,23 @@ public final class GuiMaverMainMenu extends GuiScreen {
         }
     }
 
+    /** 从 JSON 的 {@code "url"} 键之后读取字符串值，并统一成 https。 */
+    private static String readJsonStringAfter(String json, int fromIndex) {
+        if (json == null) {
+            return null;
+        }
+        int colon = json.indexOf(':', fromIndex);
+        int start = json.indexOf('"', colon + 1);
+        int end = json.indexOf('"', start + 1);
+        if (start < 0 || end <= start) {
+            return null;
+        }
+        String result = json.substring(start + 1, end);
+        // 官方 CDN 同时支持 http / https，统一走 https 以免被运行环境拦截。
+        return result.startsWith("http://")
+                ? "https://" + result.substring("http://".length()) : result;
+    }
+
     /** Base64 解码 textures 属性，并取出 {@code SKIN.url}。 */
     private static String skinUrlFromTexturesValue(String value) {
         if (value == null || value.length() == 0) {
@@ -442,16 +511,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
             if (url < 0) {
                 return null;
             }
-            int colon = json.indexOf(':', url + 5);
-            int start = json.indexOf('"', colon + 1);
-            int end = json.indexOf('"', start + 1);
-            if (start < 0 || end <= start) {
-                return null;
-            }
-            String result = json.substring(start + 1, end);
-            // 官方 CDN 同时支持 http / https，统一走 https 以免被运行环境拦截。
-            return result.startsWith("http://")
-                    ? "https://" + result.substring("http://".length()) : result;
+            return readJsonStringAfter(json, url + 5);
         } catch (Throwable ignored) {
             return null;
         }
@@ -491,9 +551,17 @@ public final class GuiMaverMainMenu extends GuiScreen {
     }
 
     private static String fetchText(String url) {
+        return fetchText(url, null);
+    }
+
+    private static String fetchText(String url, String authorization) {
         HttpURLConnection connection = null;
         try {
             connection = open(url, 4000, 4000);
+            if (authorization != null) {
+                connection.setRequestProperty("Authorization", authorization);
+                connection.setRequestProperty("Accept", "application/json");
+            }
             if (connection.getResponseCode() != 200) {
                 return null;
             }
@@ -647,6 +715,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
     // ==================================================================
 
     private void drawMenu(int mouseX, int mouseY, float delta) {
+        resetUiState();
         drawBackground();
         drawLogo();
         drawTitle();
@@ -657,12 +726,37 @@ public final class GuiMaverMainMenu extends GuiScreen {
         drawDropdowns(mouseX, mouseY);
     }
 
+    /**
+     * 重置本帧依赖的固定管线状态。
+     *
+     * <p>从原版界面 / ClickGUI 返回后，GL 的 alpha test、flat shading、scissor
+     * 等状态可能仍是上一个界面的值。菜单的圆角与文字抗锯齿依赖逐顶点 alpha，
+     * 这些状态残留会让边缘变成硬像素（看起来就是锯齿），因此每帧显式恢复。
+     */
+    private static void resetUiState() {
+        GL11.glShadeModel(GL11.GL_SMOOTH);
+        GL11.glDisable(GL11.GL_ALPHA_TEST);
+        GL11.glDisable(GL11.GL_LIGHTING);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glDisable(GL11.GL_CULL_FACE);
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        GL11.glDisable(GL11.GL_POLYGON_SMOOTH);
+        GL11.glDisable(GL11.GL_LINE_SMOOTH);
+        GL11.glDisable(GL11.GL_COLOR_LOGIC_OP);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        GL11.glColorMask(true, true, true, true);
+        GL11.glDepthMask(false);
+        GlColor.restore();
+    }
+
     private void drawBackground() {
         try {
             drawPanorama();
             // 项目现有的毛玻璃实现：抓取刚画好的全景图并做两遍高斯模糊。
+            // 原版在最终合成时会水平翻转全景图，这里通过 drawMirrored 保持一致。
             GuiBlur.beginFrame(width, height, 1);
-            GuiBlur.draw(0, 0, width, height, 0.0F, 0x0A0F16, 0.22F, 1.0F);
+            GuiBlur.drawMirrored(0, 0, width, height, 0.0F, 0x0A0F16, 0.22F, 1.0F);
         } catch (Throwable ignored) {
             // 模糊不可用时下面的深色渐变仍然保证界面可读。
         }
@@ -698,6 +792,8 @@ public final class GuiMaverMainMenu extends GuiScreen {
             GL11.glDisable(GL11.GL_DEPTH_TEST);
             GL11.glDisable(GL11.GL_CULL_FACE);
             GL11.glDisable(GL11.GL_ALPHA_TEST);
+            GL11.glDisable(GL11.GL_SCISSOR_TEST);
+            GL11.glShadeModel(GL11.GL_SMOOTH);
             GL11.glEnable(GL11.GL_TEXTURE_2D);
             GL11.glEnable(GL11.GL_BLEND);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
@@ -1007,6 +1103,8 @@ public final class GuiMaverMainMenu extends GuiScreen {
             GL11.glEnable(GL11.GL_BLEND);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             GL11.glEnable(GL11.GL_TEXTURE_2D);
+            GL11.glDisable(GL11.GL_ALPHA_TEST);
+            GL11.glShadeModel(GL11.GL_SMOOTH);
             GlColor.restore();
             textures.bindTexture(skinTexture);
             Gui.drawModalRectWithCustomSizedTexture(x, y, 8, 8, size, size, 64, 64);
@@ -1334,6 +1432,8 @@ public final class GuiMaverMainMenu extends GuiScreen {
         GL11.glDisable(GL11.GL_DEPTH_TEST);
         GL11.glDisable(GL11.GL_ALPHA_TEST);
         GL11.glDisable(GL11.GL_CULL_FACE);
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        GL11.glShadeModel(GL11.GL_SMOOTH);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         GL11.glBegin(GL11.GL_QUADS);
@@ -1466,8 +1566,11 @@ public final class GuiMaverMainMenu extends GuiScreen {
         GL11.glDisable(GL11.GL_DEPTH_TEST);
         GL11.glDisable(GL11.GL_CULL_FACE);
         GL11.glDisable(GL11.GL_ALPHA_TEST);
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
         GL11.glDisable(GL11.GL_POLYGON_SMOOTH);
         GL11.glDisable(GL11.GL_LINE_SMOOTH);
+        GL11.glDisable(GL11.GL_COLOR_LOGIC_OP);
+        GL11.glShadeModel(GL11.GL_SMOOTH);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
     }

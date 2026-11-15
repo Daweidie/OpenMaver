@@ -184,6 +184,12 @@ public final class HudFont {
         GL11.glDisableClientState(GL11.GL_COLOR_ARRAY);
         GL11.glDisableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
         GL11.glDisable(GL11.GL_CULL_FACE);
+        GL11.glDisable(GL11.GL_ALPHA_TEST);
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        GL11.glDisable(GL11.GL_POLYGON_SMOOTH);
+        GL11.glDisable(GL11.GL_LINE_SMOOTH);
+        GL11.glDisable(GL11.GL_COLOR_LOGIC_OP);
+        GL11.glShadeModel(GL11.GL_SMOOTH);
         GL11.glEnable(GL11.GL_TEXTURE_2D);
         // Some world renderers leave a REPLACE/COMBINE texture env behind. With an
         // alpha-only font atlas that can turn every glyph black; force MODULATE.

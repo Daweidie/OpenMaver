@@ -68,6 +68,7 @@ public final class McpReobf {
         m(MC, "shutdown", "func_71400_g");
         m(SESSION, "getUsername", "func_111285_a");
         m(SESSION, "getProfile", "func_148256_e");
+        m(SESSION, "getToken", "func_148254_d");
         m(DPS, "getDefaultSkin", "func_177334_a");
         m(GS, "initGui", "func_73866_w_");
         m(GS, "drawScreen", "func_73863_a");
