@@ -7,6 +7,7 @@ import module.combat.KillAura;
 import module.combat.Reach;
 import module.movement.AutoSprint;
 import module.movement.Scaffold;
+import module.movement.Velocity;
 import module.misc.FakePlayer;
 import module.player.FastPlace;
 import module.render.Cps;
@@ -303,6 +304,9 @@ public final class OpenMaver {
 
         // 移动模块：Scaffold 自动搭路/神桥（配置路径 movement.scaffold；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new Scaffold());
+
+        // 移动模块：Velocity 防击退（配置路径 movement.velocity；MC 侧逻辑在 mc/VelocityFeature）
+        ModuleManager.register(new Velocity());
 
         // 玩家模块：FastPlace 快速右键（配置路径 player.fastplace）
         ModuleManager.register(new FastPlace());

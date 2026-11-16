@@ -129,6 +129,9 @@ public final class OpenMaverHud {
     public static void notifyToggle(String name, boolean enabled) {
         pushToast(name + (enabled ? " enabled" : " disabled"),
                 enabled ? TOAST_ICON_CHECK : TOAST_ICON_CROSS);
+        // 开启 / 关闭用经验球拾取音（random.orb）：开启走清脆的高音区、
+        // 关闭走发闷的低音区，闭眼也能听出状态。
+        OpenMaverFeatures.playXpPickup(enabled);
     }
 
     private static void pushToast(String text, int icon) {
@@ -442,6 +445,14 @@ public final class OpenMaverHud {
         if ("Scaffold".equals(name)) {
             int blocks = ScaffoldFeature.getBlockCount();
             return Math.max(0, blocks) + "b";
+        }
+        if ("Velocity".equals(name)) {
+            // 憋包中优先显示缓存的位置包数量，一眼能看出 blink 是否真的在起作用。
+            if (VelocityFeature.isBlinking()) {
+                return VelocityFeature.getHeldCount() + "p";
+            }
+            // SPRINT SLAP：窗口没打完时显示还剩几个 tick（每个 tick 一次 ×0.6）。
+            return VelocityFeature.getSummary();
         }
         if ("KillAura".equals(name)) {
             int min = Math.min(OpenMaverFeatures.getKillAuraCpsMin(),

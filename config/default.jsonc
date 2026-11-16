@@ -23,6 +23,10 @@
     "scaffold": {
       "enabled": false,        // Scaffold 自动搭路/神桥：默认关闭（按 B 切换）
       "key": "B"               // 绑定键位（按 B 切换）
+    },
+    "velocity": {
+      "enabled": false,        // Velocity 防击退：默认关闭（参数在 ClickGUI 中调整）
+      "key": ""               // 默认不占用按键，玩家可自行绑定
     }
   },
 

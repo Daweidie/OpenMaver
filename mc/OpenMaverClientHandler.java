@@ -89,6 +89,9 @@ public final class OpenMaverClientHandler {
             if (event.phase == TickEvent.Phase.START) {
                 syncHeldKeys();
                 OpenMaverFeatures.onTickStart(mc);
+                // Velocity 必须在同一位置写入击退速度：原版本 tick 的 C03
+                // 会带走改写后的 motion。
+                VelocityFeature.onTickStart(mc);
                 return;
             }
             if (event.phase != TickEvent.Phase.END) {
@@ -99,6 +102,8 @@ public final class OpenMaverClientHandler {
                 debug("first client tick", null);
             }
             OpenMaverFeatures.onTick(mc);
+            // Velocity 的 blink 窗口与攻击包爆发在 tick 末尾结算。
+            VelocityFeature.onTickEnd(mc);
             if (readField(mc, "theWorld", "field_71441_e") == null
                     || readField(mc, "thePlayer", "field_71439_g") == null) {
                 return;

@@ -269,6 +269,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         this.closingAt = 0L;
         this.closingFrom = 0.0F;
         this.systemPage = initialSystemPage;
+        // 打开面板：短促高音，和模块开关的“开启”音同调。
+        OpenMaverFeatures.playUiClick(1.15F);
         Keyboard.enableRepeatEvents(true);
         layout();
         buildEntries();
@@ -417,6 +419,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 addFastPlaceSettings(entry);
             } else if ("Scaffold".equals(module.getName())) {
                 addScaffoldSettings(entry);
+            } else if ("Velocity".equals(module.getName())) {
+                addVelocitySettings(entry);
             } else if ("FakePlayer".equals(module.getName())) {
                 addFakePlayerSettings(entry);
             } else if ("Target HUD".equals(module.getName())) {
@@ -476,6 +480,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         entry.settings.add(Setting.slider("SMOOTHING", 0.05F, 1.0F, 0.05F, 2, "", new Binding() {
             public double get() { return OpenMaverFeatures.getAimSpeed(); }
             public void set(double value) { OpenMaverFeatures.setAimSpeed((float) value); }
+        }));
+        // 落点抖动：0 = 精确打命中盒中心（机械感最强），1 = 贴命中盒边缘。
+        entry.settings.add(Setting.slider("JITTER", 0.0F, 1.0F, 0.05F, 2, "", new Binding() {
+            public double get() { return OpenMaverFeatures.getAimJitter(); }
+            public void set(double value) { OpenMaverFeatures.setAimJitter((float) value); }
         }));
         entry.settings.add(Setting.select("MODE", AIM_MODES, new Binding() {
             public double get() { return OpenMaverFeatures.getAimMode(); }
@@ -745,6 +754,100 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         entry.settings.add(Setting.select("KEEP Y", SCAFFOLD_KEEP_Y, new Binding() {
             public double get() { return ScaffoldFeature.getKeepY(); }
             public void set(double value) { ScaffoldFeature.setKeepY((int) Math.round(value)); }
+        }));
+    }
+
+    /**
+     * Velocity 设置。
+     *
+     * <p>前两项（MODE / SERVER）决定策略，其余滑块是对该策略的参数微调；
+     * 与 LiquidBounce 的 Velocity 一致：MODIFY 看水平/垂直比例，REVERSAL 看延迟，
+     * STRAFE 看侧移倍率，JUMP RESET 看起跳延迟，BLINK 看憋包 tick 与 burst 攻击数。
+     */
+    private void addVelocitySettings(Entry entry) {
+        entry.settings.add(Setting.select("MODE", VelocityFeature.MODE_NAMES, new Binding() {
+            public double get() { return VelocityFeature.getMode(); }
+            public void set(double value) { VelocityFeature.setMode((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.select("SERVER", VelocityFeature.SERVER_NAMES, new Binding() {
+            public double get() { return VelocityFeature.getServer(); }
+            public void set(double value) { VelocityFeature.setServer((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("NOXZ ATTACKS", 1.0F, 8.0F, 1.0F, 0, "x", new Binding() {
+            public double get() { return VelocityFeature.getNoXzAttacks(); }
+            public void set(double value) { VelocityFeature.setNoXzAttacks((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("SLAP AUTO-AIM", new Binding() {
+            public double get() { return VelocityFeature.isSlapAim() ? 1.0D : 0.0D; }
+            public void set(double value) { VelocityFeature.setSlapAim(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("SLAP TICKS", 1.0F, 10.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return VelocityFeature.getSlapMaxTicks(); }
+            public void set(double value) { VelocityFeature.setSlapMaxTicks((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("UNCERTAIN TICKS", 1.0F, 3.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return VelocityFeature.getUncertaintyTicks(); }
+            public void set(double value) { VelocityFeature.setUncertaintyTicks((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("UNCERTAIN FARM", new Binding() {
+            public double get() { return VelocityFeature.isUncertaintyFarm() ? 1.0D : 0.0D; }
+            public void set(double value) { VelocityFeature.setUncertaintyFarm(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("GRIM GUARD", new Binding() {
+            public double get() { return VelocityFeature.isGrimGuard() ? 1.0D : 0.0D; }
+            public void set(double value) { VelocityFeature.setGrimGuard(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("HORIZONTAL", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
+            public double get() { return VelocityFeature.getHorizontal() * 100.0F; }
+            public void set(double value) { VelocityFeature.setHorizontal((float) (value / 100.0D)); }
+        }));
+        entry.settings.add(Setting.slider("VERTICAL", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
+            public double get() { return VelocityFeature.getVertical() * 100.0F; }
+            public void set(double value) { VelocityFeature.setVertical((float) (value / 100.0D)); }
+        }));
+        entry.settings.add(Setting.slider("REVERSAL DELAY", 0.0F, 600.0F, 10.0F, 0, " ms", new Binding() {
+            public double get() { return VelocityFeature.getReversalDelay(); }
+            public void set(double value) { VelocityFeature.setReversalDelay((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("REVERSAL POWER", 0.2F, 1.5F, 0.05F, 2, "x", new Binding() {
+            public double get() { return VelocityFeature.getReversalStrength(); }
+            public void set(double value) { VelocityFeature.setReversalStrength((float) value); }
+        }));
+        entry.settings.add(Setting.slider("STRAFE FACTOR", 0.2F, 1.6F, 0.05F, 2, "x", new Binding() {
+            public double get() { return VelocityFeature.getStrafeFactor(); }
+            public void set(double value) { VelocityFeature.setStrafeFactor((float) value); }
+        }));
+        entry.settings.add(Setting.slider("JUMP DELAY", 0.0F, 3.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return VelocityFeature.getJumpDelay(); }
+            public void set(double value) { VelocityFeature.setJumpDelay((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("BLINK TICKS", 1.0F, 20.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return VelocityFeature.getBlinkTicks(); }
+            public void set(double value) { VelocityFeature.setBlinkTicks((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("BURST ATTACKS", 1.0F, 8.0F, 1.0F, 0, "x", new Binding() {
+            public double get() { return VelocityFeature.getBurstAttacks(); }
+            public void set(double value) { VelocityFeature.setBurstAttacks((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("BURST RANGE", 2.0F, 6.0F, 0.1F, 1, " m", new Binding() {
+            public double get() { return VelocityFeature.getBurstRange(); }
+            public void set(double value) { VelocityFeature.setBurstRange((float) value); }
+        }));
+        entry.settings.add(Setting.check("FLUSH POSITION", new Binding() {
+            public double get() { return VelocityFeature.isBlinkFlush() ? 1.0D : 0.0D; }
+            public void set(double value) { VelocityFeature.setBlinkFlush(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("BLINK MOTION", 0.0F, 100.0F, 5.0F, 0, "%", new Binding() {
+            public double get() { return VelocityFeature.getBlinkKeep() * 100.0F; }
+            public void set(double value) { VelocityFeature.setBlinkKeep((float) (value / 100.0D)); }
+        }));
+        entry.settings.add(Setting.check("BURST ROTATE", new Binding() {
+            public double get() { return VelocityFeature.isBurstRotate() ? 1.0D : 0.0D; }
+            public void set(double value) { VelocityFeature.setBurstRotate(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("BLINK REWIND", new Binding() {
+            public double get() { return VelocityFeature.isBlinkRewind() ? 1.0D : 0.0D; }
+            public void set(double value) { VelocityFeature.setBlinkRewind(value > 0.5D); }
         }));
     }
 
@@ -2549,6 +2652,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     /** 关闭动画播完后才真正切换回上一个界面。 */
     private void finishClose() {
         closing = false;
+        OpenMaverFeatures.playUiClick(0.9F);
         if (this.mc != null) {
             this.mc.displayGuiScreen(this.returnScreen);
         }
@@ -3497,6 +3601,17 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     int count = OpenMaverFeatures.getFakePlayerCount();
                     return count + (count == 1 ? " BOT" : " BOTS")
                             + "  ·  " + Math.round(OpenMaverFeatures.getFakePlayerDistance()) + " m";
+                }
+                if ("Velocity".equals(module.getName())) {
+                    String summary = VelocityFeature.getSummary();
+                    if (VelocityFeature.isBlinkSuppressedByProfile()) {
+                        summary += "  ·  OFF (LEGIT)";
+                    }
+                    // PACKET = S12 已被管线拦下；SNIFF = 退化为运动差分检测。
+                    // 末尾的 KB 计数是硬证据：为 0 说明根本没有击退包被处理。
+                    return summary + "  ·  "
+                            + (VelocityFeature.isPacketHookInstalled() ? "PACKET" : "SNIFF")
+                            + "  ·  KB " + VelocityFeature.getKnockbackApplied();
                 }
                 return module.getConfigKey().toUpperCase(Locale.ROOT);
             }

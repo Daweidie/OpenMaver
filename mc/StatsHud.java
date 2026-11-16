@@ -31,9 +31,8 @@ public final class StatsHud {
     private static final int MARGIN = 12;
     private static final int GAP = 6;
 
-    /** 顶部 FPS 胶囊。 */
+    /** 顶部 FPS 面板（与按键面板共用同一套直角深色底）。 */
     private static final int PANEL_H = 22;
-    private static final int FPS_RADIUS = 3;
     private static final int FPS_PAD_X = 9;
     private static final int FPS_MIN_W = 60;
     private static final float FPS_TEXT_SIZE = 0.95F;
@@ -52,7 +51,11 @@ public final class StatsHud {
     private static final int PANEL_SHADOW_ALPHA = 0x38;
 
     /** 按键底板：半透明灰色，按下时反白。 */
-    private static final int KEY_BG = 0xCC4A4A4A;
+    /**
+     * 与右上角功能栏一致的底色：{@code OpenMaverHud} 的模块列表就是
+     * {@code 0x000000} + alpha {@code 0x80} 的直角矩形。
+     */
+    private static final int KEY_BG = 0x80000000;
     private static final int KEY_BG_PRESSED = 0xDCE8EDF2;
     private static final int KEY_TEXT = 0xFFFFFFFF;
     private static final int KEY_TEXT_PRESSED = 0xFF20262D;
@@ -233,7 +236,7 @@ public final class StatsHud {
         GL11.glEnable(GL11.GL_POLYGON_SMOOTH);
 
         if (fpsEnabled) {
-            panel(x, y, fpsW, PANEL_H, FPS_RADIUS);
+            panel(x, y, fpsW, PANEL_H);
         }
         if (cpsEnabled) {
             drawKeyBoxes(x, keysY);
@@ -255,15 +258,32 @@ public final class StatsHud {
         }
     }
 
-    /** 灰色圆角底板：柔和投影 + 纯灰填充，不描边。 */
-    private static void panel(int x, int y, int w, int h, int radius) {
-        grayBox(x, y, w, h, radius, KEY_BG);
+    /**
+     * 统计 HUD 底板：**正方形**深色半透明，与右上角功能栏（{@code OpenMaverHud}
+     * 的模块列表）同一套底色 —— 那里就是 {@code 0x000000} + alpha {@code 0x80}、直角。
+     * 之前这里是圆角灰块，和功能栏摆在一起像两套 UI。
+     */
+    private static void panel(int x, int y, int w, int h) {
+        grayBox(x, y, w, h, KEY_BG);
     }
 
-    private static void grayBox(int x, int y, int w, int h, int radius, int fill) {
-        roundRect(x + 1, y + 2, w, h, radius,
-                withAlpha(0x000000, PANEL_SHADOW_ALPHA));
-        roundRect(x, y, w, h, radius, fill);
+    private static void grayBox(int x, int y, int w, int h, int fill) {
+        fillRect(x + 1, y + 2, w, h, withAlpha(0x000000, PANEL_SHADOW_ALPHA));
+        fillRect(x, y, w, h, fill);
+    }
+
+    /** 直角实心矩形（GL 立即模式，配合 draw() 里的混合状态）。 */
+    private static void fillRect(int x, int y, int w, int h, int argb) {
+        if (w <= 0 || h <= 0 || (argb >>> 24) == 0) {
+            return;
+        }
+        GlColor.set(argb);
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glVertex2f(x, y);
+        GL11.glVertex2f(x, y + h);
+        GL11.glVertex2f(x + w, y + h);
+        GL11.glVertex2f(x + w, y);
+        GL11.glEnd();
     }
 
     /** 键盘 / 鼠标 / CPS 的所有底板。 */
@@ -283,8 +303,8 @@ public final class StatsHud {
         boolean space = Keyboard.isKeyDown(Keyboard.KEY_SPACE);
         keyBox(x, rowY, KEYBOARD_W, SPACE_H, space);
         int markW = Math.min(18, KEYBOARD_W - 12);
-        roundRect(x + (KEYBOARD_W - markW) / 2, rowY + SPACE_H / 2 - 1,
-                markW, 2, 1, space ? KEY_TEXT_PRESSED : 0xB0FFFFFF);
+        fillRect(x + (KEYBOARD_W - markW) / 2, rowY + SPACE_H / 2 - 1,
+                markW, 2, space ? KEY_TEXT_PRESSED : 0xB0FFFFFF);
         rowY += SPACE_H + KEY_GAP;
 
         int halfW = (KEYBOARD_W - KEY_GAP) / 2;
@@ -296,7 +316,7 @@ public final class StatsHud {
     }
 
     private static void keyBox(int x, int y, int w, int h, boolean pressed) {
-        grayBox(x, y, w, h, 3, pressed ? KEY_BG_PRESSED : KEY_BG);
+        grayBox(x, y, w, h, pressed ? KEY_BG_PRESSED : KEY_BG);
     }
 
     /** 所有按键文字，统一使用 Maver 自带字体。 */
@@ -354,26 +374,6 @@ public final class StatsHud {
     private static boolean isModuleEnabled(String name) {
         Module module = ModuleManager.getModule(name);
         return module != null && module.isEnabled();
-    }
-
-    private static void roundRect(int x, int y, int w, int h, int radius, int argb) {
-        if (w <= 0 || h <= 0 || (argb >>> 24) == 0) {
-            return;
-        }
-        float r = Math.min(radius, Math.min(w / 2.0F, h / 2.0F));
-        GlColor.set(argb);
-        GL11.glBegin(GL11.GL_POLYGON);
-        for (int corner = 0; corner < 4; corner++) {
-            float centerX = x + ((corner == 0 || corner == 3) ? r : w - r);
-            float centerY = y + ((corner < 2) ? r : h - r);
-            float startAngle = 180.0F + corner * 90.0F;
-            for (int segment = 0; segment <= 6; segment++) {
-                double angle = Math.toRadians(startAngle + segment * 15.0F);
-                GL11.glVertex2f(centerX + (float) Math.cos(angle) * r,
-                        centerY + (float) Math.sin(angle) * r);
-            }
-        }
-        GL11.glEnd();
     }
 
     private static int withAlpha(int rgb, int alpha) {

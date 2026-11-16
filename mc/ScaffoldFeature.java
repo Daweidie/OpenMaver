@@ -157,6 +157,37 @@ public final class ScaffoldFeature {
     private static float lastAimPitch;
     /** 上一 tick 选好的放置目标：服务端此时已经收到它的 aim。 */
     private static PendingPlace pendingPlace;
+    /**
+     * 本 tick 已经发出过一条 C08 —— 本 tick 的飞包**必须**携带同一个角度。
+     *
+     * <p>这是 Grim 1.8 的真实语义（{@code CheckManagerListener#handleQueuedPlaces}）：
+     * C08 会先入队 {@code placeUseItemPackets}，等**下一条飞包**到达时才被派发给
+     * {@code onPostFlyingBlockPlace}；而 1.8 客户端走的分支是无条件的
+     *
+     * <pre><code>if ((now - lastBlockPlaceUseItem &lt; 15
+     *         || getClientVersion().isOlderThan(V_1_9)) &amp;&amp; hasLook) {
+     *     player.yaw = yaw;      // ← 用的是「后一条飞包」的 rotation
+     *     player.pitch = pitch;
+     * }</code></pre>
+     *
+     * <p>同时 {@code player.x/y/z} 被设成 {@code lastClaimedPosition}（**C08 之前**
+     * 那条飞包的位置，也就是发包时的当前位置）。于是 C08 的判定条件是：
+     * <b>用当前眼睛 + 本 tick 飞包里的 rotation 做 ray trace</b>。
+     *
+     * <p>所以「先发 aim，下一 tick 再放」只对了一半：aim 必须**跟着同一条 C08**
+     * 写进本 tick 的飞包，否则 Grim 用的是下一条飞包（下一个目标/相机）的 pitch。
+     */
+    private static boolean holdPlaceAim;
+    private static float holdPlaceYaw;
+    private static float holdPlacePitch;
+    /**
+     * 同一个目标最多重试几次。
+     *
+     * <p>每次重试都会让新角度先进一条 C03，所以「重试」的代价固定是 1 tick。
+     * 上限存在的意义不是省 tick，而是防止一个永远打不到的面把 {@code pendingPlace}
+     * 钉死、把后面 planPlacement 的新目标全部挡掉（那会表现为「站在原地不放方块」）。
+     */
+    static final int MAX_PENDING_RETRIES = 2;
 
     private static Class<?> blockPosType;
     private static Constructor<?> blockPosConstructor;
@@ -199,6 +230,7 @@ public final class ScaffoldFeature {
             }
             cameraYaw = wrapPlayerYaw(player);
             cameraPitch = playerPitch(player);
+            holdPlaceAim = false;
             aimPlayer = player;
             aimApplied = false;
             hookArmed = true;
@@ -378,6 +410,7 @@ public final class ScaffoldFeature {
         lastPlacementTick = Long.MIN_VALUE;
         lastPlacedTargetTick = Long.MIN_VALUE;
         pendingPlace = null;
+        holdPlaceAim = false;
         aimReady = false;
         aimApplied = false;
         hasAim = false;
@@ -481,14 +514,25 @@ public final class ScaffoldFeature {
             return;
         }
 
-        // 先放置上一 tick 已经选好、且服务端已经收到 aim 的目标。
-        // 1.8 的 C08 在 C03 之前到达服务端，Grim/RotationPlace 校验 C08 时
-        // 只有上一 tick 的 rotation，所以常规放置延迟一 tick；但“脚下已经
-        // 是空气”的紧急情况会直接放置（见 planPlacement 的 immediate）。
+        // 先放置上一 tick 已经选好 aim 的目标。
+        //
+        // 时序（Grim 1.8 实测语义，见 holdPlaceAim）：C08 在本 tick 的开头发出去，
+        // 紧接着本 tick 的飞包才带着 rotation 到达服务端，Grim 就是用**这条飞包**
+        // 的 yaw/pitch 去 ray trace 的。所以 flush 一旦成功，本 tick 剩下的时间
+        // 都必须把 rotation 固定在那个角度上 —— 不能再规划下一个目标（那会把
+        // aim 换成另一个目标的 pitch，判定必然失败）。
         flushPendingPlace(mc, player, world);
+        if (holdPlaceAim) {
+            // 立刻把 hold 的角度挂到 tickAim 上：后面任何提前 return（例如刚放完
+            // 最后一个方块）都不会让本 tick 的飞包退回相机角度 —— 那会让刚发出去
+            // 的 C08 被 Grim 用相机 rotation 判定（RotationPlace）。
+            applyHoldAim();
+        }
         if (blockCount <= 0) {
-            hasAim = false;
-            aimReady = false;
+            if (!holdPlaceAim) {
+                hasAim = false;
+                aimReady = false;
+            }
             return;
         }
 
@@ -505,7 +549,8 @@ public final class ScaffoldFeature {
         updateRotation(mc, player, currentYaw, eventYaw, eventPitch, yawDiffTo180,
                 diagonalYaw, useSnap, effectiveMode);
 
-        Placement placement = pendingPlace != null || (useSnap && !isSnapping)
+        // holdPlaceAim：本 tick 的飞包已经被刚发出的 C08 占用，不能再改 rotation。
+        Placement placement = holdPlaceAim || pendingPlace != null || (useSnap && !isSnapping)
                 ? null
                 : planPlacement(mc, player, world, useSnap, effectiveMode,
                         eventYaw, eventPitch);
@@ -563,21 +608,14 @@ public final class ScaffoldFeature {
         }
 
         if (placement != null && rotationTick <= 0 && canSnapPlace) {
-            if (placement.immediate && !grimStrict()) {
-                // 脚下已经是空气：晚一 tick 再放就掉下去了。
-                // 直接放置（C08 仍在 C03 之前，但这种情况本来就没有可用的上一 tick aim）。
-                setAim(hit.yaw, hit.pitch);
-                if (!placedThisTick()) {
-                    place(mc, player, world, placement.supportPos, placement.facing, hit);
-                } else {
-                    // 本 tick 开头已经 flush 过一次，最多每 tick 一个 C08。
-                    queuePlacement(placement);
-                }
-            } else {
-                // Grim 模式：C08 必须使用服务端已经收到的 aim，所以一律排队，
-                // 下一 tick 开头再 flush（预测 aim 已经提前发进 C03）。
-                queuePlacement(placement);
-            }
+            // 一律排队：C08 只能使用服务端已经在 C03 里收到的 aim。
+            //
+            // 以前 immediate（玩家已经踏空）会在 ClientTickEvent.START 里直接
+            // place()，那是 pre-flying 形态：服务端此刻的 rotation 还是相机角度，
+            // 一旦 flagBuffer>0，Grim 的 onBlockPlace 会 place.resync() 直接
+            // 取消这次放置 —— 既掉下去又记账（RotationPlace: pre-flying）。
+            // 排队只慢一 tick：本 tick 的 C03 带上 aim，下一 tick 开头再发 C08。
+            queuePlacement(placement);
             if (useSnap) {
                 snapCooldown = 1;
                 isSnapping = false;
@@ -586,7 +624,7 @@ public final class ScaffoldFeature {
             // MultiPlace / Post / Timer，因此这里不再重复放置。
         }
 
-        if (targetFacing != null && canSnapPlace) {
+        if (!holdPlaceAim && targetFacing != null && canSnapPlace) {
             if (rotationTick <= 0 || (rotationTick <= 1 && tower == 4 && canplace
                     && onairplace && candiffplace)) {
                 int bx = floor(OpenMaverFeatures.number(player, "posX", "field_70165_t"));
@@ -604,7 +642,8 @@ public final class ScaffoldFeature {
                 }
             }
             targetFacing = null;
-        } else if ((keepY == 2 || keepY == 4) && stage > 0 && !onGround && canSnapPlace) {
+        } else if (!holdPlaceAim && (keepY == 2 || keepY == 4) && stage > 0
+                && !onGround && canSnapPlace) {
             int nextBlockY = floor(OpenMaverFeatures.number(player, "posY", "field_70163_u")
                     + OpenMaverFeatures.number(player, "motionY", "field_70181_x"));
             if (nextBlockY <= startY && OpenMaverFeatures.number(player, "posY", "field_70163_u")
@@ -631,12 +670,18 @@ public final class ScaffoldFeature {
             // 真实准星模式：服务端视角就是相机，不需要任何 aim。
             hasAim = false;
         }
-        if (hasAim && aimHoldTicks > 0) {
+        if (holdPlaceAim) {
+            // 本 tick 的 C08 已经用这个角度做过 ray trace：飞包必须逐位相同，
+            // 不允许再加噪声（噪声已经在 flush 里加过一次、并且参与过校验）。
+            applyHoldAim();
+        } else if (hasAim && aimHoldTicks > 0) {
             // 只保留很短一段时间：避免没有新目标时服务端视角一直停在旧 aim，
             // 玩家转头后仍然朝很久以前的方向（看起来像“转了头却没反应”）。
             aimHoldTicks--;
-            tickAimYaw = lastAimYaw;
-            tickAimPitch = lastAimPitch;
+            // 同样要加微噪声：连续几 tick 保持同一个 aim 时，包里的 rotation
+            // 完全相等会被 Grim 记成 AimDuplicateLook。
+            tickAimYaw = lastAimYaw + aimMicroNoise();
+            tickAimPitch = lastAimPitch + aimMicroNoise();
             aimReady = true;
         } else {
             hasAim = false;
@@ -861,8 +906,8 @@ public final class ScaffoldFeature {
     // 方块的侧面，从上方射线先撞到顶面）。这里改成：
     //   1. 支撑方块必须与目标空气格直接相邻（六个邻居之一）；
     //   2. 每个候选面都用真实 rayTrace 验证，不可见就换下一个；
-    //   3. 玩家已经站在空气上时立即放置，否则提前一 tick 用“预测位置”瞄准，
-    //      下一 tick 再 flush，既快又不需要额外 C05。
+    //   3. 无论玩家是否已经站在空气上，都提前一 tick 用“预测位置”瞄准，
+    //      下一 tick 再 flush；C08 永远只用服务端已收到的 aim，不需要额外 C05。
     // ==================================================================
 
     private static Placement planPlacement(Minecraft mc, Object player, Object world,
@@ -984,7 +1029,7 @@ public final class ScaffoldFeature {
                     effectiveMode, eventYaw, eventPitch);
             if (predicted != null) {
                 if (currentAir) {
-                    // 已经踏空：别等下一 tick 了。
+                    // 已经踏空：标记为紧急（仍然要排队一 tick，见 Placement#immediate）。
                     predicted.immediate = true;
                 }
                 return predicted;
@@ -1438,6 +1483,21 @@ public final class ScaffoldFeature {
         if (aim == null || aim.hitVec == null || !holdingBlock(player) || blockCount <= 0) {
             return false;
         }
+        if (placedThisTick()) {
+            // 一 tick 只能有一个 C08：第二个会被 Grim 记成 MultiPlace（并在
+            // Post 里多一次 C08 记账）。flush 与队列都按「每 tick 一个」设计，
+            // 这里再兜一层。
+            OpenMaverDebug.noticeOnce("scaffold.place.multi",
+                    "second C08 in the same tick suppressed (MultiPlace)");
+            return false;
+        }
+        if (!OpenMaverFeatures.claimPlacement()) {
+            // 本 tick 的 C08 名额已经被别的模块（Velocity 的 farm）用掉了。
+            // 两个模块各自维护 "一 tick 一次" 挡不住对方，必须走公共闸门。
+            OpenMaverDebug.noticeOnce("scaffold.place.shared",
+                    "another module already sent a C08 this tick (MultiPlace)");
+            return false;
+        }
         Object stack = OpenMaverFeatures.call(player, "getHeldItem", "func_70694_bm", null);
         Object controller = OpenMaverFeatures.read(mc, "playerController", "field_71442_b", null);
         if (stack == null || controller == null) {
@@ -1453,6 +1513,11 @@ public final class ScaffoldFeature {
         if (!isCreative(mc, controller)) {
             blockCount--;
         }
+        // 本 tick 的飞包必须携带这个角度：Grim 先收 C08、再收本 tick 的飞包，
+        // 然后用那条飞包的 rotation 去 ray trace（见 holdPlaceAim）。
+        holdPlaceAim = true;
+        holdPlaceYaw = aim.yaw;
+        holdPlacePitch = aim.pitch;
         lastPlacedTargetX = blockPosX(blockPos) + FACING_DELTAS[facingIndex(facing)][0];
         lastPlacedTargetY = blockPosY(blockPos) + FACING_DELTAS[facingIndex(facing)][1];
         lastPlacedTargetZ = blockPosZ(blockPos) + FACING_DELTAS[facingIndex(facing)][2];
@@ -1633,19 +1698,38 @@ public final class ScaffoldFeature {
             }
 
             if (rotate) {
-                if (pendingPlace != null) {
-                    // pending 的 aim 必须和实际写进 C03 的完全一致。
-                    tickAimYaw = pendingPlace.yaw;
-                    tickAimPitch = pendingPlace.pitch;
-                    // 只有真正写进本 tick C03 的 aim，才允许下一 tick 用它发 C08。
-                    pendingPlace.sent = true;
+                if (holdPlaceAim) {
+                    // 本 tick 有一条 C08 已经发出：飞包必须和它逐位相同，
+                    // 不再叠加噪声（噪声已在 flush 的校验角度里）。
+                    tickAimYaw = holdPlaceYaw;
+                    tickAimPitch = holdPlacePitch;
+                } else if (pendingPlace != null) {
+                    // pending 的 aim 就是这一条 C03 的角度，只额外加一层 ±0.005°
+                    // 微噪声（连续几 tick 同一个 pending 时不能发出两份完全相同的
+                    // rotation，那是 Grim 的 AimDuplicateLook）。
+                    tickAimYaw = pendingPlace.yaw + aimMicroNoise();
+                    tickAimPitch = pendingPlace.pitch + aimMicroNoise();
                 }
-                setNumber(player, "rotationYaw", "field_70177_z", tickAimYaw);
+                // 连续角写包：yaw 差 360 是同一朝向，但服务端看原始浮点差，
+                // 从 -179 跳到 +179 会产生 358° 的包间 delta（Grim AimModulo360）。
+                float writeYaw = OpenMaverFeatures.continuousYaw(
+                        (float) OpenMaverFeatures.number(player, "rotationYaw", "field_70177_z"),
+                        tickAimYaw);
+                setNumber(player, "rotationYaw", "field_70177_z", writeYaw);
                 setNumber(player, "rotationPitch", "field_70125_A", tickAimPitch);
                 aimApplied = true;
                 rotationDirty = true;
-                serverYaw = tickAimYaw;
+                serverYaw = writeYaw;
                 serverPitch = tickAimPitch;
+                if (pendingPlace != null) {
+                    // 记下**真正写进 C03** 的角度（含噪声、含 continuousYaw 的
+                    // 360° 平移）。下一 tick 的 flush 用这两个值做 rayTrace，
+                    // C08 于是和服务端持有的 rotation 完全一致（RotationPlace）。
+                    // 只有真的写进过 C03 的 aim，才允许下一 tick 用它发 C08。
+                    pendingPlace.sentYaw = writeYaw;
+                    pendingPlace.sentPitch = tickAimPitch;
+                    pendingPlace.sent = true;
+                }
             }
         } catch (Throwable ignored) {
             // 绝不能让渲染/玩家 tick 因 hook 失败而中断。
@@ -1666,16 +1750,44 @@ public final class ScaffoldFeature {
         setAim(aim.yaw, aim.pitch);
     }
 
+    /**
+     * 写进 C03 的 aim 会加一个极小的噪声。
+     *
+     * <p>原因：Grim 的 {@code AimDuplicateLook} 判据是「连续两个包的 rotation 完全相同」。
+     * Scaffold 为了放置会连续几个 tick 保持同一个 aim，包里的 yaw/pitch 就会一模一样
+     * —— 真实玩家不可能做到，于是被判机械。噪声量级取 ±0.005°，比任何方块
+     * AABB 的角度尺度小两个数量级，不影响 ray trace，也不影响服务端命中判定。
+     *
+     * <p>注意：{@code lastAimYaw/lastAimPitch}（给 {@code rayAtBlock} 重算用的基准）
+     * 保留原值，只有真正写进包的 {@code tickAimYaw/tickAimPitch} 加噪声。
+     */
     private static void setAim(float aimYaw, float aimPitch) {
         lastAimYaw = aimYaw;
         lastAimPitch = aimPitch;
         hasAim = true;
-        tickAimYaw = aimYaw;
-        tickAimPitch = aimPitch;
+        tickAimYaw = aimYaw + aimMicroNoise();
+        tickAimPitch = aimPitch + aimMicroNoise();
         aimReady = true;
         // 只需要保留到本 tick 的 C03：下一 tick 开头 flush 用的是 pending.yaw，
         // 之后就让真实相机重新接管，避免转头后服务端还停在旧 aim 上。
         aimHoldTicks = 1;
+    }
+
+    /**
+     * 把「本 tick 那条 C08 的角度」写进 {@code tickAim*}。
+     *
+     * <p>不加噪声、不再从 {@code pendingPlace} 或相机取值：Grim 会拿本 tick 飞包的
+     * rotation 去 ray trace 这条 C08，角度只要差一点点就可能落到面外。
+     */
+    private static void applyHoldAim() {
+        tickAimYaw = holdPlaceYaw;
+        tickAimPitch = holdPlacePitch;
+        lastAimYaw = holdPlaceYaw;
+        lastAimPitch = holdPlacePitch;
+        hasAim = true;
+        aimReady = true;
+        aimHoldTicks = 1;
+        hookArmed = true;
     }
 
     /** tower / keepY 的路径拿到的是“支撑方块 + 点击面”，这里换算成目标空气格。 */
@@ -1692,13 +1804,22 @@ public final class ScaffoldFeature {
     /**
      * 放置上一 tick 选好的目标。
      *
-     * <p>这一刻服务端的 rotation 仍是上一 tick 的 C03 里的 aim，正好等于
-     * pending.yaw/pitch；用同一个角度重新做 rayTrace，C08 就能通过
-     * RotationPlace，而且没有额外 C05。
+     * <p>判定链（Grim 1.8，见 {@link #holdPlaceAim} 里引的源码）：C08 先入队，
+     * **本 tick 的飞包**到达时 Grim 才用它的 yaw/pitch + 当前眼睛做 ray trace，
+     * 去撞 C08 里那个 {@code place.position}（被点击的方块，即 {@code supportPos}）。
      *
-     * <p>如果玩家在移动导致同一角度打不到原面，先尝试从当前眼睛到 pending
-     * hitVec 重新计算角度；仍失败时直接使用 pending.hitVec 发包。服务端的
-     * 放置只依赖 blockPos/face，hitVec 只是命中点，所以这样不会丢放置。
+     * <p>所以这里必须做两件事，缺一就会 flag：
+     * <ol>
+     *   <li>选一个角度，并且**用它自己**做一次 rayTrace（不是拿另一个角度校验、
+     *       再发第三个角度）；</li>
+     *   <li>把这个角度锁进本 tick 的飞包（{@code place()} 里的
+     *       {@code holdPlaceAim}），本 tick 不许再规划别的目标。</li>
+     * </ol>
+     *
+     * <p>角度对不上（玩家移动/转头）时不换角度直接发 C08，而是重新瞄准、只把新
+     * 角度交给本 tick 的飞包，下一 tick 再放置（{@code MAX_PENDING_RETRIES} 封顶）。
+     *
+     * @see #pendingAction(boolean, boolean, int) 决策表（包层测试直接断言它）
      */
     private static void flushPendingPlace(Minecraft mc, Object player, Object world) {
         PendingPlace pending = pendingPlace;
@@ -1706,12 +1827,30 @@ public final class ScaffoldFeature {
         if (pending == null || !holdingBlock(player) || blockCount <= 0) {
             return;
         }
-        if (!pending.sent) {
-            // 上一 tick 的 C03 没有真正带上这个 aim（例如输入 hook 没执行、
-            // GUI/暂停切换）。现在补写进本 tick 的 C03，下一 tick 再放置；
-            // 绝不能拿服务端没收到过的角度去发 C08（RotationPlace）。
+        if (VelocityFeature.isBlinking()) {
+            // Velocity 的 blink 窗口里所有位置包都被扣住了，Grim 的
+            // lastClaimedPosition 比客户端老 1~2 tick。这时候用「当前眼睛」
+            // 算出来的 hitVec 与它判定的几何不是同一个位置 —— 日志里
+            // PositionPlace / FarPlace / AirLiquidPlace 就是从这个错位来的。
+            // 位置包恢复之前一律不放，pending 原样留到下一 tick。
             pendingPlace = pending;
-            setAim(pending.yaw, pending.pitch);
+            OpenMaverDebug.noticeOnce("scaffold.pending.blink",
+                    "placement held: Velocity is blinking (position base is stale)");
+            return;
+        }
+        if (!pending.sent) {
+            // 上一 tick 的飞包没有真正带上这个 aim（输入 hook 没执行、GUI/暂停
+            // 切换、刚开启模块）。补写进本 tick 的飞包，下一 tick 再放置。
+            // 这样 pre 分支（C08 立刻触发的 onBlockPlace）也能看到同一个角度。
+            if (pendingAction(false, false, pending.retries) == PendingAction.RESEND_AIM) {
+                PendingPlace again = pending.withAim(pending.hit, pending.yaw, pending.pitch);
+                again.retries = pending.retries + 1;
+                pendingPlace = again;
+                setAim(pending.yaw, pending.pitch);
+            } else {
+                OpenMaverDebug.noticeOnce("scaffold.pending.unsent",
+                        "pending aim never reached a C03; dropped");
+            }
             return;
         }
         if (!isReplaceable(world, pending.targetPos)
@@ -1719,72 +1858,122 @@ public final class ScaffoldFeature {
                 || isInteractable(world, pending.supportPos)) {
             return;
         }
+        // 选一个「本 tick 的飞包会原样发出去」的角度，并且**用它自己**做一次
+        // ray trace。Grim 判定 C08 用的就是这条飞包的 rotation（见 holdPlaceAim），
+        // 所以校验角度与发包角度必须逐位相同 —— 这是 RotationPlace 的唯一判据。
+        //
+        // 候选阶梯：
+        //   1. sentYaw/sentPitch + 微噪声（上一 tick 发过的角度，量级差 0.005°，
+        //      保证连续两条飞包的 rotation 不完全相等 → AimDuplicateLook）；
+        //   2. sentYaw/sentPitch（噪声把射线挤出命中面时的回退）；
+        //   3. pending.yaw/pitch（上一 tick 的连续角被平移过 360° 时用基准值）。
+        float placeYaw = pending.sentYaw + aimMicroNoise();
+        float placePitch = pending.sentPitch + aimMicroNoise();
         AimHit hit = rayAtBlock(mc, player, world, pending.supportPos, pending.facing,
-                pending.yaw, pending.pitch);
-        if (hit == null && !grimStrict()) {
-            // 非 bypass 模式允许用当前眼睛重新计算角度并立即放置。
-            if (pending.hit != null && pending.hit.hitVec != null) {
-                // 角度已经对不上（玩家移动/转头），但目标格还在：用当前眼睛重算一次角度。
-                double dx = vecX(pending.hit.hitVec)
-                        - OpenMaverFeatures.number(player, "posX", "field_70165_t");
-                double dy = vecY(pending.hit.hitVec)
-                        - OpenMaverFeatures.number(player, "posY", "field_70163_u")
-                        - OpenMaverFeatures.eyeHeight(player);
-                double dz = vecZ(pending.hit.hitVec)
-                        - OpenMaverFeatures.number(player, "posZ", "field_70161_v");
-                float[] rots = rotationsTo(dx, dy, dz, pending.yaw, pending.pitch);
-                hit = rayAtBlock(mc, player, world, pending.supportPos, pending.facing,
-                        rots[0], rots[1]);
-                if (hit == null) {
-                    // 最后兜底：直接发原 hitVec。这里仍然检查一次距离，避免超距发包。
-                    double reach = blockReachDistance(mc, player) + 1.5D;
-                    double eyeY = OpenMaverFeatures.number(player, "posY", "field_70163_u")
-                            + OpenMaverFeatures.eyeHeight(player);
-                    if (distanceSqToCenter(pending.supportPos,
-                            OpenMaverFeatures.number(player, "posX", "field_70165_t"),
-                            eyeY,
-                            OpenMaverFeatures.number(player, "posZ", "field_70161_v"))
-                            <= reach * reach) {
-                        hit = pending.hit;
-                    } else {
-                        OpenMaverDebug.noticeOnce("scaffold.pending.ray",
-                                "pending placement out of reach; dropped");
-                        return;
-                    }
-                }
-            }
+                placeYaw, placePitch);
+        if (hit == null) {
+            placeYaw = pending.sentYaw;
+            placePitch = pending.sentPitch;
+            hit = rayAtBlock(mc, player, world, pending.supportPos, pending.facing,
+                    placeYaw, placePitch);
         }
         if (hit == null) {
-            // bypass 模式不能换角度立即发 C08；把重新算出的角度留给本 tick 的
-            // C03，下一 tick 再用服务端已经收到的这个 aim 放置。
-            // 以前这里直接丢弃，边缘连续转头时每次预测都会失手，表现出来就是
-            // “一直不放方块”。重新排队最多只慢 1 tick；同一次目标只重试一次，
-            // 避免一直重试同一个面而抢走后面 planPlacement 的新目标。
-            Placement retry = pending.retried ? null
-                    : findPlacementForTarget(mc, player, world,
-                            blockPosX(pending.targetPos), blockPosY(pending.targetPos),
-                            blockPosZ(pending.targetPos),
-                            OpenMaverFeatures.number(player, "posX", "field_70165_t")
-                                    + OpenMaverFeatures.number(player, "motionX", "field_70159_w"),
-                            OpenMaverFeatures.number(player, "posY", "field_70163_u")
-                                    + OpenMaverFeatures.eyeHeight(player),
-                            OpenMaverFeatures.number(player, "posZ", "field_70161_v")
-                                    + OpenMaverFeatures.number(player, "motionZ", "field_70179_y"),
-                            true, rotations == 0 ? 0 : 1, cameraYaw, cameraPitch);
-            if (retry != null) {
-                queuePlacement(retry);
-                if (pendingPlace != null) {
-                    pendingPlace.retried = true;
+            placeYaw = pending.yaw;
+            placePitch = pending.pitch;
+            hit = rayAtBlock(mc, player, world, pending.supportPos, pending.facing,
+                    placeYaw, placePitch);
+        }
+        if (hit == null) {
+            // §4.1：目标格还在，但上一 tick 发出去的角度已经打不到原来的面
+            // （玩家移动/转头）。重新算一个角度，**只写进本 tick 的 C03**，
+            // 下一 tick 再用它放置 —— 绝不立即发 C08。
+            if (pendingAction(true, false, pending.retries) == PendingAction.REQUEUE) {
+                Placement reaim = reaimPending(mc, player, world, pending);
+                if (reaim != null && reaim.hit != null) {
+                    PendingPlace retry = new PendingPlace(reaim.targetPos, reaim.supportPos,
+                            reaim.facing, reaim.hit, reaim.hit.yaw, reaim.hit.pitch);
+                    retry.retries = pending.retries + 1;
+                    pendingPlace = retry;
+                    setAim(reaim.hit.yaw, reaim.hit.pitch);
+                    OpenMaverDebug.noticeOnce("scaffold.pending.requeue",
+                            "pending aim missed server rotation; re-aimed for next tick");
+                    return;
                 }
-                OpenMaverDebug.noticeOnce("scaffold.pending.requeue",
-                        "pending placement missed after turning; re-aimed for next tick");
-            } else {
-                OpenMaverDebug.noticeOnce("scaffold.pending.ray",
-                        "pending placement no longer ray-hits; dropped (grim strict)");
             }
+            OpenMaverDebug.noticeOnce("scaffold.pending.ray",
+                    "pending placement no longer ray-hits; dropped");
             return;
         }
         place(mc, player, world, pending.supportPos, pending.facing, hit);
+    }
+
+    /**
+     * 为同一个目标格重新找一个「本 tick 就该发出去」的角度。
+     *
+     * <p>返回值只会交给 {@link #setAim} 写进本 tick 的 C03，下一 tick 才用它发
+     * C08，所以这里可以放心按**预测眼睛位置**重新选面/重新采样（预测位置才是
+     * 这条 C03 发出时的真实眼睛）。同 tick 立即使用的写法会直接命中
+     * {@code RotationPlace: post-flying}。
+     */
+    private static Placement reaimPending(Minecraft mc, Object player, Object world,
+            PendingPlace pending) {
+        double px = OpenMaverFeatures.number(player, "posX", "field_70165_t");
+        double py = OpenMaverFeatures.number(player, "posY", "field_70163_u");
+        double pz = OpenMaverFeatures.number(player, "posZ", "field_70161_v");
+        double eye = OpenMaverFeatures.eyeHeight(player);
+        // 眼睛用**当前位置**：Grim 在派发 C08 时把 player.x/y/z 设成
+        // lastClaimedPosition（C08 之前那条飞包的位置 = 现在的客户端位置），
+        // 不是下一 tick 的预测位置。
+        Placement placement = findPlacementForTarget(mc, player, world,
+                blockPosX(pending.targetPos), blockPosY(pending.targetPos),
+                blockPosZ(pending.targetPos),
+                px, py + eye, pz,
+                false, rotations == 0 ? 0 : 1, cameraYaw, cameraPitch);
+        if (placement != null && placement.hit != null) {
+            return placement;
+        }
+        // 目标格周围再没有别的可见面：退回「从当前眼睛重瞄 pending.hitVec」，
+        // 仍然必须通过一次真实 rayTrace 才算数（没有 hitVec 就放弃）。
+        if (pending.hit == null || pending.hit.hitVec == null) {
+            return null;
+        }
+        double dx = vecX(pending.hit.hitVec) - px;
+        double dy = vecY(pending.hit.hitVec) - py - eye;
+        double dz = vecZ(pending.hit.hitVec) - pz;
+        float[] rots = rotationsTo(dx, dy, dz, pending.yaw, pending.pitch);
+        AimHit hit = rayAtBlock(mc, player, world, pending.supportPos, pending.facing,
+                rots[0], rots[1]);
+        return hit == null ? null
+                : new Placement(pending.targetPos, pending.supportPos, pending.facing,
+                        hit, false);
+    }
+
+    /**
+     * flush 时对一个 pending 目标的决策。
+     *
+     * <p>纯函数（不碰世界、不碰包），{@code tools/scaffold-test} 直接断言这张
+     * 表：**只有 rayHit 为真时才允许 PLACE**，其它分支一律先让角度进 C03。
+     */
+    static PendingAction pendingAction(boolean sent, boolean rayHit, int retries) {
+        if (!sent) {
+            return retries >= MAX_PENDING_RETRIES ? PendingAction.DROP : PendingAction.RESEND_AIM;
+        }
+        if (rayHit) {
+            return PendingAction.PLACE;
+        }
+        return retries >= MAX_PENDING_RETRIES ? PendingAction.DROP : PendingAction.REQUEUE;
+    }
+
+    /** {@link #pendingAction} 的结果。 */
+    enum PendingAction {
+        /** 用服务端已收到的 aim 发 C08。 */
+        PLACE,
+        /** 角度没进过 C03：写 aim，本 tick 不发 C08。 */
+        RESEND_AIM,
+        /** 角度打不到原面：重算角度写进 C03，下一 tick 再放。 */
+        REQUEUE,
+        /** 重试到上限：丢弃这次放置。 */
+        DROP
     }
 
     /**
@@ -1799,9 +1988,15 @@ public final class ScaffoldFeature {
             aimApplied = false;
             return;
         }
-        setNumber(player, "rotationYaw", "field_70177_z", cameraYaw);
+        // 恢复视角也要走最短路径：cameraYaw 是取模后的值，而 aim 期间写出去的是
+        // 连续角（可能 180.6）。直接写 -179.4 会让服务端看到 360° 的包间 delta
+        // —— 正好命中 Grim AimModulo360（|delta| > 320 且上一 tick < 30）。
+        float restoreYaw = OpenMaverFeatures.continuousYaw(
+                (float) OpenMaverFeatures.number(player, "rotationYaw", "field_70177_z"),
+                cameraYaw);
+        setNumber(player, "rotationYaw", "field_70177_z", restoreYaw);
         setNumber(player, "rotationPitch", "field_70125_A", cameraPitch);
-        setNumber(player, "prevRotationYaw", "field_70126_B", cameraYaw);
+        setNumber(player, "prevRotationYaw", "field_70126_B", restoreYaw);
         setNumber(player, "prevRotationPitch", "field_70127_C", cameraPitch);
         // 第一人称手臂也回到相机方向，否则手会朝脚下抬。
         setNumber(player, "renderArmYaw", "field_71154_f", cameraYaw);
@@ -1816,7 +2011,13 @@ public final class ScaffoldFeature {
 
     private static long currentTick;
 
-    /** 本 tick 是否已经放过方块（避免 START 的 flush + 紧急放置连续发两个 C08）。 */
+    /** ±0.005° 的确定性微噪声（不用 Random，避免影响任何随机节奏）。 */
+    private static float aimMicroNoise() {
+        long n = System.nanoTime() % 1000L;
+        return (float) ((n - 500L) * 1.0E-5D);
+    }
+
+    /** 本 tick 是否已经放过方块：一 tick 只允许一个 C08（MultiPlace）。 */
     private static boolean placedThisTick() {
         return lastPlacementTick != Long.MIN_VALUE && lastPlacementTick == currentTick;
     }
@@ -2887,7 +3088,7 @@ public final class ScaffoldFeature {
         return "support=" + blockPosX(placement.supportPos) + ","
                 + blockPosY(placement.supportPos) + "," + blockPosZ(placement.supportPos)
                 + "/" + FACING_NAMES[facingIndex(placement.facing)]
-                + (placement.immediate ? " immediate" : " queued");
+                + (placement.immediate ? " urgent(queued)" : " queued");
     }
 
     private static String describeMop(Object mop) {
@@ -3090,6 +3291,19 @@ public final class ScaffoldFeature {
     public static void setKeepY(int value) { keepY = clamp(value, 0, 4); reset(); OpenMaverFeatures.markDirty(); }
     public static int getBlockCount() { return blockCount; }
 
+    /**
+     * 本 tick 是否会用「静默 aim」覆盖 rotation。
+     *
+     * <p>Scaffold 的 aim 是在 {@code updatePlayerMoveState()} 里写进
+     * {@code rotationYaw/Pitch} 的，比其它模块（Velocity 的 sprint-slap、
+     * KillAura）都晚。所以别人如果按**当前** rotation 做射线判定（攻击是否命中
+     * Hitbox、C08 是否打在这个面上），那条 C03 实际带出去的角度会与判定的不一致。
+     * 这里给它们一个"本 tick 视角会被改"的信号，让它们跳过这一 tick。
+     */
+    public static boolean isAimingThisTick() {
+        return holdPlaceAim || pendingPlace != null || (hasAim && aimReady);
+    }
+
     private static final class BlockData {
         private final Object blockPos;
         private final Object facing;
@@ -3122,10 +3336,14 @@ public final class ScaffoldFeature {
         private final Object supportPos;
         private final Object facing;
         private final AimHit hit;
+        /** 没加微噪声的基准角度（重算 aim、移动修正用）。 */
         private final float yaw;
         private final float pitch;
-        /** 是否已经为这个目标重新计算过一次 aim。 */
-        private boolean retried;
+        /** 真正写进 C03 的角度：flush 用它做 rayTrace，才和服务端 rotation 一致。 */
+        private float sentYaw;
+        private float sentPitch;
+        /** 已经重新瞄准过几次（{@link #MAX_PENDING_RETRIES} 是上限）。 */
+        private int retries;
         /** 该 pending 的 aim 是否真的写进了上一 tick 的 C03。 */
         private boolean sent;
 
@@ -3137,6 +3355,12 @@ public final class ScaffoldFeature {
             this.hit = hit;
             this.yaw = yaw;
             this.pitch = pitch;
+            this.sentYaw = yaw;
+            this.sentPitch = pitch;
+        }
+
+        private PendingPlace withAim(AimHit hit, float yaw, float pitch) {
+            return new PendingPlace(targetPos, supportPos, facing, hit, yaw, pitch);
         }
     }
 
@@ -3147,7 +3371,13 @@ public final class ScaffoldFeature {
         private final Object facing;
         private final AimHit hit;
         private final boolean predicted;
-        /** 玩家已经站在空气上时立即放置，不再等下一 tick。 */
+        /**
+         * 玩家已经站在空气上（这一 tick 不放就会掉下去）。
+         *
+         * <p>只影响优先级/日志：{@link #tick} 对 immediate 与普通目标一样排队，
+         * 因为抢在 C03 之前发 C08 是 pre-flying 形态，会被 Grim 的
+         * {@code onBlockPlace} 直接 {@code place.resync()} 取消（RotationPlace）。
+         */
         private boolean immediate;
 
         private Placement(Object targetPos, Object supportPos, Object facing, AimHit hit,

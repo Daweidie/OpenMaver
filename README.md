@@ -3,7 +3,7 @@
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
 > 说明：本仓库包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接）
-> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、FPS / CPS 统计）
+> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Velocity、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、FPS / CPS 统计）
 > 以及 `legit / balanced / aggressive` 三档 Grim 对测 profile。
 > 请仅在你拥有或获得明确授权的服务器上进行测试。
 
@@ -36,6 +36,7 @@ OpenMaver/
 │       ├── movement/AutoSprint.java  # 示例模块（链路验证器）
 │       ├── combat/KillAura.java  # 自动攻击开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── movement/Scaffold.java # 自动搭路/神桥开关（MC 侧逻辑在 ScaffoldFeature）
+│       ├── movement/Velocity.java # 防击退开关（MC 侧逻辑在 VelocityFeature）
 │       ├── player/FastPlace.java  # 快速右键开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── render/TargetHud.java  # 目标信息面板开关（MC 侧绘制在 mc/TargetHud）
 │       ├── render/PlayerXray.java # 玩家透视开关（MC 侧绘制在 OpenMaverFeatures）
@@ -350,12 +351,31 @@ debug.enabled=false         # true 时写入 logs/openmaver-debug.log
 - `combat/Hitboxes`：Reach 的射线完全没命中 AABB 时触发。
 - `aim/AimDuplicateLook`：重复相同 rotation 会 flag；本项目在没有实际变化时不写
   rotation 字段。
-- `aim/AimModulo360`：`|deltaYaw| > 320` 会 flag；所有自动 yaw 都 wrap 到
-  `[-180, 180)`，并且单 tick 限速。
-- `scaffolding/RotationPlace`：C08 使用服务端已收到的 yaw/pitch 做 ray trace，
-  而 1.8 的 C08 在 C03 之前到达服务端，因此校验时只有**上一 tick**的 rotation。
-  Scaffold 现在把 aim 写进本 tick 正常的 C03，放置延迟到下一 tick，用同一个
-  aim 重新做 ray trace，不再补发 C05。
+- `aim/AimModulo360`：`|deltaYaw| > 320` 且上一 tick `< 30` 会 flag，抓的是
+  **客户端自己把 yaw 取模 360**（跨 ±180 时包间凭空跳 358°）。所以自动 yaw
+  必须**连续累加、不取模**（`advanceYaw` / `continuousYaw`），单 tick 限速照旧。
+  早期这里写成「wrap 到 [-180,180)」是反的，实测会被连续 flag（vl 每次 +0.975）。
+- `scaffolding/RotationPlace`：**判定时机是「C08 之后的那条飞包」**。
+  `CheckManagerListener` 把 C08 先入队，等下一条飞包到达才派发
+  `onPostFlyingBlockPlace`；1.8 客户端走的分支无条件用**这条飞包**的
+  yaw/pitch 覆盖 `player.yaw/pitch`，位置取 `lastClaimedPosition`（C08 之前那条
+  飞包的位置 = 发包时的当前位置）。`didRayTraceHit` 的 pitch 只有这一个来源，
+  yaw 才允许 `lastYaw` 回退（1.8 没有 lastPitch）。
+  因此 Scaffold 的不变量是：**用本 tick 会发出去的角度做 ray trace，发 C08，
+  然后把本 tick 的飞包锁成同一个角度**（`holdPlaceAim` / `applyHoldAim`），
+  该 tick 不再规划新目标。角度对不上就重新瞄准、下一 tick 再放
+  （`MAX_PENDING_RETRIES=2`），绝不拿没校验过的角度发包。
+
+  > 17:31 那局证明了「先发 aim、下一 tick 再放」**不够**：Grim 用的是再下一条
+  > 飞包的角度，所以放置那一 tick 的包会被下一个目标的 aim（或相机）占掉，
+  > 100% flag。第二版修复（`holdPlaceAim`）、源码引用与代价分析见
+  > `design/SCAFFOLD_ROTATIONPLACE_HANDOFF.md` §2.1 / §11。
+  > 代价是每 2 tick 一块（10 块/秒）。回归测试：`tools/scaffold-test/run.sh`
+  > （43 项，含按包序建模的 C08→飞包时序模拟）。
+
+  > 早前记录的两处破口也已收口：`flushPendingPlace` 里「重算角度后立刻放置」
+  > 改为**重新排队**；`placement.immediate` 的即时放置改为**一律排队**；
+  > `place()` 增加「一 tick 只发一个 C08」的守卫（`MultiPlace`）。
 - `timer/Timer`：每个 tick 包固定按 50ms 计费；Scaffold 不再额外发
   `C05PacketPlayerLook`，每 tick 只有一条 C03 族包。
 - `multiactions/*`：使用物品时攻击/挥击、同 tick 方块+实体交互、移动中开背包都会
@@ -395,12 +415,16 @@ IO 失败只记录一次并自动停用 debug。
   - 放置节奏：玩家还站在实心方块上时，用**下一 tick 的预测位置**提前把 aim 写进
     C03，下一 tick 开头再用同一角度 flush，因此走/跑/转头都能跟上。预测优先使用
     当前实际速度（惯性），快速转头时不会再按新按键方向把目标格算到错误一侧；
-    瞄准点优先取面中心，flush 失败时会用当前眼睛重算 aim 并重排一次。
+    瞄准点优先取面中心；flush 失败时**只重算 aim 并排队**（下一 tick 才放置，
+    重试上限 2 次）。放置成功的那一 tick 会把 rotation 锁在「刚校验过的角度」上
+    （`holdPlaceAim`），下一 tick 才规划新目标 —— 这是 Grim 1.8
+    `RotationPlace` 判定链决定的，代价是每 2 tick 一块。
   - 在方块边缘原地转头时，如果距离相机方向的边缘 ≤0.55 格，会把相机前方一格
     也作为目标，因此在边缘停下转身也能继续铺路。
-  - 对 Grim：开启 bypass 时不即时放置、不在 flush 时换角度/换 hitVec（否则会触发
-    `PositionPlace`/`RotationPlace`），只保留“预测 aim → 下一 tick 同一角度放置”；
-    玩家已经踏空时也排队一 tick。
+  - 对 Grim：**任何情况都不即时放置**（含玩家已经踏空），只保留
+    “预测 aim → 下一 tick 同一角度放置”；flush 失败时重算出的角度也只进本 tick
+    的 C03，绝不换角度直接发 C08（否则会触发 `RotationPlace: post-flying` /
+    `PositionPlace`）。
   - `SafeWalk` 改为原版潜行防边缘的收缩步长，不再在离边缘 0.45 格时清空
     `motionX/Z`。**开启 bypass 时 SafeWalk 会自动禁用**，因为它直接改 motion，
     是 `Simulation` 的主要来源。
@@ -427,11 +451,95 @@ IO 失败只记录一次并自动停用 debug。
   只负责模块开关；`OpenMaverFeatures.onTickStart()` 每 tick 驱动。
 - 实现说明：`design/SCAFFOLD_HANDOFF.md` 记录了状态机、旋转模式、Tower/KeepY 与反射/SRG 名称。
 
+### Velocity 防击退（SPRINT SLAP / Blink Burst）
+
+> **2026-11-16 结论修正**：Grim 上真正能用的只有 `SPRINT SLAP`。它一个字节的
+> 运动都不改，靠 1.8 原版「冲刺攻击把自己的水平速度 ×0.6」削击退 —— 这条 0.6
+> 在 Grim 的 `PredictionEngine.addAttackSlowToPossibilities` 里本来就是一条
+> 预测分支（每个攻击包一条，上限 5），所以既不欠位移也不吃 AntiKB。
+> 其余模式（`UNCERTAINTY` / `BLINK BURST` / `REVERSAL` / 低比例 `MODIFY`）在
+> Grim 上必然产生 flag，`GRIM GUARD` 现在一律把它们升级成 `SPRINT SLAP`。
+> 实机证据与逐条归因见 `design/VELOCITY_HANDOFF.md` 顶部。
+>
+> **2026-11-16 19:1x（18:53 那局 vl 涨到 83 之后，按 Grim 2.0 源码重做）**：
+> `SPRINT SLAP` 的思路没错，错在 0.6 分支的成立条件。Grim 的
+> `PacketPlayerAttack` 里，没拿击退附魔的 1.8 客户端只有
+> `player.lastSprinting`（**上一 tick 结束时的冲刺状态**）为真时才会生成
+> `(0.6, 1, 0.6)` 预测分支，而且每 tick 只给一条
+> （`maxAttackSlow = minAttackSlow = 1`）。原实现攻击前
+> `setSprinting(true)`、原版攻击里 `setSprinting(false)`，tick 结束时冲刺是关的
+> → 下一发 0.6 一个分支都没有 → offset 恰好 `0.4 × v`：
+> `.143976 = 0.4×0.36`、`.046243 = 0.4×0.1156`、`.006153 = 0.4×0.0154`，
+> 和日志逐条对应。现在：
+> 1. 原版乘完**立刻把冲刺打开**，tick 结束保持冲刺（下一发才有 `lastSprinting`）；
+> 2. 出手闸门 `isSprinting && sprintAtLastTickEnd`，本 tick 已有别的 C02 也不打
+>    （KillAura 双刀 = 0.36 对 0.6）；
+> 3. 窗口从 `kbArriveTick + 1` 开始（Grim 的击退由两个 transaction 夹住 S12，
+>    同批事务下一 tick 才确认；`AntiKB` 的 `offsetToFlag` 默认只有 0.001）；
+> 4. 原版没乘 0.6（目标无敌帧）时**不补乘**；距离卡 2.9 格；窗口上限 5。
+
+- 配置路径：`movement.velocity`，默认关闭，默认键位留空（自行绑定）。
+- 逻辑在 `mc/VelocityFeature.java`，Netty 管线处理器在 `mc/VelocityPacketHook.java`。
+- **数据源**：入站 `S12PacketEntityVelocity`。本模块把 handler 插在 1.8.9 管线的
+  `packet_handler` 之前（即 `encoder` 之后），在同一位置拿到入站、出站两个方向的
+  `Packet` 对象：入站直接吞掉自己的击退包，出站按 blink 需要扣住 C03 移动包。
+  - 为什么不是插在 `encoder` 之前：出站方向从 tail 往 head 走，`packet_handler` 先于
+    `encoder` 执行；排在 `encoder` 之前的 handler 只能拿到序列化后的 ByteBuf，
+    blink 会完全失效。管线名与顺序取自真实 1.8.9 jar 的 `NetworkManager`。
+  - 注入失败（例如别的 mod 重写了管线）时自动退化为运动特征嗅探：水平速度 ≥ 0.33
+    且与上一 tick 的快照有明显突变、垂直非负（冲刺跳约 0.28、下落为负，都不会误触）。
+- **模式**（`velocity.mode`）：
+  - `MODIFY`：水平/垂直击退按比例缩放，0% = 完全无视，100% = 原版。
+  - `REVERSAL`：先吃掉击退，延迟 `REVERSAL DELAY` 毫秒后把反向速度打出去，把自己
+    推向对手。
+  - `STRAFE`：把向后的击退转成当前输入方向上的速度；没有输入时沿击退法线侧移
+    （绕对手走位）。
+  - `JUMP RESET`：击退到达的瞬间（可延迟 0~3 tick）起跳，用跳跃覆盖击退水平分量。
+    触发点是击退事件本身，不依赖 `hurtTime` 之类 SRG 名相近的受击字段。
+  - `NOXZ`（**GRIM 预设默认**，OpenZen `AntiKB/NoXZ` 移植）：空中挨打时吞掉 S12、
+    冻结出站 C03、扣住 `S32`（transaction 回执）→ 落地再放位置包、补给客户端击退、
+    连打 `NOXZ ATTACKS` 次（每次 ×0.6），下一 tick 才回执。核心是**骗 Grim 的
+    transaction 时序**：回执没回去，它只能把这段击退当成「可能还没到」，预测里
+    「没吃击退」也是合法分支。
+  - `SPRINT SLAP`（不依赖 transaction 时序）：S12 **原样放行**（客户端真的吃这次击退），
+    记录 `|kb|` 并开一个窗口（上限 5 tick = Grim 的 attack-slow 分支数，
+    0.6^5 ≈ 7.8%）；窗口**从收到击退的下一 tick 开始**，每 tick 打一次**准星里
+    2.9 格内**的实体，由原版冲刺攻击把 `motionX/Z` 乘 0.6，冲刺状态用
+    `C0BPacketEntityAction` 在 C03 之前同步。不发 C08、不憋包、不写 motion，
+    所以 `AntiKB / Simulation / Timer / FabricatedPlace / Hitboxes /
+    GroundSpoof / BadPacketsN` 一个都不会出现；原版这一下没乘 0.6（目标无敌帧 /
+    够不着）时整 tick 放弃，绝不自己补乘。
+  - `BLINK BURST`：收到击退后憋住 `BLINK TICKS`（默认 5）个 tick 的位置包，窗口
+    结束时**先一口气补发 `BURST ATTACKS`（默认 5）条攻击包**（C0A -> C02 交替，
+    服务端此时仍用憋包前的旧位置结算），**再补发缓存的位置包**。
+    `FLUSH POSITION` 关闭时改为直接丢弃位置包（表现成瞬移）。
+    仅用于对测，Grim 上会吃 `Timer / Simulation / BadPacketsN`。
+- **服务器预设**（`velocity.server`）：`CUSTOM / VANILLA / HYPIXEL / GRIM / INTAVE`，
+  只是把模式与参数配成一组针对该服务端反作弊观感的组合，之后仍可继续微调：
+  - `VANILLA`：`MODIFY 0/0%`。
+  - `HYPIXEL`：`MODIFY 12/0%` + 起跳延迟 1 tick（保留少量水平更接近人手）。
+  - `GRIM`：`NOXZ x3`（`velocity.horizontal/vertical = 100%`，即完全不改击退包），
+    守护把任何归零类模式（REVERSAL / UNCERTAINTY / BLINK / 低比例 MODIFY）升级成
+    `SPRINT SLAP`。
+  - `INTAVE`：`REVERSAL 100ms`、垂直 35%（击退判定有时间窗）。
+- 与 bypass profile 的联动：`LEGIT` 档下 blink 降级为 `JUMP RESET`，水平/垂直
+  保留比例至少 45% / 65%，避免一次抹平被运动预测直接判出；GUI 会显示 `OFF (LEGIT)`。
+- 主要设置（`config/openmaver.properties` 的 `velocity.*`）：
+  `velocity.mode / server / horizontal / vertical / reversalDelay / reversalStrength /
+  strafeFactor / jumpDelay / blinkTicks / burstAttacks / burstRange / blinkFlush /
+  slapAim / slapMaxTicks / slapSprintSync / noxzAttacks / noxzTx`。
+- 包层测试：`tools/velocity-test/run.sh`（真实 netty 4.0.23.Final；91 + 16 项断言，
+  其中 `VelocityInstallTest` 用真实注册通道覆盖「注入 / 换连接重挂 / 被摘除自愈」）。
+- 换连接（单人 → 服务器、切服、重连）会自动重挂管线；若钩子没生效，
+  ClickGUI 摘要末尾的 `KB n` 与 `logs/openmaver.log` 的 `[Velocity]` 行就是判据。
+
 ### FPS / CPS 统计 HUD
 
 - 配置路径：`render.fps` / `render.cps`，**默认开启**，位置固定在左上角。
-- 布局：CPS 小正方形在最左，FPS 圆角胶囊在它右边。
-- 视觉：灰色调局部毛玻璃（与右下角提示同一套 `GuiBlur` 参数）+ 白色文字。
+- 布局：CPS 按键面板在最左，FPS 面板在它右边。
+- 视觉：**正方形深色半透明底**，与右上角功能栏（`OpenMaverHud` 的模块列表）
+  完全同一套 —— `0x000000` + alpha `0x80` 的直角矩形，无圆角、无描边，
+  阴影只做 `1px/2px` 偏移。之前这里用的是圆角灰块，和功能栏摆在一起像两套 UI。
 - FPS：统计每秒 `RenderGameOverlayEvent.Post` 的帧数，满 1 秒结算一次；
   首个统计窗口完成前显示 `FPS --`。
 - CPS：每帧轮询鼠标左 / 右键的按下边沿，分别显示 `L`（左键）/ `R`（右键）
@@ -561,6 +669,60 @@ IO 失败只记录一次并自动停用 debug。
   收紧到 18°/12°（yaw/pitch），`balanced` 为 35°/20°。yaw 始终 wrap 到
   `[-180,180)`，不发送额外 C05。
 - 没有实际 rotation 变化时不写字段，避免 `AimDuplicateLook`。
+- `JITTER`（`aim.jitter`，默认 `0.35`）：**落点抖动**。head 命中盒是 0.6×0.44，
+  中心点就是 (8,8)，以前每次锁定都精确打在中心 —— 服务端看到的是一串零方差的
+  完美瞄准，比“准”本身更显眼。现在每次建立锁定都给该目标滚一个**固定**落点：
+  在命中盒半宽/半高换算出的角度圆盘内，半径取 35%~100%，方向随机，因此
+  - 一定偏离正中（不会落回 8,8）；
+  - 一定仍在命中盒内（打得中）；
+  - 锁定期间不变，每 40 tick 才重滚一次（模拟视线漂移，而不是每帧抖）。
+  设成 `0` 可退回老的精确瞄准。验证：`tools/aim-test/run.sh`（15 项断言，
+  覆盖零强度、偏移非零、命中盒内、锁定期恒定、到期重滚、近距离等比收敛，
+  以及下面这条 yaw 连续性的全部边界）。
+- **yaw 必须连续累加，不能每 tick 取模**（`advanceYaw` / `continuousYaw`）。
+  原版的 `rotationYaw` 是连续值（可以是 400、-720），只有 `prevRotationYaw`
+  被来回调整；服务端拿到的也是连续值。老实现每次写 `wrapDegrees(oldYaw + step)`，
+  跨过 ±180 时下一包就是 179 而不是 181，服务端算出的包间 delta 变成 **358°**：
+
+  ```
+  tick N   : yaw = -179.4
+  tick N+1 : yaw = +179.6      -> deltaXRot = 359.0
+  ```
+
+  这正好命中 Grim `AimModulo360` 的判据（源码注释：*It works on clients who
+  % 360 their rotation*）：
+
+  ```java
+  if (player.yaw < 360 && player.yaw > -360
+          && Math.abs(rotationDelta.getDeltaXRot()) > 320
+          && Math.abs(lastDeltaYaw) < 30) flagAndAlert();
+  ```
+
+  现在所有写 rotation 的地方（Aim、KillAura ROTATE、Scaffold 的临时转向与恢复）
+  都走「离当前视角最近的连续角」，相邻两包 delta 恒等于实际转过的角度；
+  yaw 自然越过 ±360 后反而进入该 check 的豁免区。pitch 统一 clamp 到 `±89.5`，
+  避免顶在 `±90` 这种特征值上。
+
+  > 同一类 bug 之前藏在 Scaffold 里：注释写「保持在 [-180,180)，Grim 会检查越界」，
+  > 实际正好相反 —— 取模才是这个 check 抓的东西。
+
+### UI 音效
+
+- 模块**开启 / 关闭**（ClickGUI 圆点、`LMB` 折叠行、键位切换）播**经验球拾取音**
+  `random.orb`，开启与关闭分别落在两个不重叠的音区：
+  - 开启：`1.00~1.25`（清脆，就是经验球被吸进来的那一下）
+  - 关闭：`0.55~0.75`（发闷）
+
+  原版经验球的 pitch 本来就是 `0.5 * ((rand - rand) * 0.7 + 1.8)`（0.55~1.25），
+  所以这同一段素材听感上天然有"亮 / 闷"两种；区间内保留随机，和真捡经验一致。
+  集中入口是 `OpenMaverHud.notifyToggle()`，因此三条路径都会响。
+  想换成别的素材（例如升级音 `random.levelup`）只改
+  `OpenMaverFeatures.playXpPickup()` 里那一行音效 id。
+- ClickGUI 打开 / 关闭：`1.15` / `0.90`。
+- 主菜单按钮：开始类 `1.0`，退出 `0.85`。
+- 实现：`OpenMaverFeatures.playUiClick(float)`，反射取 `PositionedSoundRecord.create`
+  与 `SoundHandler.playSound`（`mcstubs` 不含 sound 包，编译期不依赖）；
+  取不到就静默跳过，绝不影响界面逻辑。
 
 ### AutoClicker 自动点击
 

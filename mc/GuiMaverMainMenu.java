@@ -1202,6 +1202,8 @@ public final class GuiMaverMainMenu extends GuiScreen {
 
     private void perform(int action) {
         activeDropdown = DROPDOWN_NONE;
+        // 开始 / 退出这类确认型按钮用原版按钮音；退出用低音，和开启类动作区分开。
+        OpenMaverFeatures.playUiClick(action == ACTION_QUIT ? 0.85F : 1.0F);
         try {
             if (action == ACTION_SINGLEPLAYER) {
                 mc.displayGuiScreen(new GuiSelectWorld(this));

@@ -11,6 +11,7 @@ import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.potion.PotionEffect;
 import net.minecraft.util.AxisAlignedBB;
+import util.Logger;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
 
 import org.lwjgl.input.Mouse;
@@ -84,6 +85,34 @@ public final class OpenMaverFeatures {
      * 渲染帧级 aim 状态：每 tick 的 delta 上限仍然生效，但步进分摊到每一帧，
      * 避免 20 TPS 下“每 tick 跳一下”的卡顿感。
      */
+    /**
+     * 瞄准点抖动强度（0~1）。
+     *
+     * <p>解决的问题：head 是一个 0.6×0.44 的命中盒，中心点就是 (8,8)。以前
+     * {@code computeAimAngles} 精确算出中心，结果每一次锁定都把准星钉死在
+     * 同一个几何点上 —— 这在服务端的视角统计里是「零方差」特征，比精度本身更显眼。
+     *
+     * <p>现在每次建立锁定都给这个目标滚一个**固定的**落点偏移（圆盘内，
+     * 半径 35%~100% 的命中盒半宽），锁定期间不变，隔一段时间再重滚：
+     * <ul>
+     *   <li>偏移一定不为 0 → 不会落在正中心；</li>
+     *   <li>半径不超过命中盒半宽 → 仍然打得中，只是不在几何正中心；</li>
+     *   <li>同一目标期间保持恒定 → 不是每帧抖，不会变成另一种周期性特征。</li>
+     * </ul>
+     */
+    private static float aimJitter = 0.35F;
+
+    /** 本次锁定的固定落点偏移（度）。 */
+    private static float aimOffsetYaw;
+    private static float aimOffsetPitch;
+    private static boolean aimOffsetValid;
+    /** 上次重滚偏移的 tick（长时间锁定同一目标时每隔一段重滚一次，模拟视线漂移）。 */
+    private static long aimOffsetTick = -1000L;
+    private static final int AIM_OFFSET_REFRESH_TICKS = 40;
+
+    /** 瞄准点抖动的随机源（与其它随机分开，避免影响 autoclicker/killaura 的节奏）。 */
+    private static final java.util.Random AIM_OFFSET_RANDOM = new java.util.Random();
+
     private static float aimAppliedYaw;
     private static float aimAppliedPitch;
     /** GCD 量化残差，跨帧累积，保证每 tick 的服务端 delta 仍是 GCD 的倍数。 */
@@ -176,7 +205,7 @@ public final class OpenMaverFeatures {
     private static boolean autoclickerHumanize = true;
 
     /** openmaver.properties 的结构版本，用于迁移旧默认值。 */
-    private static final int SETTINGS_VERSION = 7;
+    private static final int SETTINGS_VERSION = 12;
 
     /**
      * 1.8.9 服务端的受击无敌窗口是 10 tick（hurtResistantTime 20 -> 10 才会结算）。
@@ -283,6 +312,15 @@ public final class OpenMaverFeatures {
 
     /** 本 tick 是否已经有右键动作（AutoClicker），避免同一 tick 连续放置。 */
     private static boolean rightClickUsedThisTick;
+
+    /**
+     * 本 tick 已经发出去几个 C08（Scaffold 与 Velocity 的 farm 共用）。
+     *
+     * <p>Grim 的 {@code MultiPlace} 判的是「同一个 tick 里多条放置包」。两个模块
+     * 各自维护自己的 "一 tick 一次" 是挡不住的：tick 顺序是 Scaffold 先跑、
+     * Velocity 后跑，两边各放一个就是两条 C08。这里给一个公共闸门。
+     */
+    private static int placementsThisTick;
     /** 上次成功放置的 tick，用于 debug 中的放置间隔。 */
     private static long lastPlacementTick = Long.MIN_VALUE;
     private static long clientTick;
@@ -401,6 +439,7 @@ public final class OpenMaverFeatures {
         // 放到 END 阶段注入会被服务端以 “failed Post: attack/place” 拒绝。
         rightClickUsedThisTick = false;
         autoclickerClickedThisTick = false;
+        placementsThisTick = 0;
         if (tickStartFailed) {
             processPendingCriticalJump(mc);
             updateAutoClicker(mc);
@@ -434,6 +473,19 @@ public final class OpenMaverFeatures {
             tickStartFailed = true;
             System.err.println("[OpenMaver] Aim/AutoSprint start phase disabled: " + error);
         }
+    }
+
+    /**
+     * 本 tick 的 C08 名额（Scaffold 与 Velocity 的 farm 共用）。
+     *
+     * @return 本 tick 第一个调用者拿到 {@code true}，其余为 {@code false}
+     */
+    public static boolean claimPlacement() {
+        if (placementsThisTick > 0) {
+            return false;
+        }
+        placementsThisTick = 1;
+        return true;
     }
 
     public static void onTick(Minecraft mc) {
@@ -2615,8 +2667,9 @@ public final class OpenMaverFeatures {
         if (Math.abs(stepYaw) < 1.0E-4F && Math.abs(stepPitch) < 1.0E-4F) {
             return;
         }
-        float newYaw = wrapDegrees(oldYaw + stepYaw);
-        float newPitch = Math.max(-90.0F, Math.min(90.0F, oldPitch + stepPitch));
+        // 与 Aim 一样：连续累加不取模，避免跨 ±180 时出现 358° 的包间 delta。
+        float newYaw = advanceYaw(oldYaw, stepYaw);
+        float newPitch = Math.max(-89.5F, Math.min(89.5F, oldPitch + stepPitch));
         setNumber(player, "rotationYaw", "field_70177_z", newYaw);
         setNumber(player, "rotationPitch", "field_70125_A", newPitch);
         setNumber(player, "prevRotationYaw", "field_70126_B", newYaw);
@@ -2750,8 +2803,10 @@ public final class OpenMaverFeatures {
                 if (horizontal < 1.0E-4D && Math.abs(dy) < 1.0E-4D) {
                     continue;
                 }
-                // 保持在 [-180, 180)：Grim 的 AimModulo360 会检查越界/绕圈视角。
-                float yaw = wrapDegrees((float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F);
+                // 目标朝向是「模 360」的，写包时必须换算成离当前视角最近的连续角：
+                // 从 -179 直接写 +179 会让服务端看到 358° 的包间 delta（AimModulo360）。
+                float rawYaw = (float) (Math.atan2(dz, dx) * 180.0D / Math.PI) - 90.0F;
+                float yaw = continuousYaw((float) originalYaw, rawYaw);
                 float pitch = (float) (-Math.atan2(dy, horizontal) * 180.0D / Math.PI);
                 pitch = Math.max(-90.0F, Math.min(90.0F, pitch));
 
@@ -2794,7 +2849,9 @@ public final class OpenMaverFeatures {
             if (rotated) {
                 // 无论 autoRotate 设置如何，都恢复原视角和 objectMouseOver，
                 // 避免关闭模块/切换 GUI 后残留临时 rotation。
-                setNumber(player, "rotationYaw", "field_70177_z", originalYaw);
+                setNumber(player, "rotationYaw", "field_70177_z",
+                        continuousYaw((float) number(player, "rotationYaw", "field_70177_z"),
+                                (float) originalYaw));
                 setNumber(player, "rotationPitch", "field_70125_A", originalPitch);
                 writeObjectField(mc, "objectMouseOver", "field_71476_x", originalHit);
             }
@@ -3017,6 +3074,7 @@ public final class OpenMaverFeatures {
         aimFov = clamp(readFloat(values, "aim.fov", 180.0F), 30.0F, 180.0F);
         aimMode = readInt(values, "aim.mode", 0, 1);
         aimTarget = readInt(values, "aim.target", 0, 2);
+        aimJitter = clamp(readFloat(values, "aim.jitter", 0.35F), 0.0F, 1.0F);
         aimRequireClick = readBoolean(values, "aim.requireClick", true);
         aimGcdEnabled = readBoolean(values, "aim.gcd", true);
         aimMaxStep = clamp(readFloat(values, "aim.maxStep", 35.0F), 5.0F, 90.0F);
@@ -3031,6 +3089,124 @@ public final class OpenMaverFeatures {
         playerXrayRange = clamp(readFloat(values, "playerxray.range", 64.0F), 8.0F, 128.0F);
         playerXrayColor = readInt(values, "playerxray.color", 0, 4);
         motionBlurStrength = clamp(readFloat(values, "motionblur.strength", 0.70F), 0.05F, 1.0F);
+        if (settingsVersion < 9) {
+            // v8 把 REVERSAL 搬成了 BLINK BURST。实测位移层硬改过不了 Grim：
+            // Simulation 是逐 tick 全量预测，缺位移就是每 tick 一条 flag（vl 冲到 78）。
+            // v9 起换成 UNCERTAINTY：受击瞬间先 ghost-block（放置 + 立刻开始挖）
+            // 撑开 Grim 的 uncertainty 容差，再归零，缺掉的位移落进容差里。
+            String vMode = values.getProperty("velocity.mode");
+            if (vMode != null && "4".equals(vMode.trim())) {
+                values.setProperty("velocity.mode", "5");
+            }
+            if (values.getProperty("velocity.uncertaintyTicks") == null) {
+                values.setProperty("velocity.uncertaintyTicks", "2");
+            }
+            if (values.getProperty("velocity.uncertaintyFarm") == null) {
+                values.setProperty("velocity.uncertaintyFarm", "true");
+            }
+            if (vMode != null) {
+                // UNCERTAINTY 归零水平，垂直必须留满，否则滞空 -> GroundSpoof。
+                values.setProperty("velocity.vertical", "1.0");
+            }
+            settingsDirty = true;
+        }
+        if (settingsVersion < 8) {
+            // v7 及更早的 Velocity 对测配置是 INTAVE 那套 REVERSAL（水平归零 +
+            // 延迟反向）。在 Grim 上这套等于「每 tick 欠服务端一段位移」：
+            //   AntiKB (vl:0.0): o: .507910
+            //   Simulation (vl:0.0→53): .194 / .151 / .143 / .375 …
+            //   GroundSpoof (vl:0.0): claimed false
+            // v8 起统一搬到 GRIM 预设（BLINK BURST 5t x5，满受力），并打开
+            // grimGuard：之后再手动切回归零类模式会被自动升级成 blink。
+            String vMode = values.getProperty("velocity.mode");
+            String vServer = values.getProperty("velocity.server");
+            boolean reversed = vMode == null || "1".equals(vMode.trim());
+            boolean intave = vServer != null && "4".equals(vServer.trim());
+            if (reversed || intave) {
+                values.setProperty("velocity.mode", "4");
+                if (intave || vServer == null) {
+                    values.setProperty("velocity.server", "3");
+                }
+                values.setProperty("velocity.horizontal", "1.0");
+                values.setProperty("velocity.vertical", "1.0");
+                values.setProperty("velocity.blinkTicks", "5");
+                values.setProperty("velocity.burstAttacks", "5");
+                values.setProperty("velocity.blinkKeep", "1.0");
+                values.setProperty("velocity.blinkFlush", "true");
+                values.setProperty("velocity.blinkRewind", "false");
+                values.setProperty("velocity.burstRotate", "true");
+            }
+            if (values.getProperty("velocity.grimGuard") == null) {
+                values.setProperty("velocity.grimGuard", "true");
+            }
+            settingsDirty = true;
+        }
+        if (settingsVersion < 12) {
+            // v11 的 GRIM 预设是 NoXZ（吞击退 + 扣 C03 + 扣 S32 回执）。18:38 的
+            // 实机日志证明这台服的 Grim 带 TransactionOrder 检查：扣两 tick 就是
+            //   [GrimAC] Mincx1203 failed TransactionOrder (vl:0.0): skipped=2
+            // NoXZ 的「回执不回 → 服务端只能同时允许吃过/没吃过」前提直接失效。
+            // v12 起预设回到 SPRINT SLAP：每一 tick 都是一记**真·冲刺攻击**
+            // （先 setSprinting(true) 再 attackEntity），0.6 与冲刺复位都落在
+            // 服务端自己的预测分支里。
+            String vMode = values.getProperty("velocity.mode");
+            String modeText = vMode == null ? "" : vMode.trim();
+            if (modeText.isEmpty() || "8".equals(modeText)) {
+                values.setProperty("velocity.mode", "7");
+                values.setProperty("velocity.server", "3");
+                values.setProperty("velocity.slapMaxTicks", "6");
+                values.setProperty("velocity.horizontal", "1.0");
+                values.setProperty("velocity.vertical", "1.0");
+                values.setProperty("velocity.grimGuard", "true");
+            }
+            settingsDirty = true;
+        }
+        if (settingsVersion < 11) {
+            // v10 的 GRIM 预设是 SPRINT SLAP（只在有目标时生效）。v11 换成
+            // OpenZen 的 AntiKB/NoXZ：空中吞击退 + 冻结位置包 + 扣 transaction
+            // 回执，落地再放包/补击退/连打，属于真正"站着也能减击退"的那条路。
+            values.setProperty("velocity.mode", "8");
+            values.setProperty("velocity.server", "3");
+            values.setProperty("velocity.noxzAttacks", "3");
+            if (values.getProperty("velocity.grimGuard") == null) {
+                values.setProperty("velocity.grimGuard", "true");
+            }
+            settingsDirty = true;
+        }
+        if (settingsVersion < 10) {
+            // v9 及更早的 Grim 对测配置是 UNCERTAINTY：先 farm 一次 "uncertainty"
+            // 再把水平击退归零，然后憋 2 tick 位置包。实机日志证明这套是三头挨打：
+            //   FabricatedPlace：farm 的 C08 把**世界坐标**塞进了 cursor（协议要 [0,1]）
+            //   AntiKB / Simulation：归零 = 服务端知道它发过 S12，每 tick 欠一段位移
+            //   Timer / GroundSpoof / BadPacketsN：一次 releaseHeld 补发多条 C03
+            // v10 起统一搬到 SPRINT SLAP：S12 原样放行，靠 1.8 原版「冲刺攻击
+            // 自己乘 0.6」削击退 —— 这条 0.6 在 Grim 的预测里本来就是一个分支，
+            // 所以既不欠位移也不会被 AntiKB 抓。
+            String vMode = values.getProperty("velocity.mode");
+            String vServer = values.getProperty("velocity.server");
+            String modeText = vMode == null ? "" : vMode.trim();
+            String serverText = vServer == null ? "" : vServer.trim();
+            boolean flaggy = vMode == null || "1".equals(modeText)
+                    || "4".equals(modeText) || "5".equals(modeText);
+            boolean grimLike = vServer == null || "3".equals(serverText);
+            if (flaggy && grimLike) {
+                values.setProperty("velocity.mode", "7");
+                values.setProperty("velocity.server", "3");
+                values.setProperty("velocity.horizontal", "1.0");
+                values.setProperty("velocity.vertical", "1.0");
+                values.setProperty("velocity.slapMaxTicks", "6");
+                values.setProperty("velocity.grimGuard", "true");
+                // 旧配置里可能残留 blinkRewind=true（弃包 + 本地回退）。那是
+                // AntiKB o:5.58 的直接来源：服务端眼里我们没动过，补发时整段
+                // 击退位移都是缺口。SPRINT SLAP 不憋包，这两个开关一律关掉。
+                values.setProperty("velocity.blinkRewind", "false");
+                values.setProperty("velocity.burstRotate", "false");
+            }
+            if (values.getProperty("velocity.slapMaxTicks") == null) {
+                values.setProperty("velocity.slapMaxTicks", "6");
+            }
+            settingsDirty = true;
+        }
         if (settingsVersion < 7) {
             // v6 及更早没有 Motion Blur，旧配置里可能残留调试时的 0.05；
             // 首次升级统一给一个能明显看到效果的默认强度。
@@ -3096,6 +3272,7 @@ public final class OpenMaverFeatures {
         }
         fastPlaceOnlyBlocks = readBoolean(values, "fastplace.onlyBlocks", true);
         ScaffoldFeature.load(values);
+        VelocityFeature.load(values);
         killAuraRange = clamp(readFloat(values, "killaura.range", 3.0F), 3.0F, 6.0F);
         killAuraCpsMin = clamp(readInt(values, "killaura.cpsMin", 8, 20), 1, 20);
         killAuraCpsMax = clamp(readInt(values, "killaura.cpsMax", 12, 20), 1, 20);
@@ -3216,7 +3393,19 @@ public final class OpenMaverFeatures {
     public static void setAimMode(int value) { aimMode = clamp(value, 0, 1); markDirty(); }
 
     public static int getAimTarget() { return aimTarget; }
-    public static void setAimTarget(int value) { aimTarget = clamp(value, 0, 2); markDirty(); }
+    public static void setAimTarget(int value) {
+        aimTarget = clamp(value, 0, 2);
+        // 换瞄准部位（head/chest/body）后命中盒尺寸变了，落点要重滚。
+        aimOffsetValid = false;
+        markDirty();
+    }
+    public static float getAimJitter() { return aimJitter; }
+    public static void setAimJitter(float value) {
+        aimJitter = clamp(value, 0.0F, 1.0F);
+        // 改动后下一次 tick 重滚落点，不需要等锁定失效。
+        aimOffsetValid = false;
+        markDirty();
+    }
 
     public static boolean isAimRequireClick() { return aimRequireClick; }
     public static void setAimRequireClick(boolean value) { aimRequireClick = value; markDirty(); }
@@ -3733,6 +3922,7 @@ public final class OpenMaverFeatures {
                     + "\naim.fov=" + aimFov
                     + "\naim.mode=" + aimMode
                     + "\naim.target=" + aimTarget
+                    + "\naim.jitter=" + aimJitter
                     + "\naim.requireClick=" + aimRequireClick
                     + "\naim.gcd=" + aimGcdEnabled
                     + "\naim.maxStep=" + aimMaxStep
@@ -3782,6 +3972,7 @@ public final class OpenMaverFeatures {
                     + "\nkillaura.smoothing=" + killAuraSmoothing
                     + "\nkillaura.requirePress=" + killAuraRequirePress
                     + "\n" + ScaffoldFeature.save()
+                    + VelocityFeature.save()
                     + "fakeplayer.count=" + fakePlayerCount
                     + "\nfakeplayer.distance=" + fakePlayerDistance
                     + "\nfakeplayer.showName=" + fakePlayerShowName
@@ -4093,6 +4284,10 @@ public final class OpenMaverFeatures {
         if (aimLockedTarget != null) {
             if (computeAimAngles(aimLockedTarget, playerX, playerY, playerZ,
                     targetFraction, angles)) {
+                double lockedHorizontal = Math.hypot(
+                        number(aimLockedTarget, "posX", "field_70165_t") - playerX,
+                        number(aimLockedTarget, "posZ", "field_70161_v") - playerZ);
+                applyAimOffset(lockedHorizontal, angles);
                 aimCachedYaw = angles[0];
                 aimCachedPitch = angles[1];
                 aimHasTarget = true;
@@ -4154,9 +4349,55 @@ public final class OpenMaverFeatures {
         aimLockedTarget = nearest;
         aimLockedWorld = world;
         aimLockedPlayer = player;
-        aimCachedYaw = bestTargetYaw;
-        aimCachedPitch = bestTargetPitch;
+        double bestHorizontal = Math.hypot(
+                number(nearest, "posX", "field_70165_t") - playerX,
+                number(nearest, "posZ", "field_70161_v") - playerZ);
+        float[] locked = {bestTargetYaw, bestTargetPitch};
+        applyAimOffset(bestHorizontal, locked);
+        aimCachedYaw = locked[0];
+        aimCachedPitch = locked[1];
         aimHasTarget = true;
+    }
+
+    /**
+     * 把「命中盒中心」换成「命中盒里的某个点」。
+     *
+     * <p>偏移量在角度域里算，这样远近目标的偏移都占命中盒同样的比例：
+     * 水平半宽 0.30 格（玩家宽 0.6），head 半高 0.22 格，换算成
+     * {@code atan(半宽 / 水平距离)} 度。半径取 0.35~1.0 倍，方向随机 —— 分布在
+     * 命中盒内、但一定偏离中心。
+     *
+     * <p>强度来自 {@link #aimJitter}：0 时退回老的「精确打中心」，
+     * 1 时贴到命中盒边缘（还能命中，但最难被当成机械瞄准）。
+     */
+    private static void applyAimOffset(double horizontal, float[] angles) {
+        float strength = clamp(aimJitter, 0.0F, 1.0F);
+        if (strength <= 0.001F) {
+            aimOffsetYaw = 0.0F;
+            aimOffsetPitch = 0.0F;
+            aimOffsetValid = false;
+            return;
+        }
+        boolean stale = !aimOffsetValid
+                || clientTick - aimOffsetTick >= AIM_OFFSET_REFRESH_TICKS;
+        if (stale) {
+            rollAimOffset(horizontal, strength);
+        }
+        // 偏移后仍规范回 [-180,180)：下游用 wrapDegrees 求差，写包时再换连续角。
+        angles[0] = wrapDegrees(angles[0] + aimOffsetYaw);
+        angles[1] = clamp(angles[1] + aimOffsetPitch, -89.5F, 89.5F);
+    }
+
+    private static void rollAimOffset(double horizontal, float strength) {
+        double distance = Math.max(horizontal, 0.6D);
+        double halfYaw = Math.toDegrees(Math.atan2(0.30D, distance));
+        double halfPitch = Math.toDegrees(Math.atan2(0.22D, distance));
+        double angle = AIM_OFFSET_RANDOM.nextDouble() * Math.PI * 2.0D;
+        double radius = 0.35D + 0.65D * AIM_OFFSET_RANDOM.nextDouble();
+        aimOffsetYaw = (float) (Math.cos(angle) * halfYaw * radius * strength);
+        aimOffsetPitch = (float) (Math.sin(angle) * halfPitch * radius * strength);
+        aimOffsetValid = true;
+        aimOffsetTick = clientTick;
     }
 
     private static boolean computeAimAngles(EntityLivingBase target, double playerX,
@@ -4176,6 +4417,8 @@ public final class OpenMaverFeatures {
 
     /** 释放粘性锁定并清空手动移动检测状态。 */
     private static void clearAimLock() {
+        aimOffsetValid = false;
+        aimOffsetTick = -1000L;
         aimLockedTarget = null;
         aimLockedWorld = null;
         aimLockedPlayer = null;
@@ -4191,8 +4434,9 @@ public final class OpenMaverFeatures {
         if (Math.abs(stepYaw) < 1.0E-4F && Math.abs(stepPitch) < 1.0E-4F) {
             return;
         }
-        float newYaw = wrapDegrees(oldYaw + stepYaw);
-        float newPitch = Math.max(-90.0F, Math.min(90.0F, oldPitch + stepPitch));
+        // 连续累加，不取模：取模会让跨 ±180 的相邻两包出现 358° 的 delta（AimModulo360）。
+        float newYaw = advanceYaw(oldYaw, stepYaw);
+        float newPitch = Math.max(-89.5F, Math.min(89.5F, oldPitch + stepPitch));
         setNumber(player, "rotationYaw", "field_70177_z", newYaw);
         setNumber(player, "rotationPitch", "field_70125_A", newPitch);
         // 记录 Aim 写出的绝对视角；下一帧与真实 rotation 的差值就是手动鼠标移动。
@@ -4469,6 +4713,183 @@ public final class OpenMaverFeatures {
         return found;
     }
 
+    // ==================================================================
+    // UI 音效
+    // ==================================================================
+
+    /** {@code PositionedSoundRecord}/{@code ResourceLocation} 的反射缓存。 */
+    private static Class<?> soundRecordType;
+    private static Class<?> resourceLocationType;
+    private static java.lang.reflect.Method soundCreateMethod;
+
+    /**
+     * 播一次界面点击音（vanilla 的 {@code random.click}）。
+     *
+     * <p>开启用高音、关闭用低音，这样不看 HUD 也能听出状态。
+     * 全部走反射：{@code mcstubs} 里没有 sound 包，编译期不依赖它；
+     * 取不到就静默跳过，绝不影响 GUI 逻辑。
+     *
+     * @param pitch 音高（1.0 是原版按钮音）
+     */
+    static void playUiClick(float pitch) {
+        playSound("random.click", pitch);
+    }
+
+    /**
+     * 功能开启 / 关闭的音效：经验球拾取（{@code random.orb}）。
+     *
+     * <p>用原版那两个音区，而不是一个新音效：经验球的 pitch 在原版里本来就是
+     * {@code 0.5 * ((rand - rand) * 0.7 + 1.8)}，即 0.55~1.25，所以同一个音效
+     * 听感上就有"清脆"和"发闷"两种。这里把开启放在高音区、关闭放在低音区，
+     * 两个区间不重叠，闭眼也能分辨；区间内再带一点随机，跟真的捡经验一样。
+     */
+    static void playXpPickup(boolean enabled) {
+        float pitch = enabled
+                ? XP_ON_MIN + UI_SOUND_RANDOM.nextFloat() * (XP_ON_MAX - XP_ON_MIN)
+                : XP_OFF_MIN + UI_SOUND_RANDOM.nextFloat() * (XP_OFF_MAX - XP_OFF_MIN);
+        playSound("random.orb", pitch);
+    }
+
+    /** 开启音区间：偏亮，对应经验球被吸进身体的那一下。 */
+    private static final float XP_ON_MIN = 1.00F;
+    private static final float XP_ON_MAX = 1.25F;
+    /** 关闭音区间：偏闷，同一个音效的低音区。 */
+    private static final float XP_OFF_MIN = 0.55F;
+    private static final float XP_OFF_MAX = 0.75F;
+    private static final java.util.Random UI_SOUND_RANDOM = new java.util.Random();
+    /** 音效诊断计数：正常播放 / 退化播放 / 彻底失败。 */
+    private static final java.util.concurrent.atomic.AtomicLong SOUND_OK =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong SOUND_FALLBACK =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong SOUND_FAIL =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * 找 {@code PositionedSoundRecord.create(ResourceLocation, float)}。
+     *
+     * <p><b>这里踩过坑</b>：本工程运行在 Forge 1.8.9 的 SRG 环境 —— 类名是 MCP 风格
+     * （{@code net.minecraft.client.audio.PositionedSoundRecord}），但**成员名是 SRG**。
+     * 直接 {@code getMethod("create", ...)} 必然抛 {@code NoSuchMethodException}，
+     * 被 catch 吞掉之后表现就是「开了音效但完全没声音」。
+     *
+     * <p>所以先按 SRG 名 {@code func_147674_a} 找，再按 MCP 名 {@code create} 找，
+     * 最后按签名扫一遍（静态、返回 PositionedSoundRecord、参数 ResourceLocation + float），
+     * 三种映射下都能拿到。
+     */
+    private static java.lang.reflect.Method findSoundCreateMethod() {
+        String[] names = {"func_147674_a", "create", "a"};
+        for (int i = 0; i < names.length; i++) {
+            try {
+                return soundRecordType.getMethod(names[i], resourceLocationType, float.class);
+            } catch (Throwable ignored) {
+                // 换下一个名字
+            }
+        }
+        try {
+            java.lang.reflect.Method[] methods = soundRecordType.getMethods();
+            for (int i = 0; i < methods.length; i++) {
+                java.lang.reflect.Method method = methods[i];
+                if (!java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                    continue;
+                }
+                if (!soundRecordType.isAssignableFrom(method.getReturnType())) {
+                    continue;
+                }
+                Class<?>[] params = method.getParameterTypes();
+                if (params.length == 2 && params[0] == resourceLocationType
+                        && params[1] == Float.TYPE) {
+                    return method;
+                }
+            }
+        } catch (Throwable ignored) {
+            // 扫不到就只能放弃
+        }
+        return null;
+    }
+
+    /**
+     * 通用播放：{@code soundId} 是 vanilla 的音效 id（如 {@code random.orb}）。
+     *
+     * <p>路径优先级（这也是「为什么之前听不见」的一部分）：
+     * <ol>
+     *   <li>游戏内：{@code EntityPlayer.playSound(id, 1.0, pitch)} —— 客户端本地播放，
+     *       音量满，走 {@code WorldClient.playSound}；</li>
+     *   <li>主菜单 / 没有玩家实体时：{@code SoundHandler.playSound(PositionedSoundRecord)}。
+     *       注意 {@code PositionedSoundRecord.create(id, pitch)} 的 volume 是固定的
+     *       <b>0.25</b>，原版经验球自己才 0.1，所以这条只当兜底。</li>
+     * </ol>
+     * 两条都失败才记日志 —— 之前就是静默失败，「没音效」只能靠猜。
+     */
+    static void playSound(String soundId, float pitch) {
+        try {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc == null) {
+                return;
+            }
+            Object player = read(mc, "thePlayer", "field_71439_g", null);
+            if (player != null && callVoid(player, "playSound", "func_85030_a", null,
+                    soundId, Float.valueOf(1.0F), Float.valueOf(pitch))) {
+                long ok = SOUND_OK.incrementAndGet();
+                if (ok == 1L) {
+                    Logger.info("Sound", "音效通道已就绪: player.playSound(" + soundId
+                            + ", 1.0, " + pitch + ")");
+                }
+                return;
+            }
+            Object handler = call(mc, "getSoundHandler", "func_147118_V", null);
+            if (handler != null) {
+                Object record = newSoundRecord(soundId, pitch);
+                if (record != null
+                        && callVoid(handler, "playSound", "func_147682_a", "a", record)) {
+                    long ok = SOUND_OK.incrementAndGet();
+                    if (ok == 1L) {
+                        Logger.info("Sound", "音效通道已就绪: SoundHandler.playSound(record)");
+                    }
+                    return;
+                }
+            }
+            long failed = SOUND_FAIL.incrementAndGet();
+            if (failed <= 3L || failed % 50L == 0L) {
+                Logger.warn("Sound", "播不出 " + soundId + "（已失败 " + failed + " 次）"
+                        + "：SoundHandler=" + (handler != null)
+                        + " 记录=" + (newSoundRecord(soundId, pitch) != null)
+                        + " create=" + findSoundCreateMethod());
+            }
+        } catch (Throwable error) {
+            long failed = SOUND_FAIL.incrementAndGet();
+            if (failed <= 3L) {
+                Logger.warn("Sound", "音效异常 " + soundId + ": " + error);
+            }
+        }
+    }
+
+    private static Object newSoundRecord(String soundId, float pitch) {
+        try {
+            if (soundRecordType == null) {
+                soundRecordType = Class.forName("net.minecraft.client.audio.PositionedSoundRecord");
+                resourceLocationType = Class.forName("net.minecraft.util.ResourceLocation");
+            }
+            Object location;
+            try {
+                location = resourceLocationType.getConstructor(String.class, String.class)
+                        .newInstance("minecraft", soundId);
+            } catch (NoSuchMethodException fallback) {
+                location = resourceLocationType.getConstructor(String.class)
+                        .newInstance("minecraft:" + soundId);
+            }
+            if (soundCreateMethod == null) {
+                soundCreateMethod = findSoundCreateMethod();
+            }
+            if (soundCreateMethod == null) {
+                return null;
+            }
+            return soundCreateMethod.invoke(null, location, Float.valueOf(pitch));
+        } catch (Throwable error) {
+            return null;
+        }
+    }
+
     static boolean alive(Object entity) {
         Object value = call(entity, "isEntityAlive", "func_70089_S", "E");
         return value instanceof Boolean && ((Boolean) value).booleanValue();
@@ -4593,10 +5014,10 @@ public final class OpenMaverFeatures {
         if ("field_178783_e".equals(srg)) return new String[] {mcp, srg, "e"};
         if ("field_178784_b".equals(srg)) return new String[] {mcp, srg, "b"};
         if ("field_72996_f".equals(srg)) return new String[] {mcp, srg, "f"};
-        if ("field_70165_t".equals(srg)) return new String[] {mcp, srg, "p"};
-        if ("field_70163_u".equals(srg)) return new String[] {mcp, srg, "q"};
-        if ("field_70161_v".equals(srg)) return new String[] {mcp, srg, "r"};
-        if ("field_70131_O".equals(srg)) return new String[] {mcp, srg, "U"};
+        if ("field_70165_t".equals(srg)) return new String[] {mcp, srg, "s"};
+        if ("field_70163_u".equals(srg)) return new String[] {mcp, srg, "t"};
+        if ("field_70161_v".equals(srg)) return new String[] {mcp, srg, "u"};
+        if ("field_70131_O".equals(srg)) return new String[] {mcp, srg, "K"};
         if ("field_70177_z".equals(srg)) return new String[] {mcp, srg, "y"};
         if ("field_70125_A".equals(srg)) return new String[] {mcp, srg, "z"};
         if ("field_72340_a".equals(srg)) return new String[] {mcp, srg, "a"};
@@ -4659,6 +5080,48 @@ public final class OpenMaverFeatures {
     private static void line(double x1, double y1, double z1, double x2, double y2, double z2) {
         GL11.glVertex3d(x1, y1, z1);
         GL11.glVertex3d(x2, y2, z2);
+    }
+
+    /**
+     * 推进 yaw 一步：**结果不取模**。
+     *
+     * <p>这是过 Grim {@code AimModulo360} 的关键。原版客户端的 {@code rotationYaw}
+     * 是连续累积的（可以是 400、-720），只有 {@code prevRotationYaw} 会被来回调整
+     * 以保持渲染插值；服务端拿到的就是连续值。而老实现每次都
+     * {@code wrapDegrees(oldYaw + step)}，一旦跨过 ±180 边界：
+     *
+     * <pre>
+     *   tick N   : yaw = -179.4   （写 wrap 值）
+     *   tick N+1 : yaw = +179.6   ← 服务端 deltaXRot = 359.0
+     * </pre>
+     *
+     * Grim 的检查条件正是「{@code |deltaXRot| > 320} 且上一 tick {@code < 30}」，
+     * 源码注释原话：{@code It works on clients who % 360 their rotation.}
+     * 所以正确的做法是**像原版一样只做连续累加**，让 yaw 自然越过 ±360
+     * （那个 check 也只检查 {@code yaw < 360 && yaw > -360} 的范围）。
+     *
+     * @param currentYaw 当前 yaw（连续值，可能超出 ±180）
+     * @param stepYaw    这一 tick 的最小转向步（已经过 wrap 后的差值计算）
+     */
+    static float advanceYaw(float currentYaw, float stepYaw) {
+        float next = currentYaw + stepYaw;
+        // float 精度保护：只在极端累积（1000 圈以上）时才归位，正常对局碰不到。
+        if (next > 360000.0F || next < -360000.0F) {
+            next = wrapDegrees(next);
+        }
+        return next;
+    }
+
+    /**
+     * 把「取模后的目标角」换算成离 {@code currentYaw} 最近的连续角。
+     *
+     * <p>yaw 相差 360 是同一个朝向，但服务端看的是原始浮点差：
+     * 从 -179 直接写 +179 会产生 358° 的包间 delta（Grim {@code AimModulo360}
+     * 的判据是 {@code |delta| > 320} 且上一 tick {@code < 30}）。所以任何
+     * 「临时转向 / 恢复视角」都要走这条最短路径写法。
+     */
+    static float continuousYaw(float currentYaw, float targetYaw) {
+        return currentYaw + wrapDegrees(targetYaw - currentYaw);
     }
 
     static float wrapDegrees(float angle) {
