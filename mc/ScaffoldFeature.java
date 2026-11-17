@@ -306,6 +306,13 @@ public final class ScaffoldFeature {
         if (failed) {
             return;
         }
+        // 神桥（GodBridge）优先：两套搭桥同时开会抢同一个 C08 名额和 Shift 键。
+        if (GodBridgeFeature.isActive()) {
+            if (active) {
+                disable(mc);
+            }
+            return;
+        }
         try {
             if (!active) {
                 enable(mc, player);

@@ -3,7 +3,7 @@
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
 > 说明：本仓库包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接）
-> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Velocity、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、FPS / CPS 统计）
+> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Scaffold2 教材搭路辅助、GodBridge 神桥、Velocity、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、FPS / CPS 统计）
 > 以及 `legit / balanced / aggressive` 三档 Grim 对测 profile。
 > 请仅在你拥有或获得明确授权的服务器上进行测试。
 
@@ -36,6 +36,7 @@ OpenMaver/
 │       ├── movement/AutoSprint.java  # 示例模块（链路验证器）
 │       ├── combat/KillAura.java  # 自动攻击开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── movement/Scaffold.java # 搭桥开关（MC 侧逻辑在 ScaffoldFeature，OpenZen 移植）
+│       ├── movement/GodBridge.java # 神桥/蹲起搭路开关（MC 侧逻辑在 mc/GodBridgeFeature）
 │       ├── movement/Velocity.java # 防击退开关（MC 侧逻辑在 VelocityFeature）
 │       ├── player/FastPlace.java  # 快速右键开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── player/ChestStealer.java # 开箱搬运 / 整理 / 存入开关（MC 侧逻辑在 mc/ChestFeature）
@@ -82,6 +83,13 @@ OpenMaver/
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
+
+> **`build/` 必须是 CMake 配置过的目录**：如果 `build/` 存在但没有
+> `build/CMakeCache.txt`（例如手动 `mkdir -p build/java-classes` 编测试类造成），
+> `cmake --build build` 会直接报 `Error: not a CMake build directory (missing CMakeCache.txt)`。
+> 这时先跑 `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release` 即可；
+> `./launch-openmaver.sh` 与两套 `tools/*-test/run.sh` 现在都会自动处理这种情况。
+> 一条命令自检：`tools/build-doctor.sh`（版本 → build 状态 → configure → build → 回归测试）。
 
 产物：
 
@@ -449,6 +457,45 @@ IO 失败只记录一次并自动停用 debug。
 - 实现说明：`design/SCAFFOLD_HANDOFF.md` 记录状态机、包序与反射/SRG 名称；
   `design/SCAFFOLD_ROTATIONPLACE_HANDOFF.md` 保留 Grim `RotationPlace` 的判定链与
   对测记录（新实现仍然遵守它）。
+
+### GodBridge 神桥 / 蹲起搭路（教材重写版）
+
+- 配置路径：`movement.godbridge`，默认关闭，默认键位 **N**；开启时会自动关掉
+  `Scaffold`（两套搭桥抢同一个 Shift 键与 C08 名额）。
+- 三个模式直接对应手动搭桥教材的三种手法（20 TPS 折算）：
+  | 模式 | 操作 | 速度 |
+  |---|---|---|
+  | `SPEED BRIDGE` | Shift + S，全程按住 Shift | 12 tick/方块 → **1.67 方块/秒** |
+  | `DIAGONAL 45` | Shift + S + D，视角与桥线成 45° | 10 tick/方块 → **2.00 方块/秒** |
+  | `SNEAK TOGGLE` | 放块 → 松 Shift → 贴边按回 | 7 tick/方块 → **≈3 方块/秒** |
+- 方向换算：`travelYaw(cameraYaw, forward, strafe)`。S = 相机 +180°，
+  S+D = 相机 +225°（与桥线正好 45°），`suggestedCameraYaw` 是它的反解，
+  测试里做了往返校验。
+- 蹲起循环：`RELEASE`（放完块松开 `keyBindSneak`，恢复全速）→ `RESNEAK`
+  （松手预算 1~4 tick、余量 ≤ 0.12、或离地，任一成立立刻按回）→ `WAIT_EDGE`
+  （贴着边缘，余量 ≤ `edgeMargin` 才按右键）→ 放置。贴边余量用
+  `getCollidingBoundingBoxes` 沿行进方向 0.05 格步进取样。
+- “准星对准方块边缘”：目标格六个支撑面按“支撑块越靠身体这块越优先”打分，
+  点击点落在面的上沿（`y += 0.25`，水平 ±0.28 抖动），俯角通常 65°~77°。
+- 放置时序与 Scaffold 相同：tick N 把 aim 写进 C03，tick N+1 用**服务端已收到的
+  角度**做 ray trace，命中支撑面才发 C08，否则重试 1 次；`claimPlacement()`
+  保证一 tick 一条 C08，`minPlaceInterval`（12/10/6）挡住连发。
+- 不跳：没有 telly 的 75.5° 俯角表、不碰 `jumpTicks` —— 教材的手法本来就不跳。
+- `SAFETY`：踩空（余量 < 0 且 `motionY < -0.08`）时往下补一块。
+- HUD：`SPEED HUD` 卡片显示模式、阶段（IDLE/EDGE/RELEASE/RESNEAK）、实测
+  `x.xxb/s` 与已放方块数，进度条按该模式目标速度归一。
+- 实现位置：`mc/GodBridgeFeature.java`（状态机）、`mc/GodBridgeHud.java`（速度卡）、
+  `java/module/movement/GodBridge.java`（开关）；静默转向复用
+  `ScaffoldMovementInput` hook。
+- 回归测试：`tools/godbridge-test/run.sh`（73 项：速度、方向、循环、放置闸门、
+  aim 数学、贴边阈值、源码结构与接线）。
+- 实现说明：`design/GODBRIDGE_HANDOFF.md`（教材逐步对照、调参表、已知边界）。
+
+### Scaffold2 教材搭路辅助
+
+- 配置路径：`movement.scaffold2`，默认关闭，默认键位 **G**；旧 Scaffold 默认不绑定热键，GodBridge 仍绑定 **N**。
+- `STRAIGHT`：按住 S 和右键搭路并维持潜行；`DIAGONAL 45`：按住 S+D 和右键搭路并维持潜行，视角由玩家按教材摆成与桥线 45°；`SNEAK TOGGLE`：成功放置后松开 Shift 指定 tick 数，再自动按回。
+- 模块使用玩家当前准星，不自动转动视角；只在准星命中方块、手持方块物品且按住右键时尝试放置。`RELEASE` 设置蹲起模式松开 Shift 的时长。
 
 ### Velocity 防击退（SPRINT SLAP / Blink Burst）
 

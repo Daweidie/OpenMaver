@@ -212,7 +212,8 @@ public final class OpenMaverHud {
             GuiBlur.beginFrame(resolution.getScaledWidth(),
                     resolution.getScaledHeight(), resolution.getScaleFactor());
             if (!entries.isEmpty() || !TOASTS.isEmpty() || !LIST_ENTRIES.isEmpty()
-                    || TargetHud.isEnabled() || ScaffoldHud.isEnabled()) {
+                    || TargetHud.isEnabled() || ScaffoldHud.isEnabled()
+                    || GodBridgeHud.isEnabled()) {
                 GuiBlur.capture();
             }
             StatsHud.render(font, event.resolution, now);
@@ -225,6 +226,11 @@ public final class OpenMaverHud {
                 ScaffoldHud.render(font, event.resolution, now);
             } catch (Throwable scaffoldError) {
                 System.err.println("[OpenMaver] Scaffold HUD 绘制出错: " + scaffoldError);
+            }
+            try {
+                GodBridgeHud.render(font, event.resolution, now);
+            } catch (Throwable godBridgeError) {
+                System.err.println("[OpenMaver] GodBridge HUD 绘制出错: " + godBridgeError);
             }
             int listBottom = renderModuleList(font, event.resolution, entries, now);
             if (!clickGuiOpen) {

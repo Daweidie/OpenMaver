@@ -6,7 +6,9 @@ import module.combat.Criticals;
 import module.combat.KillAura;
 import module.combat.Reach;
 import module.movement.AutoSprint;
+import module.movement.GodBridge;
 import module.movement.Scaffold;
+import module.movement.Scaffold2;
 import module.movement.Velocity;
 import module.misc.FakePlayer;
 import module.player.ChestStealer;
@@ -306,6 +308,12 @@ public final class OpenMaver {
 
         // 移动模块：Scaffold 自动搭路/神桥（配置路径 movement.scaffold；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new Scaffold());
+
+        // 教材式搭路辅助（与其他搭路实现独立）
+        ModuleManager.register(new Scaffold2());
+
+        // 移动模块：GodBridge 神桥 / 蹲起搭路（配置路径 movement.godbridge；MC 侧逻辑在 mc/GodBridgeFeature）
+        ModuleManager.register(new GodBridge());
 
         // 移动模块：Velocity 防击退（配置路径 movement.velocity；MC 侧逻辑在 mc/VelocityFeature）
         ModuleManager.register(new Velocity());

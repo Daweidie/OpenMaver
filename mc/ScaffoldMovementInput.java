@@ -29,5 +29,7 @@ public final class ScaffoldMovementInput extends MovementInputFromOptions {
     public void updatePlayerMoveState() {
         super.updatePlayerMoveState();
         ScaffoldFeature.afterMovementInput(this);
+        // 神桥复用同一个 hook：它的 aim 与 MoveFix 也必须落在 moveFlying() 之前。
+        GodBridgeFeature.afterMovementInput(this);
     }
 }

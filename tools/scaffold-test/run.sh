@@ -7,19 +7,40 @@
 #   3. flushPendingPlace / tick() 里不再存在「拿新角度立即发 C08」的分支。
 #
 # 用法：tools/scaffold-test/run.sh
-# 前置：先构建一次（需要 build/mc-classes 与 build/mcstubs-classes）
-#   cmake --build build -j
+# 说明：没有 build/ 产物时自动用 javac 编一份（不依赖 cmake）。
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo_dir"
 
-out_dir="${OPENMAVER_SCAFFOLD_TEST_OUT:-build/scaffold-test-classes}"
-if [[ ! -d build/mc-classes || ! -d build/mcstubs-classes || ! -d build/java-classes ]]; then
-    echo "[scaffold-test] 先构建一次：cmake --build build -j" >&2
-    exit 1
-fi
+ensure_build() {
+    if [[ -d build/mc-classes && -d build/mcstubs-classes && -d build/java-classes \
+            && -n "$(ls -A build/mc-classes 2>/dev/null)" ]]; then
+        return 0
+    fi
+    echo "[scaffold-test] build/ 里没有编译产物，先编一份 core + mcstubs + mc"
+    local release_flags
+    if javac --help 2>&1 | grep -q -- '--release'; then
+        release_flags="--release 8 -Xlint:-options"
+    else
+        release_flags="-source 8 -target 8 -Xlint:-options"
+    fi
+    mkdir -p build/java-classes build/mcstubs-classes build/mc-classes
+    # shellcheck disable=SC2086
+    javac -nowarn $release_flags -encoding UTF-8 \
+        -d build/java-classes $(find java -name '*.java')
+    # shellcheck disable=SC2086
+    javac -nowarn $release_flags -encoding UTF-8 \
+        -d build/mcstubs-classes $(find mcstubs -name '*.java')
+    # shellcheck disable=SC2086
+    javac -nowarn $release_flags -encoding UTF-8 \
+        -cp build/mcstubs-classes:build/java-classes \
+        -d build/mc-classes $(find mc -name '*.java')
+}
 
+ensure_build
+
+out_dir="${OPENMAVER_SCAFFOLD_TEST_OUT:-build/scaffold-test-classes}"
 classpath="build/mc-classes:build/java-classes:build/mcstubs-classes"
 mkdir -p "$out_dir"
 javac -encoding UTF-8 -cp "$classpath" -d "$out_dir" tools/scaffold-test/ScaffoldPlaceOrderTest.java

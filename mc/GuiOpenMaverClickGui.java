@@ -156,6 +156,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final String[] KILLAURA_SORTS = {"Distance", "Health"};
     /** OpenZen Scaffold 的四种模式。 */
     private static final String[] SCAFFOLD_MODES = ScaffoldFeature.MODE_NAMES;
+    /** GodBridge 的三种教材手法。 */
+    private static final String[] GODBRIDGE_MODES = GodBridgeFeature.MODE_NAMES;
+    private static final String[] SCAFFOLD2_MODES = Scaffold2Feature.MODE_NAMES;
     private static final String[] CHEST_COLOR_NAMES = {
             "Gold", "Cyan", "Violet", "Red", "White"};
     private static final String[] CHEST_TAKE_FILTERS = {"ALL", "NO JUNK", "VALUABLE"};
@@ -415,6 +418,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 addFastPlaceSettings(entry);
             } else if ("Scaffold".equals(module.getName())) {
                 addScaffoldSettings(entry);
+            } else if ("GodBridge".equals(module.getName())) {
+                addGodBridgeSettings(entry);
+            } else if ("Scaffold2".equals(module.getName())) {
+                addScaffold2Settings(entry);
             } else if ("Velocity".equals(module.getName())) {
                 addVelocitySettings(entry);
             } else if ("FakePlayer".equals(module.getName())) {
@@ -777,6 +784,56 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         entry.settings.add(Setting.check("ONLY BLOCKS", new Binding() {
             public double get() { return OpenMaverFeatures.isFastPlaceOnlyBlocks() ? 1.0D : 0.0D; }
             public void set(double value) { OpenMaverFeatures.setFastPlaceOnlyBlocks(value > 0.5D); }
+        }));
+    }
+
+    /**
+     * GodBridge 设置 —— 对应手动搭桥教材里的三个可调点。
+     *
+     * <ul>
+     *   <li><b>MODE</b>：1.67 方块/秒的普通搭路 / 2 方块/秒的 45° 斜桥 /
+     *       3 方块/秒的蹲起搭路；</li>
+     *   <li><b>SNEAK WINDOW</b>：教材“松开 shift … 尽快按下 shift”中间松开几个 tick；</li>
+     *   <li><b>EDGE MARGIN</b>：多贴边才按右键（越小越贴边、越快也越危险）。</li>
+     * </ul>
+     */
+    private void addGodBridgeSettings(Entry entry) {
+        entry.settings.add(Setting.select("MODE", GODBRIDGE_MODES, new Binding() {
+            public double get() { return GodBridgeFeature.getMode(); }
+            public void set(double value) { GodBridgeFeature.setMode((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("SNEAK WINDOW", 1.0F, 4.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return GodBridgeFeature.getSneakWindow(); }
+            public void set(double value) {
+                GodBridgeFeature.setSneakWindow((int) Math.round(value));
+            }
+        }));
+        entry.settings.add(Setting.slider("EDGE MARGIN", 0.10F, 0.45F, 0.01F, 2, "b", new Binding() {
+            public double get() { return GodBridgeFeature.getEdgeMargin(); }
+            public void set(double value) { GodBridgeFeature.setEdgeMargin(value); }
+        }));
+        entry.settings.add(Setting.check("SAFETY", new Binding() {
+            public double get() { return GodBridgeFeature.isSafety() ? 1.0D : 0.0D; }
+            public void set(double value) { GodBridgeFeature.setSafety(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("ITEM SPOOF", new Binding() {
+            public double get() { return GodBridgeFeature.isItemSpoof() ? 1.0D : 0.0D; }
+            public void set(double value) { GodBridgeFeature.setItemSpoof(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("SPEED HUD", new Binding() {
+            public double get() { return GodBridgeFeature.isHud() ? 1.0D : 0.0D; }
+            public void set(double value) { GodBridgeFeature.setHud(value > 0.5D); }
+        }));
+    }
+
+    private void addScaffold2Settings(Entry entry) {
+        entry.settings.add(Setting.select("MODE", SCAFFOLD2_MODES, new Binding() {
+            public double get() { return Scaffold2Feature.getMode(); }
+            public void set(double value) { Scaffold2Feature.setMode((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("RELEASE", 1.0F, 4.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return Scaffold2Feature.getReleaseTicks(); }
+            public void set(double value) { Scaffold2Feature.setReleaseTicks((int) Math.round(value)); }
         }));
     }
 

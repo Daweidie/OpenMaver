@@ -21,8 +21,16 @@
       "key": "V"               // 绑定键位（按 V 切换）
     },
     "scaffold": {
-      "enabled": false,        // Scaffold 搭桥（OpenZen 移植）：默认关闭（按 B 切换）
-      "key": "B"               // 绑定键位（按 B 切换）
+      "enabled": false,        // Scaffold 搭桥（OpenZen 移植）：默认关闭
+      "key": ""                // 不绑定默认热键
+    },
+    "godbridge": {
+      "enabled": false,        // 神桥/蹲起搭路（教材三种手法）：默认关闭（按 N 切换）
+      "key": "N"               // 绑定键位（按 N 切换）
+    },
+    "scaffold2": {
+      "enabled": false,        // 教材式手动搭路辅助：默认关闭（按 G 切换）
+      "key": "G"               // 绑定键位（按 G 切换）
     },
     "velocity": {
       "enabled": false,        // Velocity 防击退：默认关闭（参数在 ClickGUI 中调整）

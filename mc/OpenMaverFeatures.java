@@ -418,6 +418,10 @@ public final class OpenMaverFeatures {
             processPendingCriticalJump(mc);
             // Scaffold 需要在本 tick 的 C03 之前完成旋转、Tower 与放置。
             ScaffoldFeature.onTickStart(mc);
+            // GodBridge（神桥 / 蹲起搭路）晚一步跑：Scaffold 若被它顶掉，
+            // 这里已经完成按键还原，神桥可以重新接管 Shift。
+            GodBridgeFeature.onTickStart(mc);
+            Scaffold2Feature.onTickStart(mc);
             // KillAura 先选目标并转向，再攻击；AutoClicker 在 KillAura 启用时让位。
             updateKillAura(mc);
             updateAutoClicker(mc);
@@ -457,6 +461,8 @@ public final class OpenMaverFeatures {
         // Scaffold 的 tick 内换视角：C03 已在 tick 中间发出，这里在渲染前
         // 把 rotation 恢复成相机，同时让 F5 身体保留服务端 aim。
         ScaffoldFeature.onTickEnd(mc);
+        // 神桥的静默转向同样在渲染前恢复相机。
+        GodBridgeFeature.onTickEnd(mc);
         updateFakePlayers(mc);
         updateFullBright(mc);
         // AutoSprint / Aim / AutoClicker 已在 onTickStart 处理。
@@ -2636,6 +2642,8 @@ public final class OpenMaverFeatures {
         }
         fastPlaceOnlyBlocks = readBoolean(values, "fastplace.onlyBlocks", true);
         ScaffoldFeature.load(values);
+        GodBridgeFeature.load(values);
+        Scaffold2Feature.load(values);
         VelocityFeature.load(values);
         killAuraRange = clamp(readFloat(values, "killaura.range", 3.0F), 3.0F, 6.0F);
         killAuraCpsMin = clamp(readInt(values, "killaura.cpsMin", 8, 20), 1, 20);
@@ -2661,6 +2669,8 @@ public final class OpenMaverFeatures {
         fakePlayerShowName = readBoolean(values, "fakeplayer.showName", true);
         resetAutoClickerTimers();
         ScaffoldFeature.reset();
+        GodBridgeFeature.reset();
+        Scaffold2Feature.reset();
         resetKillAuraState();
     }
 
@@ -3096,6 +3106,8 @@ public final class OpenMaverFeatures {
         resetAutoClickerTimers();
         resetReachState();
         ScaffoldFeature.reset();
+        GodBridgeFeature.reset();
+        Scaffold2Feature.reset();
         resetKillAuraState();
         criticalsSprintWasActive = false;
         criticalsLastAttackNanos = 0L;
@@ -3291,6 +3303,8 @@ public final class OpenMaverFeatures {
                     + "\nkillaura.smoothing=" + killAuraSmoothing
                     + "\nkillaura.requirePress=" + killAuraRequirePress
                     + "\n" + ScaffoldFeature.save()
+                    + "\n" + GodBridgeFeature.save()
+                    + "\n" + Scaffold2Feature.save()
                     + VelocityFeature.save()
                     + "fakeplayer.count=" + fakePlayerCount
                     + "\nfakeplayer.distance=" + fakePlayerDistance
