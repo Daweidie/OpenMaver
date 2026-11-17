@@ -478,6 +478,12 @@ public final class OpenMaverHud {
         if ("Motion Blur".equals(name)) {
             return Math.round(OpenMaverFeatures.getMotionBlurStrength() * 100.0F) + "%";
         }
+        if ("Chest ESP".equals(name)) {
+            return Math.round(ChestFeature.getEspRange()) + "m";
+        }
+        if ("Chest Stealer".equals(name)) {
+            return ChestFeature.getTakeFilterName();
+        }
         if ("Grim Bypass".equals(name)) {
             return OpenMaverFeatures.getBypassProfileName();
         }

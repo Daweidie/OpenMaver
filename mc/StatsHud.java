@@ -47,6 +47,9 @@ public final class StatsHud {
     private static final float KEY_LABEL_TEXT_SIZE = 0.85F;
     private static final float CPS_TEXT_SIZE = 0.95F;
 
+    /** 整块按键面板的高度：W / ASD / 空格 / LMB RMB / CPS 五行 + 四个间隙。 */
+    private static final int KEYS_BLOCK_H = KEY_SIZE * 3 + SPACE_H + CPS_ROW_H + KEY_GAP * 4;
+
     /** 统计 HUD 统一使用中性灰底，无外描边。 */
     private static final int PANEL_SHADOW_ALPHA = 0x38;
 

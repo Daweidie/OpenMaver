@@ -43,6 +43,9 @@ public final class VelocityPacketHook extends ChannelDuplexHandler {
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
         try {
+            // Scaffold 的击退窗口：只读 S12 的四个 int 字段，不碰任何游戏对象，
+            // 因此可以安全地在 Netty 线程上调用。
+            ScaffoldFeature.noteInboundPacket(msg);
             if (VelocityFeature.shouldCancelVelocityPacket(msg)) {
                 // 直接吞掉：NetHandlerPlayClient 收不到 S12，原版就不会给玩家
                 // 施加击退，后续由 VelocityFeature 按模式自行回填速度。

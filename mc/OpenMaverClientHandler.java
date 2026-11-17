@@ -85,9 +85,15 @@ public final class OpenMaverClientHandler {
             ensureCustomMainMenu(mc);
             // 首次 tick：把 jar 内自带的 2pimp v2 [16x] 材质包装进 resourcepacks/。
             BundledResourcePack.install(mc);
-            // START：在 vanilla 发送 C03 之前应用 aim / sprint。
+            // START：在 vanilla 发送 C03 之前应用 aim / sprint / 箱子点击。
             if (event.phase == TickEvent.Phase.START) {
                 syncHeldKeys();
+                // 箱子：windowClick（C0E）必须排在本 tick 的 C03 之前。
+                // 放在 tick END 时，服务端的 transaction ack（C0F）总会落在
+                // 「END 的 C0E」和「下一个 C03」之间，Grim 的 Post 检查会稳定打出
+                // failed Post (vl:x): click window v1.8 —— 改到 START 后包序变成
+                // C0F → C0E → C03，和玩家自己在界面里点鼠标一致。
+                ChestFeature.onTick(mc);
                 OpenMaverFeatures.onTickStart(mc);
                 // Velocity 必须在同一位置写入击退速度：原版本 tick 的 C03
                 // 会带走改写后的 motion。
@@ -102,6 +108,8 @@ public final class OpenMaverClientHandler {
                 debug("first client tick", null);
             }
             OpenMaverFeatures.onTick(mc);
+            // 箱子：Chest ESP 的目标快照等每帧数据在 tick END 结算；
+            // 真正发 windowClick 的搬运逻辑在 START（见上面那段注释）。
             // Velocity 的 blink 窗口与攻击包爆发在 tick 末尾结算。
             VelocityFeature.onTickEnd(mc);
             if (readField(mc, "theWorld", "field_71441_e") == null
@@ -141,6 +149,15 @@ public final class OpenMaverClientHandler {
     @SubscribeEvent
     public void onGuiOpen(GuiOpenEvent event) {
         if (event == null || event.gui == null) {
+            return;
+        }
+        // 箱子静默开箱：轮到我们自己的开箱请求时，把箱子界面拦掉（容器照常挂上）。
+        try {
+            ChestFeature.onGuiOpen(event);
+        } catch (Throwable t) {
+            debug("chest GUI open hook", t);
+        }
+        if (event.isCanceled()) {
             return;
         }
         if (isVanillaMainMenu(event.gui)) {
@@ -288,6 +305,9 @@ public final class OpenMaverClientHandler {
             return;
         }
         try {
+            // 静默开箱的兜底：万一开箱包在 tick 与这一帧渲染之间才处理完，
+            // 也要在画这一帧之前把箱子界面收起来，别让玩家看到闪一下。
+            ChestFeature.onRenderTickStart(Minecraft.getMinecraft());
             OpenMaverFeatures.onRenderTick();
         } catch (Throwable t) {
             renderTickFailed = true;
@@ -306,6 +326,8 @@ public final class OpenMaverClientHandler {
         }
         try {
             OpenMaverFeatures.onRender(event);
+            ScaffoldFeature.onRenderWorld(event);
+            ChestFeature.onRenderWorld(event);
             ModuleManager.onRender();
             if (!motionBlurFailed) {
                 try {

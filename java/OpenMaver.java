@@ -9,7 +9,9 @@ import module.movement.AutoSprint;
 import module.movement.Scaffold;
 import module.movement.Velocity;
 import module.misc.FakePlayer;
+import module.player.ChestStealer;
 import module.player.FastPlace;
+import module.render.ChestEsp;
 import module.render.Cps;
 import module.render.Fps;
 import module.render.FullBright;
@@ -311,6 +313,10 @@ public final class OpenMaver {
         // 玩家模块：FastPlace 快速右键（配置路径 player.fastplace）
         ModuleManager.register(new FastPlace());
 
+        // 玩家模块：Chest Stealer 快速开箱 / 整理 / 存入（配置路径 player.cheststealer；
+        // MC 侧逻辑在 mc/ChestFeature）
+        ModuleManager.register(new ChestStealer());
+
         // 杂项模块：FakePlayer 假人玩家（配置路径 misc.fakeplayer；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new FakePlayer());
 
@@ -325,6 +331,9 @@ public final class OpenMaver {
 
         // 渲染模块：Motion Blur 运动模糊（配置路径 render.motionblur；MC 侧绘制在 mc/MotionBlur）
         ModuleManager.register(new MotionBlur());
+
+        // 渲染模块：Chest ESP 箱子透视（配置路径 render.chestesp；MC 侧绘制在 mc/ChestFeature）
+        ModuleManager.register(new ChestEsp());
 
         // 渲染模块：左上角 FPS / CPS 统计（配置路径 render.fps / render.cps；MC 侧绘制在 mc/StatsHud）
         ModuleManager.register(new Fps());

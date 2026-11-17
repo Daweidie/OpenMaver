@@ -21,7 +21,7 @@
       "key": "V"               // 绑定键位（按 V 切换）
     },
     "scaffold": {
-      "enabled": false,        // Scaffold 自动搭路/神桥：默认关闭（按 B 切换）
+      "enabled": false,        // Scaffold 搭桥（OpenZen 移植）：默认关闭（按 B 切换）
       "key": "B"               // 绑定键位（按 B 切换）
     },
     "velocity": {
@@ -61,6 +61,10 @@
     "fastplace": {
       "enabled": false,        // 快速右键：默认关闭
       "key": "F"               // 绑定键位（按 F 切换）
+    },
+    "cheststealer": {
+      "enabled": false,        // 快速开箱：箱子界面打开后自动把物资搬进背包（参数在 ClickGUI）
+      "key": ""                // 默认不占用按键，玩家可自行绑定
     }
   },
 
@@ -84,6 +88,10 @@
     "motionblur": {
       "enabled": false,        // 运动模糊：默认关闭（按 M 切换；静止时零开销）
       "key": "M"               // 绑定键位
+    },
+    "chestesp": {
+      "enabled": false,        // 箱子透视：箱子/末影箱/漏斗外框，默认关闭（按 P 切换）
+      "key": "P"               // 绑定键位
     },
     "fullbright": {
       "enabled": false,        // 全亮/夜视：默认关闭（按 Y 切换）

@@ -154,16 +154,12 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             "ALWAYS", "NCP", "FALLING", "GRIM", "JUMP", "LOW", "DOWN"};
     private static final String[] KILLAURA_TARGET_MODES = {"Single", "Switch"};
     private static final String[] KILLAURA_SORTS = {"Distance", "Health"};
-    private static final String[] SCAFFOLD_ROTATIONS = {
-            "NONE", "DEFAULT", "BACKWARDS", "SIDEWAYS", "OFFSET", "SNAP", "HYPIXEL"};
-    private static final String[] SCAFFOLD_MOVE_FIX = {"NONE", "SILENT"};
-    private static final String[] SCAFFOLD_SPRINT = {"NONE", "VANILLA"};
-    private static final String[] SCAFFOLD_ROTATION_SPEED = {
-            "1TICK", "2TICK", "3TICK", "4TICK", "NORMAL"};
-    private static final String[] SCAFFOLD_TOWER = {
-            "NONE", "VANILLA", "EXTRA", "TELLY", "HYPIXEL"};
-    private static final String[] SCAFFOLD_KEEP_Y = {
-            "NONE", "VANILLA", "EXTRA", "TELLY", "EXTRATELLY"};
+    /** OpenZen Scaffold 的四种模式。 */
+    private static final String[] SCAFFOLD_MODES = ScaffoldFeature.MODE_NAMES;
+    private static final String[] CHEST_COLOR_NAMES = {
+            "Gold", "Cyan", "Violet", "Red", "White"};
+    private static final String[] CHEST_TAKE_FILTERS = {"ALL", "NO JUNK", "VALUABLE"};
+    private static final String[] CHEST_STORE_FILTERS = {"ALL", "JUNK", "VALUABLE"};
 
     // ------------------------------------------------------------------
     // 状态
@@ -429,6 +425,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 addPlayerXraySettings(entry);
             } else if ("Motion Blur".equals(module.getName())) {
                 addMotionBlurSettings(entry);
+            } else if ("Chest ESP".equals(module.getName())) {
+                addChestEspSettings(entry);
+            } else if ("Chest Stealer".equals(module.getName())) {
+                addChestStealerSettings(entry);
             }
             entries.add(entry);
         }
@@ -583,6 +583,120 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }));
     }
 
+    // ------------------------------------------------------------------
+    // 箱子：ESP / 开箱搬运（可见界面 / 静默）
+    // ------------------------------------------------------------------
+
+    private void addChestEspSettings(Entry entry) {
+        entry.settings.add(Setting.slider("RANGE", 8.0F, 128.0F, 4.0F, 0, " m", new Binding() {
+            public double get() { return ChestFeature.getEspRange(); }
+            public void set(double value) { ChestFeature.setEspRange((float) value); }
+        }));
+        entry.settings.add(Setting.slider("THICKNESS", 0.5F, 4.0F, 0.5F, 1, "px", new Binding() {
+            public double get() { return ChestFeature.getEspThickness(); }
+            public void set(double value) { ChestFeature.setEspThickness((float) value); }
+        }));
+        entry.settings.add(Setting.slider("OPACITY", 0.15F, 1.0F, 0.05F, 2, "", new Binding() {
+            public double get() { return ChestFeature.getEspOpacity(); }
+            public void set(double value) { ChestFeature.setEspOpacity((float) value); }
+        }));
+        entry.settings.add(Setting.select("COLOR", CHEST_COLOR_NAMES, new Binding() {
+            public double get() { return ChestFeature.getEspColor(); }
+            public void set(double value) { ChestFeature.setEspColor((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("STORAGE BLOCKS", new Binding() {
+            public double get() { return ChestFeature.isEspStorageBlocks() ? 1.0D : 0.0D; }
+            public void set(double value) { ChestFeature.setEspStorageBlocks(value > 0.5D); }
+        }));
+    }
+
+    private void addChestStealerSettings(Entry entry) {
+        entry.settings.add(Setting.select("TAKE", CHEST_TAKE_FILTERS, new Binding() {
+            public double get() { return ChestFeature.getTakeFilter(); }
+            public void set(double value) { ChestFeature.setTakeFilter((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.select("STORE", CHEST_STORE_FILTERS, new Binding() {
+            public double get() { return ChestFeature.getStoreFilter(); }
+            public void set(double value) { ChestFeature.setStoreFilter((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("CLICKS/TICK", 1.0F, 9.0F, 1.0F, 0, "", new Binding() {
+            public double get() { return ChestFeature.getClicksPerTick(); }
+            public void set(double value) { ChestFeature.setClicksPerTick((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("ONE BY ONE", new Binding() {
+            public double get() { return ChestFeature.isOneByOne() ? 1.0D : 0.0D; }
+            public void set(double value) { ChestFeature.setOneByOne(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("CLICK GAP", 0.0F, 10.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return ChestFeature.getClickGapTicks(); }
+            public void set(double value) { ChestFeature.setClickGapTicks((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("HUMANIZE", new Binding() {
+            public double get() { return ChestFeature.isHumanize() ? 1.0D : 0.0D; }
+            public void set(double value) { ChestFeature.setHumanize(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("CLICK MS", 80.0F, 800.0F, 10.0F, 0, " ms", new Binding() {
+            public double get() { return ChestFeature.getClickDelayMinMs(); }
+            public void set(double value) { ChestFeature.setClickDelayMinMs((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("CLICK MS+", 80.0F, 1200.0F, 10.0F, 0, " ms", new Binding() {
+            public double get() { return ChestFeature.getClickDelayMaxMs(); }
+            public void set(double value) { ChestFeature.setClickDelayMaxMs((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("FIRST MS", 0.0F, 1200.0F, 10.0F, 0, " ms", new Binding() {
+            public double get() { return ChestFeature.getFirstClickDelayMs(); }
+            public void set(double value) { ChestFeature.setFirstClickDelayMs((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("PAUSE %", 0.0F, 100.0F, 1.0F, 0, " %", new Binding() {
+            public double get() { return ChestFeature.getPauseChancePct(); }
+            public void set(double value) { ChestFeature.setPauseChancePct((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("SKIP %", 0.0F, 50.0F, 1.0F, 0, " %", new Binding() {
+            public double get() { return ChestFeature.getSkipChancePct(); }
+            public void set(double value) { ChestFeature.setSkipChancePct((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("CLOSE T", 1.0F, 20.0F, 1.0F, 0, " t", new Binding() {
+            public double get() { return ChestFeature.getCloseDelayMinTicks(); }
+            public void set(double value) { ChestFeature.setCloseDelayMinTicks((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("CLOSE T+", 1.0F, 40.0F, 1.0F, 0, " t", new Binding() {
+            public double get() { return ChestFeature.getCloseDelayMaxTicks(); }
+            public void set(double value) { ChestFeature.setCloseDelayMaxTicks((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("SWEEP CD", 100.0F, 3000.0F, 100.0F, 0, "ms", new Binding() {
+            public double get() { return ChestFeature.getSweepCooldownMs(); }
+            public void set(double value) { ChestFeature.setSweepCooldownMs((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("SHOW CHEST GUI", new Binding() {
+            public double get() { return ChestFeature.isHideGui() ? 0.0D : 1.0D; }
+            public void set(double value) { ChestFeature.setHideGui(value <= 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("OPEN DELAY", 0.0F, 20.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return ChestFeature.getOpenDelayTicks(); }
+            public void set(double value) { ChestFeature.setOpenDelayTicks((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("AUTO LOOT", new Binding() {
+            public double get() { return ChestFeature.isAutoLoot() ? 1.0D : 0.0D; }
+            public void set(double value) { ChestFeature.setAutoLoot(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("AUTO SORT", new Binding() {
+            public double get() { return ChestFeature.isAutoSort() ? 1.0D : 0.0D; }
+            public void set(double value) { ChestFeature.setAutoSort(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("AUTO CLOSE", new Binding() {
+            public double get() { return ChestFeature.isAutoClose() ? 1.0D : 0.0D; }
+            public void set(double value) { ChestFeature.setAutoClose(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("AUTO OPEN", new Binding() {
+            public double get() { return ChestFeature.isAutoOpen() ? 1.0D : 0.0D; }
+            public void set(double value) { ChestFeature.setAutoOpen(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("AUTO SWEEP", new Binding() {
+            public double get() { return ChestFeature.isAutoSweep() ? 1.0D : 0.0D; }
+            public void set(double value) { ChestFeature.setAutoSweep(value > 0.5D); }
+        }));
+    }
+
     private void addSprintSettings(Entry entry) {
         entry.settings.add(Setting.check("ONLY FORWARD", new Binding() {
             public double get() { return OpenMaverFeatures.isSprintOnlyForward() ? 1.0D : 0.0D; }
@@ -666,94 +780,47 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }));
     }
 
+    /**
+     * Scaffold 设置 —— 与 {@code ../OpenZen} 的 Scaffold 面板逐项对应。
+     *
+     * <p>OpenZen 里只有 8 个设置：Mode / Eagle / Sneak / Snap / Render Item Spoof /
+     * Rotation Tick / Clutch，外加 HUD 元素开关。这里保持同样的集合，不再出现
+     * Myau 的 Tower / KeepY / Motion / SafeWalk 之类。
+     */
     private void addScaffoldSettings(Entry entry) {
-        entry.settings.add(Setting.select("ROTATIONS", SCAFFOLD_ROTATIONS, new Binding() {
-            public double get() { return ScaffoldFeature.getRotations(); }
-            public void set(double value) { ScaffoldFeature.setRotations((int) Math.round(value)); }
+        entry.settings.add(Setting.select("MODE", SCAFFOLD_MODES, new Binding() {
+            public double get() { return ScaffoldFeature.getMode(); }
+            public void set(double value) { ScaffoldFeature.setMode((int) Math.round(value)); }
         }));
-        entry.settings.add(Setting.select("MOVE FIX", SCAFFOLD_MOVE_FIX, new Binding() {
-            public double get() { return ScaffoldFeature.getMoveFix(); }
-            public void set(double value) { ScaffoldFeature.setMoveFix((int) Math.round(value)); }
+        entry.settings.add(Setting.check("EAGLE", new Binding() {
+            public double get() { return ScaffoldFeature.isEagle() ? 1.0D : 0.0D; }
+            public void set(double value) { ScaffoldFeature.setEagle(value > 0.5D); }
         }));
-        entry.settings.add(Setting.select("SPRINT", SCAFFOLD_SPRINT, new Binding() {
-            public double get() { return ScaffoldFeature.getSprintMode(); }
-            public void set(double value) { ScaffoldFeature.setSprintMode((int) Math.round(value)); }
+        entry.settings.add(Setting.check("SNEAK", new Binding() {
+            public double get() { return ScaffoldFeature.isSneak() ? 1.0D : 0.0D; }
+            public void set(double value) { ScaffoldFeature.setSneak(value > 0.5D); }
         }));
-        entry.settings.add(Setting.slider("GROUND MOTION", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
-            public double get() { return ScaffoldFeature.getGroundMotion(); }
-            public void set(double value) { ScaffoldFeature.setGroundMotion((int) Math.round(value)); }
+        entry.settings.add(Setting.check("SNAP", new Binding() {
+            public double get() { return ScaffoldFeature.isSnap() ? 1.0D : 0.0D; }
+            public void set(double value) { ScaffoldFeature.setSnap(value > 0.5D); }
         }));
-        entry.settings.add(Setting.slider("AIR MOTION", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
-            public double get() { return ScaffoldFeature.getAirMotion(); }
-            public void set(double value) { ScaffoldFeature.setAirMotion((int) Math.round(value)); }
+        entry.settings.add(Setting.check("CLUTCH", new Binding() {
+            public double get() { return ScaffoldFeature.isClutch() ? 1.0D : 0.0D; }
+            public void set(double value) { ScaffoldFeature.setClutch(value > 0.5D); }
         }));
-        entry.settings.add(Setting.slider("SPEED MOTION", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
-            public double get() { return ScaffoldFeature.getSpeedMotion(); }
-            public void set(double value) { ScaffoldFeature.setSpeedMotion((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.check("KEEP Y ON PRESS", new Binding() {
-            public double get() { return ScaffoldFeature.isKeepYonPress() ? 1.0D : 0.0D; }
-            public void set(double value) { ScaffoldFeature.setKeepYonPress(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("MULTI PLACE", new Binding() {
-            public double get() { return ScaffoldFeature.isMultiPlace() ? 1.0D : 0.0D; }
-            public void set(double value) { ScaffoldFeature.setMultiPlace(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("SAFE WALK", new Binding() {
-            public double get() { return ScaffoldFeature.isSafeWalk() ? 1.0D : 0.0D; }
-            public void set(double value) { ScaffoldFeature.setSafeWalk(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("SWING", new Binding() {
-            public double get() { return ScaffoldFeature.isSwing() ? 1.0D : 0.0D; }
-            public void set(double value) { ScaffoldFeature.setSwing(value > 0.5D); }
+        entry.settings.add(Setting.slider("ROTATION TICK", 1.0F, 6.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return ScaffoldFeature.getRotationTick(); }
+            public void set(double value) {
+                ScaffoldFeature.setRotationTick((int) Math.round(value));
+            }
         }));
         entry.settings.add(Setting.check("ITEM SPOOF", new Binding() {
             public double get() { return ScaffoldFeature.isItemSpoof() ? 1.0D : 0.0D; }
             public void set(double value) { ScaffoldFeature.setItemSpoof(value > 0.5D); }
         }));
-        entry.settings.add(Setting.check("BLOCK COUNTER", new Binding() {
-            public double get() { return ScaffoldFeature.isBlockCounter() ? 1.0D : 0.0D; }
-            public void set(double value) { ScaffoldFeature.setBlockCounter(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("CANDIFFPLACE", new Binding() {
-            public double get() { return ScaffoldFeature.isCandiffplace() ? 1.0D : 0.0D; }
-            public void set(double value) { ScaffoldFeature.setCandiffplace(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.slider("DELAY TICKS", 0.0F, 20.0F, 1.0F, 0, "t", new Binding() {
-            public double get() { return ScaffoldFeature.getTowerFlatTicks(); }
-            public void set(double value) { ScaffoldFeature.setTowerFlatTicks((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.slider("ANGLE DIFF", 0.0F, 180.0F, 1.0F, 0, "\u00B0", new Binding() {
-            public double get() { return ScaffoldFeature.getAngleDiff(); }
-            public void set(double value) { ScaffoldFeature.setAngleDiff((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.slider("TELLY START MIN", 1.0F, 180.0F, 1.0F, 0, "\u00B0", new Binding() {
-            public double get() { return ScaffoldFeature.getTellyStartRotMinSpeed(); }
-            public void set(double value) { ScaffoldFeature.setTellyStartRotMinSpeed((float) value); }
-        }));
-        entry.settings.add(Setting.slider("TELLY START MAX", 1.0F, 180.0F, 1.0F, 0, "\u00B0", new Binding() {
-            public double get() { return ScaffoldFeature.getTellyStartRotMaxSpeed(); }
-            public void set(double value) { ScaffoldFeature.setTellyStartRotMaxSpeed((float) value); }
-        }));
-        entry.settings.add(Setting.slider("TELLY NORMAL MIN", 1.0F, 180.0F, 1.0F, 0, "\u00B0", new Binding() {
-            public double get() { return ScaffoldFeature.getTellyNormalRotMinSpeed(); }
-            public void set(double value) { ScaffoldFeature.setTellyNormalRotMinSpeed((float) value); }
-        }));
-        entry.settings.add(Setting.slider("TELLY NORMAL MAX", 1.0F, 180.0F, 1.0F, 0, "\u00B0", new Binding() {
-            public double get() { return ScaffoldFeature.getTellyNormalRotMaxSpeed(); }
-            public void set(double value) { ScaffoldFeature.setTellyNormalRotMaxSpeed((float) value); }
-        }));
-        entry.settings.add(Setting.select("ROTATION SPEED", SCAFFOLD_ROTATION_SPEED, new Binding() {
-            public double get() { return ScaffoldFeature.getRotationSpeed(); }
-            public void set(double value) { ScaffoldFeature.setRotationSpeed((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.select("TOWER", SCAFFOLD_TOWER, new Binding() {
-            public double get() { return ScaffoldFeature.getTower(); }
-            public void set(double value) { ScaffoldFeature.setTower((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.select("KEEP Y", SCAFFOLD_KEEP_Y, new Binding() {
-            public double get() { return ScaffoldFeature.getKeepY(); }
-            public void set(double value) { ScaffoldFeature.setKeepY((int) Math.round(value)); }
+        entry.settings.add(Setting.check("BLOCK HUD", new Binding() {
+            public double get() { return ScaffoldFeature.isHud() ? 1.0D : 0.0D; }
+            public void set(double value) { ScaffoldFeature.setHud(value > 0.5D); }
         }));
     }
 

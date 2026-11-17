@@ -10,80 +10,78 @@ import org.lwjgl.opengl.GL11;
 import java.lang.reflect.Method;
 
 /**
- * Scaffold 方块计数 HUD。
+ * Scaffold 方块计数 HUD —— 按 {@code ../OpenZen} 的
+ * {@code shit.zen.hud.ScaffoldHud} 重写。
  *
- * <p>参考 {@link TargetHud} 的信息卡风格：深色毛玻璃圆角卡片 + 方块图标 + 剩余数量。
- * 图标直接使用玩家当前手持（或快捷栏里第一组可放置）方块的真实物品模型，
- * 因此会跟随自动切方块实时变化；没有可用方块时退化为手绘的等距方块。
+ * <p>OpenZen 的版面是“图标 + 计数条 + 计数/速度”：
  *
- * <p>每次成功放置一个方块，{@link #onBlockPlaced()} 记录一次时间戳，卡片里的方块
- * 图标会左右抖动一下并快速衰减。数量每帧直接从快捷栏重新统计，因此在生存模式下
- * 会立刻减 1；创造模式不消耗方块，抖动仍然会播放。
+ * <pre>
+ *   ┌──────────────────────────────────────────┐
+ *   │ [icon]  ███████████░░░░  64 blocks       │
+ *   │                          0.00b/s         │
+ *   └──────────────────────────────────────────┘
+ * </pre>
+ *
+ * <ul>
+ *   <li>图标用当前手持（没有则快捷栏第一组）方块的真实物品模型；</li>
+ *   <li>计数条进度 = {@code count / 64}，紫色 {@code #9900FF}，带弹簧动画
+ *       （OpenZen 的 {@code SpringAnimation}），换方块时平滑过渡到新值；</li>
+ *   <li>速度是 {@code %.2fb/s}，用 {@link ScaffoldFeature#hudSpeedBps} 按上一 tick
+ *       的位移换算；</li>
+ *   <li>没有方块时整块卡片淡出，不做“0 blocks”的空卡片。</li>
+ * </ul>
+ *
+ * <p>与 Target HUD 共用同一套卡片语言：深色毛玻璃 + 低对比描边 + 圆角，
+ * 位置在准星右侧（Target HUD 显示时自动下移避让）。
  */
 public final class ScaffoldHud {
 
     // ------------------------------------------------------------------
-    // 卡片布局（与 TargetHUD 保持一致的比例）
+    // 布局
     // ------------------------------------------------------------------
 
-    private static final int CARD_W = 160;
-    private static final int CARD_H = 44;
-    private static final float CARD_R = 8.0F;
+    private static final int CARD_W = 196;
+    private static final int CARD_H = 32;
+    private static final float CARD_R = 7.0F;
 
-    private static final float ICON_X = 8.0F;
-    private static final float ICON_Y = 10.0F;
-    private static final float ICON_SIZE = 24.0F;
-    /** 真实物品模型在图标槽里的显示尺寸（16px 原图放大到 22px）。 */
-    private static final float ITEM_SIZE = 22.0F;
-
-    private static final float CONTENT_X = 37.0F;
-    private static final float CONTENT_W = 117.0F;
-    private static final float NAME_Y = 6.0F;
-    private static final float NAME_SIZE = 0.95F;
-    private static final float COUNT_Y = 17.0F;
-    private static final float COUNT_SIZE = 1.3F;
-    private static final float SUFFIX_Y = 25.0F;
-    private static final float SUFFIX_SIZE = 0.72F;
+    private static final float PAD = 8.0F;
+    private static final float ICON_SIZE = 22.0F;
+    private static final float ITEM_SIZE = 20.0F;
+    private static final float BAR_H = 5.0F;
+    /** 计数/速度文本区预留（右对齐时按实际宽度收窄）。 */
+    private static final float TEXT_MIN_W = 46.0F;
+    private static final float COUNT_SIZE = 0.95F;
+    private static final float SPEED_SIZE = 0.72F;
 
     private static final int TEXT = 0xF2F5FA;
     private static final int COUNT = 0xFFFFFF;
-    private static final int COUNT_EMPTY = 0xFF5555;
     private static final int MUTED = 0x9AA4B2;
-    /** 与 Target HUD 一致的细描边：低对比冷灰，不再使用白色高光。 */
     private static final int BORDER = 0x2E333B;
     private static final int SHADOW = 0x000000;
     private static final float SHADOW_ALPHA = 0.28F;
-    /** 图标后面的极淡圆角底盘，让浅色方块也有稳定的边界。 */
-    private static final int ICON_PLATE = 0xFFFFFF;
-    private static final float ICON_PLATE_ALPHA = 0.055F;
     private static final int GLASS = 0x0D0F13;
     private static final float GLASS_TINT_STRENGTH = 0.62F;
     private static final float GLASS_ALPHA = 0.90F;
+    /** OpenZen 的进度条底色与填充色。 */
+    private static final int BAR_BG = 0x1E1E1E;
+    private static final int BAR_FILL = 0x9900FF;
 
-    /** 放置后的方块抖动：总时长与幅度（GUI 单位）。 */
-    private static final long SHAKE_MS = 200L;
-    private static final float SHAKE_AMPLITUDE = 3.0F;
-    private static final float SHAKE_CYCLES = 2.5F;
+    /** 卡片出现/消失动画。 */
+    private static final long FADE_IN_MS = 150L;
+    private static final long FADE_OUT_MS = 140L;
+    private static final float SLIDE_DISTANCE = 16.0F;
+    /** 弹簧动画的时间常数（毫秒）；越大越慢。 */
+    private static final float SPRING_MS = 90.0F;
 
-    /** 卡片出现/消失动画：时长 + 从右侧滑入的距离。 */
-    private static final long FADE_IN_MS = 170L;
-    private static final long FADE_OUT_MS = 150L;
-    private static final float SLIDE_DISTANCE = 18.0F;
-
-    private static long lastPlaceNanos;
-    private static float shakePhase;
-    private static long lastFrameNanos;
     private static float visible;
+    private static float progress;
+    private static float barProgress;
+    private static long lastFrameNanos;
     private static boolean failed;
 
     /** 淡出期间继续显示最后一次的内容。 */
     private static int cachedCount;
     private static Object cachedStack;
-    private static String cachedName = "No blocks";
-
-    /** 用于检测「数字减少」并触发抖动（兼容非 ScaffoldFeature 的放置路径）。 */
-    private static int lastCount = -1;
-    private static String lastName;
 
     /** RenderHelper 的 GUI 物品光照；未初始化时通过反射查找一次。 */
     private static Method enableItemLighting;
@@ -97,14 +95,7 @@ public final class ScaffoldHud {
     // 入口
     // ==================================================================
 
-    /** 由 {@link ScaffoldFeature} 在成功放置方块后调用。 */
-    public static void onBlockPlaced() {
-        lastPlaceNanos = System.nanoTime();
-        // 随机初相位：连续快速放置时每次抖动方向不同，不会因为重置到 0 而互相抵消。
-        shakePhase = (float) (Math.random() * Math.PI * 2.0D);
-    }
-
-    /** 模块开启且方块计数开启时返回 true；HUD 用它决定是否提前抓取毛玻璃快照。 */
+    /** 模块开启且 HUD 打开时返回 true；HUD 用它决定是否提前抓取毛玻璃快照。 */
     public static boolean isEnabled() {
         if (failed) {
             return false;
@@ -112,8 +103,7 @@ public final class ScaffoldHud {
         if (visible > 0.01F) {
             return true;
         }
-        Module module = ModuleManager.getModule("Scaffold");
-        return module != null && module.isEnabled() && ScaffoldFeature.isBlockCounter();
+        return moduleEnabled() && ScaffoldFeature.isHud();
     }
 
     public static void render(FontRenderer font, ScaledResolution resolution, long now) {
@@ -131,9 +121,7 @@ public final class ScaffoldHud {
 
     private static void draw(FontRenderer font, ScaledResolution resolution, long now) {
         Minecraft mc = Minecraft.getMinecraft();
-        Module module = mc == null ? null : ModuleManager.getModule("Scaffold");
-        boolean active = mc != null && module != null && module.isEnabled()
-                && ScaffoldFeature.isBlockCounter();
+        boolean active = mc != null && moduleEnabled() && ScaffoldFeature.isHud();
         Object world = mc == null ? null
                 : OpenMaverFeatures.read(mc, "theWorld", "field_71441_e", null);
         Object player = mc == null ? null
@@ -146,7 +134,7 @@ public final class ScaffoldHud {
 
         long frameNanos = lastFrameNanos == 0L ? 16_000_000L : now - lastFrameNanos;
         lastFrameNanos = now;
-        float deltaMs = Math.max(1.0F, Math.min(50.0F, frameNanos / 1_000_000.0F));
+        float deltaMs = Math.max(1.0F, Math.min(60.0F, frameNanos / 1_000_000.0F));
         float duration = active ? FADE_IN_MS : FADE_OUT_MS;
         visible = approach(visible, active ? 1.0F : 0.0F, deltaMs / duration);
         if (visible <= 0.01F) {
@@ -156,36 +144,41 @@ public final class ScaffoldHud {
             return;
         }
 
+        int count = 0;
+        Object stack = null;
+        double speedBps = 0.0D;
         if (active) {
-            int count = ScaffoldFeature.hudBlockCount(player);
-            Object stack = ScaffoldFeature.hudBlockStack(player);
-            String name = stack == null
-                    ? "No blocks"
-                    : trimToWidth(font, displayName(stack), NAME_SIZE, (int) CONTENT_W);
-            // 数量在同一组方块上减少时抖一下；即使放置不是走 ScaffoldFeature.place()
-            // 也能得到反馈。换方块导致的数量变化不算。
-            if (lastName != null && lastName.equals(name) && count < lastCount) {
-                onBlockPlaced();
-            }
+            count = ScaffoldFeature.hudBlockCount(player);
+            stack = ScaffoldFeature.hudBlockStack(player);
+            speedBps = ScaffoldFeature.hudSpeedBps(player);
             cachedCount = count;
             cachedStack = stack;
-            cachedName = name;
-            lastCount = count;
-            lastName = name;
+        } else {
+            count = cachedCount;
+            stack = cachedStack;
+        }
+        if (stack == null) {
+            // OpenZen 在没有方块时整块不画。
+            visible = approach(visible, 0.0F, deltaMs / FADE_OUT_MS);
+            if (visible <= 0.01F) {
+                reset();
+                return;
+            }
         }
 
-        drawCard(font, resolution, cachedCount, cachedStack, cachedName, now, visible);
+        progress = approach(progress, Math.min(1.0F, count / 64.0F), deltaMs / SPRING_MS);
+        barProgress = progress;
+
+        drawCard(font, resolution, count, stack, speedBps, visible);
     }
 
     private static void reset() {
         visible = 0.0F;
+        progress = 0.0F;
+        barProgress = 0.0F;
         lastFrameNanos = 0L;
-        lastPlaceNanos = 0L;
         cachedCount = 0;
         cachedStack = null;
-        cachedName = "No blocks";
-        lastCount = -1;
-        lastName = null;
     }
 
     // ==================================================================
@@ -193,7 +186,7 @@ public final class ScaffoldHud {
     // ==================================================================
 
     private static void drawCard(FontRenderer font, ScaledResolution resolution,
-            int count, Object stack, String name, long now, float alpha) {
+            int count, Object stack, double speedBps, float alpha) {
         float scale = OpenMaverFeatures.getTargetHudScale();
         int screenW = resolution.getScaledWidth();
         int screenH = resolution.getScaledHeight();
@@ -206,17 +199,14 @@ public final class ScaffoldHud {
         if (cardX + drawW > screenW - 6.0F) {
             cardX = screenW - drawW - 6.0F;
         }
-        // Target HUD 也锚定在准星右侧；同时显示时把方块卡向下错开，避免叠在一起。
         float cardY = screenH / 2.0F - drawH / 2.0F;
         if (TargetHud.isShowing()) {
             cardY += TargetHud.cardHeight() + 6.0F * scale;
         }
         cardY = Math.max(4.0F, Math.min(cardY, screenH - drawH - 4.0F));
 
-        // 出现时从右向左滑入，消失时反向滑出，同时淡入淡出。
         float slide = (1.0F - alpha) * SLIDE_DISTANCE * scale;
         float drawX = cardX + slide;
-        float[] shake = shakeOffset(now);
 
         GlColor.restore();
         GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_LINE_BIT);
@@ -231,42 +221,50 @@ public final class ScaffoldHud {
         GL11.glTranslatef(drawX, cardY, 0.0F);
         GL11.glScalef(scale, scale, 1.0F);
 
-        // 柔和投影 + 低对比细描边 + 深色毛玻璃，与 Target HUD 使用同一套卡片语言。
-        roundRect(2.0F, 3.0F, CARD_W, CARD_H, CARD_R,
-                color(SHADOW, SHADOW_ALPHA * alpha));
-        roundRect(0.0F, 0.0F, CARD_W, CARD_H, CARD_R,
-                color(BORDER, 0.85F * alpha));
+        roundRect(2.0F, 3.0F, CARD_W, CARD_H, CARD_R, color(SHADOW, SHADOW_ALPHA * alpha));
+        roundRect(0.0F, 0.0F, CARD_W, CARD_H, CARD_R, color(BORDER, 0.85F * alpha));
         GuiBlur.draw(Math.round(drawX + scale), Math.round(cardY + scale),
                 Math.round(drawW - scale * 2.0F), Math.round(drawH - scale * 2.0F),
                 Math.max(0.0F, (CARD_R - 1.0F) * scale), GLASS,
                 GLASS_TINT_STRENGTH, alpha * GLASS_ALPHA);
 
-        // 图标圆角底盘：只加很淡的一层，白/浅色方块不会被纯黑方块衬底吃掉。
-        roundRect(ICON_X - 1.0F, ICON_Y - 1.0F, ICON_SIZE + 2.0F,
-                ICON_SIZE + 2.0F, 5.0F, color(ICON_PLATE, ICON_PLATE_ALPHA * alpha));
-
-        // 物品模型无法直接设置透明度；用缩放代替淡入淡出，避免关闭时背景先消失、
-        // 不透明的方块模型却还停留一段时间。
-        float iconScale = alpha;
-        float iconCenterX = ICON_X + ICON_SIZE / 2.0F;
-        float iconCenterY = ICON_Y + ICON_SIZE / 2.0F;
+        // 图标：只按 alpha 缩放，物品模型没法单独设透明度。
+        float iconX = PAD;
+        float iconY = (CARD_H - ICON_SIZE) / 2.0F;
         GL11.glPushMatrix();
-        GL11.glTranslatef(iconCenterX, iconCenterY, 0.0F);
-        GL11.glScalef(iconScale, iconScale, 1.0F);
-        GL11.glTranslatef(-iconCenterX, -iconCenterY, 0.0F);
-        drawIcon(stack, alpha, shake[0], shake[1]);
+        GL11.glTranslatef(iconX + ICON_SIZE / 2.0F, iconY + ICON_SIZE / 2.0F, 0.0F);
+        GL11.glScalef(alpha, alpha, 1.0F);
+        GL11.glTranslatef(-(iconX + ICON_SIZE / 2.0F), -(iconY + ICON_SIZE / 2.0F), 0.0F);
+        drawIcon(stack, alpha, iconX, iconY);
         GL11.glPopMatrix();
 
-        GL11.glEnable(GL11.GL_TEXTURE_2D);
-        text(font, name, (int) CONTENT_X, (int) NAME_Y, TEXT, NAME_SIZE, alpha);
+        // 文本块：计数在上、速度在下，右对齐。
+        String countText = count + (count == 1 ? " block" : " blocks");
+        String speedText = String.format(java.util.Locale.ROOT, "%.2fb/s", speedBps);
+        float countWidth = HudFont.getStringWidth(font, countText, COUNT_SIZE);
+        float speedWidth = HudFont.getStringWidth(font, speedText, SPEED_SIZE);
+        float textWidth = Math.max(TEXT_MIN_W, Math.max(countWidth, speedWidth));
+        float textRight = CARD_W - PAD;
+        float textLeft = textRight - textWidth;
 
-        String countText = String.valueOf(count);
-        String suffix = count == 1 ? " block left" : " blocks left";
-        text(font, countText, (int) CONTENT_X, (int) COUNT_Y,
-                count > 0 ? COUNT : COUNT_EMPTY, COUNT_SIZE, alpha);
-        int suffixX = (int) CONTENT_X
-                + HudFont.getStringWidth(font, countText, COUNT_SIZE) + 3;
-        text(font, suffix, suffixX, (int) SUFFIX_Y, MUTED, SUFFIX_SIZE, alpha);
+        // 进度条：图标右侧 → 文本左侧。
+        float barX = iconX + ICON_SIZE + PAD;
+        float barW = textLeft - PAD - barX;
+        if (barW > 8.0F) {
+            float barY = CARD_H / 2.0F - BAR_H / 2.0F;
+            roundRect(barX, barY, barW, BAR_H, BAR_H / 2.0F, color(BAR_BG, alpha * 0.95F));
+            float fill = Math.max(0.0F, Math.min(1.0F, barProgress));
+            if (fill > 0.0F) {
+                roundRect(barX, barY, Math.max(BAR_H, barW * fill), BAR_H,
+                        BAR_H / 2.0F, color(BAR_FILL, alpha));
+            }
+        }
+
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        int countX = Math.round(textRight - countWidth);
+        int speedX = Math.round(textRight - speedWidth);
+        text(font, countText, countX, 7, COUNT, COUNT_SIZE, alpha);
+        text(font, speedText, speedX, 19, MUTED, SPEED_SIZE, alpha);
 
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         GL11.glPopMatrix();
@@ -274,33 +272,11 @@ public final class ScaffoldHud {
         GlColor.restore();
     }
 
-    /** 抖动的横向/纵向偏移：一次放置触发，随机初相位 + 衰减振荡。 */
-    private static float[] shakeOffset(long now) {
-        float[] offset = new float[2];
-        if (lastPlaceNanos == 0L) {
-            return offset;
-        }
-        long elapsed = now - lastPlaceNanos;
-        if (elapsed < 0L || elapsed >= SHAKE_MS) {
-            return offset;
-        }
-        float t = elapsed / (float) SHAKE_MS;
-        float decay = 1.0F - t;
-        float angle = shakePhase + (float) (t * SHAKE_CYCLES * Math.PI * 2.0D);
-        offset[0] = (float) Math.sin(angle) * SHAKE_AMPLITUDE * decay;
-        offset[1] = (float) Math.sin(angle * 1.7F + 0.9F)
-                * SHAKE_AMPLITUDE * 0.35F * decay;
-        return offset;
-    }
-
     // ==================================================================
     // 方块图标
     // ==================================================================
 
-    private static void drawIcon(Object stack, float alpha, float shakeX, float shakeY) {
-        float x = ICON_X + shakeX;
-        float y = ICON_Y + shakeY;
-        // 不再画深色方块底板：白/浅色方块会在卡片背景上留下明显的黑色方块。
+    private static void drawIcon(Object stack, float alpha, float x, float y) {
         float itemX = x + (ICON_SIZE - ITEM_SIZE) / 2.0F;
         float itemY = y + (ICON_SIZE - ITEM_SIZE) / 2.0F;
         if (stack != null && drawItemIcon(stack, itemX, itemY)) {
@@ -390,11 +366,11 @@ public final class ScaffoldHud {
         try {
             method.invoke(null);
         } catch (Throwable ignored) {
-            // Lighting is best-effort; the item still renders with whatever state is active.
+            // Lighting is best-effort; whatever state is active still renders.
         }
     }
 
-    /** 物品渲染不可用时的等距方块，保证 HUD 永远有「方块样式」。 */
+    /** 物品渲染不可用时的等距方块，保证 HUD 永远有“方块样式”。 */
     private static void drawFallbackCube(float cx, float cy, float alpha) {
         float s = 7.0F;
         float half = 0.866F * s;
@@ -418,7 +394,7 @@ public final class ScaffoldHud {
         GL11.glVertex2f(cx - half, cy + s / 2.0F);
         GL11.glEnd();
 
-        GlColor.set(color(0x6E7783, alpha));
+        GlColor.set(color(0x6F7783, alpha));
         GL11.glBegin(GL11.GL_QUADS);
         GL11.glVertex2f(cx + half, middle);
         GL11.glVertex2f(cx, cy);
@@ -440,8 +416,7 @@ public final class ScaffoldHud {
         GL11.glDisable(GL11.GL_TEXTURE_2D);
     }
 
-    private static void roundRect(float x, float y, float w, float h, float radius,
-            int argb) {
+    private static void roundRect(float x, float y, float w, float h, float radius, int argb) {
         if (w <= 0.0F || h <= 0.0F || (argb >>> 24) == 0) {
             return;
         }
@@ -465,6 +440,11 @@ public final class ScaffoldHud {
     // 工具
     // ==================================================================
 
+    private static boolean moduleEnabled() {
+        Module module = ModuleManager.getModule("Scaffold");
+        return module != null && module.isEnabled();
+    }
+
     private static int color(int rgb, float alpha) {
         int a = clamp255(Math.round(alpha * 255.0F));
         return a << 24 | (rgb & 0x00FFFFFF);
@@ -474,58 +454,11 @@ public final class ScaffoldHud {
         return value < 0 ? 0 : (value > 255 ? 255 : value);
     }
 
-    /**
-     * 线性推进：按毫秒进度直接走到目标值，保证淡入/淡出在设定时长内真正结束，
-     * 而不是指数逼近导致方块图标在背景消失后还残留一段时间。
-     */
     private static float approach(float value, float goal, float amount) {
         float step = amount < 0.0F ? 0.0F : (amount > 1.0F ? 1.0F : amount);
         if (value < goal) {
             return Math.min(goal, value + step);
         }
         return Math.max(goal, value - step);
-    }
-
-    private static String displayName(Object stack) {
-        Object value = OpenMaverFeatures.call(stack, "getDisplayName", "func_82833_r", null);
-        String name = value instanceof String ? stripFormatting((String) value) : "";
-        if (name == null || name.trim().isEmpty()) {
-            name = "Blocks";
-        }
-        return name;
-    }
-
-    private static String stripFormatting(String text) {
-        if (text == null) {
-            return null;
-        }
-        StringBuilder out = new StringBuilder(text.length());
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (c == '\u00a7' && i + 1 < text.length()) {
-                i++;
-                continue;
-            }
-            out.append(c);
-        }
-        return out.toString();
-    }
-
-    private static String trimToWidth(FontRenderer font, String text, float size,
-            int maxWidth) {
-        if (text == null) {
-            return "";
-        }
-        if (HudFont.getStringWidth(font, text, size) <= maxWidth) {
-            return text;
-        }
-        String suffix = "..";
-        int end = text.length();
-        while (end > 0
-                && HudFont.getStringWidth(font, text.substring(0, end) + suffix, size)
-                        > maxWidth) {
-            end--;
-        }
-        return end <= 0 ? suffix : text.substring(0, end) + suffix;
     }
 }

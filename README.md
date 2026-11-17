@@ -3,7 +3,7 @@
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
 > 说明：本仓库包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接）
-> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Velocity、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、FPS / CPS 统计）
+> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Velocity、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、FPS / CPS 统计）
 > 以及 `legit / balanced / aggressive` 三档 Grim 对测 profile。
 > 请仅在你拥有或获得明确授权的服务器上进行测试。
 
@@ -35,9 +35,11 @@ OpenMaver/
 │       ├── ModuleManager.java     # 模块注册表 + 统一驱动
 │       ├── movement/AutoSprint.java  # 示例模块（链路验证器）
 │       ├── combat/KillAura.java  # 自动攻击开关（MC 侧逻辑在 OpenMaverFeatures）
-│       ├── movement/Scaffold.java # 自动搭路/神桥开关（MC 侧逻辑在 ScaffoldFeature）
+│       ├── movement/Scaffold.java # 搭桥开关（MC 侧逻辑在 ScaffoldFeature，OpenZen 移植）
 │       ├── movement/Velocity.java # 防击退开关（MC 侧逻辑在 VelocityFeature）
 │       ├── player/FastPlace.java  # 快速右键开关（MC 侧逻辑在 OpenMaverFeatures）
+│       ├── player/ChestStealer.java # 开箱搬运 / 整理 / 存入开关（MC 侧逻辑在 mc/ChestFeature）
+│       ├── render/ChestEsp.java   # 箱子透视开关（MC 侧绘制在 mc/ChestFeature）
 │       ├── render/TargetHud.java  # 目标信息面板开关（MC 侧绘制在 mc/TargetHud）
 │       ├── render/PlayerXray.java # 玩家透视开关（MC 侧绘制在 OpenMaverFeatures）
 │       ├── render/Fps.java        # 左上角 FPS 显示开关（MC 侧绘制在 mc/StatsHud）
@@ -51,6 +53,8 @@ OpenMaver/
 │   ├── OpenMaverClientHandler.java# 客户端 tick / 渲染事件桥接 + 进入世界启动
 │   ├── OpenMaverHud.java          # 右侧 ModuleList（胶囊列表 + 参数摘要 + 启用动效）
 │   ├── StatsHud.java              # 左上角 FPS 胶囊 + CPS 小方块（灰色毛玻璃）
+│   ├── ChestFeature.java          # 箱子：存储方块 ESP + 开箱搬运/整理/存入
+│   ├── ChestPacketHook.java       # 入站 S2D/S30/S2E 窗口包记账（Netty 管线）
 │   ├── GuiOpenMaverClickGui.java  # 游戏内 ClickGUI（分类 / 搜索 / 展开设置）
 │   ├── GuiMaverMainMenu.java      # Badlion 风格主菜单（Logo / 按钮 / 账号 / 快捷菜单）
 │   ├── MaverWallpaper.java        # 主菜单壁纸（静态图片 / GIF / 内置动态背景）
@@ -244,6 +248,10 @@ java -Djava.library.path=build/lib \
   右侧紧挨一枚同样灰色毛玻璃的圆角 FPS 胶囊。两者都模糊自身覆盖的画面，
   与 ModuleList / 右下角提示共用 `GuiBlur`；由 `render.fps` 与 `render.cps`
   两个模块控制，默认都开启。
+- **Chest ESP 箱子透视** `mc/ChestFeature.onRenderWorld`：世界里的箱子 / 大箱子 /
+  末影箱（可选漏斗、熔炉、发射器）穿墙线框，由 `render.chestesp` 控制。
+  箱子内容预览（`Chest Info` 信息栏）已移除：搬运直接走开箱会话（界面里 shift-click 拿走），
+  不再需要维护「这个箱子我开过、里面有什么」的预览数据。
 - **Player X-Ray** `mc/OpenMaverFeatures.renderPlayerXray`：玩家透视。只扫描
   `EntityPlayer`，关闭深度测试后通过游戏自身的 `RenderManager` 渲染完整皮肤模型，
   让玩家皮肤、装备和手持物品穿墙可见；模型外侧再绘制 1.5px 描边。
@@ -361,21 +369,21 @@ debug.enabled=false         # true 时写入 logs/openmaver-debug.log
   yaw/pitch 覆盖 `player.yaw/pitch`，位置取 `lastClaimedPosition`（C08 之前那条
   飞包的位置 = 发包时的当前位置）。`didRayTraceHit` 的 pitch 只有这一个来源，
   yaw 才允许 `lastYaw` 回退（1.8 没有 lastPitch）。
-  因此 Scaffold 的不变量是：**用本 tick 会发出去的角度做 ray trace，发 C08，
-  然后把本 tick 的飞包锁成同一个角度**（`holdPlaceAim` / `applyHoldAim`），
+  因此 Scaffold 的不变量是：**用服务端已经收到的角度做 ray trace，发 C08，
+  然后把这一 tick 的飞包锁成同一个角度**（`flushPending` + `holdPlaceAim`），
   该 tick 不再规划新目标。角度对不上就重新瞄准、下一 tick 再放
-  （`MAX_PENDING_RETRIES=2`），绝不拿没校验过的角度发包。
+  （`pendingDecision` / `MAX_PENDING_RETRIES=2`），绝不拿没校验过的角度发包。
 
   > 17:31 那局证明了「先发 aim、下一 tick 再放」**不够**：Grim 用的是再下一条
   > 飞包的角度，所以放置那一 tick 的包会被下一个目标的 aim（或相机）占掉，
   > 100% flag。第二版修复（`holdPlaceAim`）、源码引用与代价分析见
   > `design/SCAFFOLD_ROTATIONPLACE_HANDOFF.md` §2.1 / §11。
   > 代价是每 2 tick 一块（10 块/秒）。回归测试：`tools/scaffold-test/run.sh`
-  > （43 项，含按包序建模的 C08→飞包时序模拟）。
+  > （70 项：决策表、旋转数学、支撑面映射、clutch 窗口与源码结构）。
 
-  > 早前记录的两处破口也已收口：`flushPendingPlace` 里「重算角度后立刻放置」
-  > 改为**重新排队**；`placement.immediate` 的即时放置改为**一律排队**；
-  > `place()` 增加「一 tick 只发一个 C08」的守卫（`MultiPlace`）。
+  > 这两条不变量在 OpenZen 移植版里依然成立：`place()` 只由 `flushPending()`
+  > 调用（唯一 `onPlayerRightClick` 调用点），并且共用
+  > `OpenMaverFeatures.claimPlacement()` 的“一 tick 一个 C08”名额（`MultiPlace`）。
 - `timer/Timer`：每个 tick 包固定按 50ms 计费；Scaffold 不再额外发
   `C05PacketPlayerLook`，每 tick 只有一条 C03 族包。
 - `multiactions/*`：使用物品时攻击/挥击、同 tick 方块+实体交互、移动中开背包都会
@@ -388,68 +396,59 @@ IO 失败只记录一次并自动停用 debug。
 完整审计、Grim commit、checks.yml 对照项与对测记录模板见
 `design/GRIM_BYPASS_HANDOFF.md`。
 
-### Scaffold 自动搭路（Myau 全量行为移植）
+### Scaffold 自动搭路 / 搭桥（OpenZen 移植）
 
 - 配置路径：`movement.scaffold`，默认关闭，默认键位 **B**。
-- 由原 `GodBridge` 重命名而来；当前实现按 `OpenMyau-Fix` 的 `Scaffold` **逐项移植**：
-  - 7 种旋转模式：`NONE / DEFAULT / BACKWARDS / SIDEWAYS / OFFSET / SNAP / HYPIXEL`
-  - `MoveFix`、`Sprint`、`Ground/Air/Speed Motion`
-  - `Tower`：`VANILLA / EXTRA / HYPIXEL`，以及 `KeepY`：`VANILLA / EXTRA / TELLY / EXTRATELLY`
-  - Telly 起步/常规旋转速度、`AngleDiff`、`Candiffplace`
-  - `MultiPlace`、`SafeWalk`、`Swing`、`ItemSpoof`、`BlockCounter`
-  - 自动切换快捷栏方块、方块数量提示
-  - Scaffold 开启期间接管左/右键和挖方块，避免原版抢占放置
-- 与 Myau 的差异：OpenMaver 没有 Mixin/EventManager，旋转、Strafe、SafeWalk、
-  输入拦截用 ClientTickEvent + 反射近似。
-  - 静默旋转采用 **tick 内换视角**：`ScaffoldMovementInput` 在原版
-    `updatePlayerMoveState()` 之后把 aim 写进 `rotationYaw/Pitch`，本 tick 的 C03
-    自然携带；ClientTickEvent.END（渲染之前）再恢复相机角度。第一人称视角不变，
-    F5 身体/头保留服务端最后收到的 aim。
-  - `MoveFix` 在同一个 hook 里按 Myau 的 `fixStrafe` 把 `movementInput` 吸附到
-    相对 aim 的 8 个整数方向之一，WASD 的世界方向仍然跟相机。**不能连续旋转**，
-    否则客户端会以任意角度移动，Grim 的 `Simulation` 只能尝试 8 个整数方向，
-    会产生 `.002 ~ .03` 的持续位移误差。
-  - 放置目标选择：支撑方块必须与目标空气格直接相邻，并对每个候选面做真实
-    `rayTrace` 校验；被脚下方块挡住的侧面会自动换下一个支撑面（以前只取“最近
-    的支撑方块”，平桥上前方一格经常因为侧面被顶面遮挡而放置失败）。
-  - 放置节奏：玩家还站在实心方块上时，用**下一 tick 的预测位置**提前把 aim 写进
-    C03，下一 tick 开头再用同一角度 flush，因此走/跑/转头都能跟上。预测优先使用
-    当前实际速度（惯性），快速转头时不会再按新按键方向把目标格算到错误一侧；
-    瞄准点优先取面中心；flush 失败时**只重算 aim 并排队**（下一 tick 才放置，
-    重试上限 2 次）。放置成功的那一 tick 会把 rotation 锁在「刚校验过的角度」上
-    （`holdPlaceAim`），下一 tick 才规划新目标 —— 这是 Grim 1.8
-    `RotationPlace` 判定链决定的，代价是每 2 tick 一块。
-  - 在方块边缘原地转头时，如果距离相机方向的边缘 ≤0.55 格，会把相机前方一格
-    也作为目标，因此在边缘停下转身也能继续铺路。
-  - 对 Grim：**任何情况都不即时放置**（含玩家已经踏空），只保留
-    “预测 aim → 下一 tick 同一角度放置”；flush 失败时重算出的角度也只进本 tick
-    的 C03，绝不换角度直接发 C08（否则会触发 `RotationPlace: post-flying` /
-    `PositionPlace`）。
-  - `SafeWalk` 改为原版潜行防边缘的收缩步长，不再在离边缘 0.45 格时清空
-    `motionX/Z`。**开启 bypass 时 SafeWalk 会自动禁用**，因为它直接改 motion，
-    是 `Simulation` 的主要来源。
-- 使用方式：
-  1. 手持可放置方块，正常行走、后退或起塔；
-  2. 默认 `rotations=DEFAULT` 会自动转向对角线/桥面方向；
-  3. `tower` 设为 `VANILLA/EXTRA/HYPIXEL` 后按住空格起塔；
-  4. `keepY` 用于在跳跃/起塔期间保持桥面高度；
-  5. 打开 GUI/聊天、死亡、空手时停止；关闭模块会恢复原快捷栏槽位。
-- 主要设置（ClickGUI 中展开 Scaffold，写入 `config/openmaver.properties`）：
-  - `ROTATIONS`：`scaffold.rotations`，默认 `DEFAULT`。
-  - `MOVE FIX`：`scaffold.moveFix`，默认 `SILENT`。
-  - `SPRINT`：`scaffold.sprint`，默认 `VANILLA`（保留冲刺；需要 Grim 对测可改回 `NONE`）。
-  - `GROUND/AIR/SPEED MOTION`：`scaffold.groundMotion/airMotion/speedMotion`，0~100%，默认 100。
-  - `KEEP Y ON PRESS`：`scaffold.keepYonPress`，默认 false。
-  - `MULTI PLACE` / `SAFE WALK` / `SWING` / `ITEM SPOOF` / `BLOCK COUNTER` / `CANDIFFPLACE`。
-  - `DELAY TICKS`：`scaffold.towerFlatTicks`，0~20 tick，默认 4。
-  - `ANGLE DIFF`：`scaffold.angleDiff`，0~180°，默认 50。
-  - `TELLY START/NORMAL MIN/MAX`：`scaffold.tellyStartRotMin/Max`、`scaffold.tellyNormalRotMin/Max`。
-  - `ROTATION SPEED`：`scaffold.rotationSpeed`，默认 `NORMAL`。
-  - `TOWER`：`scaffold.tower`，默认 `NONE`。
-  - `KEEP Y`：`scaffold.keepY`，默认 `NONE`。
-- 实现位置：`mc/ScaffoldFeature.java`（完整行为），`java/module/movement/Scaffold.java`
-  只负责模块开关；`OpenMaverFeatures.onTickStart()` 每 tick 驱动。
-- 实现说明：`design/SCAFFOLD_HANDOFF.md` 记录了状态机、旋转模式、Tower/KeepY 与反射/SRG 名称。
+- **实现来源**：完全按 `../OpenZen` 的 `shit.zen.modules.impl.movement.Scaffold`
+  重写（不再是 Myau 的移植）。旧的 `rotations/moveFix/sprint/tower/keepY/...`
+  设置与 `OpenMaverFeatures` 里那条旧放置路径已删除。
+- 模式（`scaffold.mode`）：
+  - `NORMAL`：`snap` 直接对齐支撑面；`eagle` 控制“贴边才潜行”。
+  - `TELLY BRIDGE`：OpenZen 的起步/空中旋转表（groundTicks 1/2、俯角 75.5°、
+    空中第一 tick 90° / 其余 50° 的 yaw 限速），起身时把 1.8.9 的 `jumpTicks`
+    设成 2（对应 OpenZen 的 `setJumpDelay(2)`）。
+  - `OLD TELLY`：单 tick 180° 直接转向，起步时用相机 yaw。
+  - `KEEP Y`：移动时按住空格，保持桥面高度。
+- 目标高度：`targetYLevel = floor(y) - 1`，只在“落地 / 停下 / 按住空格 /
+  `NORMAL`”时刷新；其余时间锁住，这是 telly 能连续向上铺的前提。
+- 目标格搜索：从 `targetYLevel` 开始，半径 1..6 的菱形向下扩；目标格必须是空气，
+  六个邻居里要有实心支撑面，且面中心到眼睛 ≤ 4.5 格、法线朝向眼睛（`dot >= 0`）。
+  放置点记成“支撑方块 + 指向目标格的那一面”。
+- 放置节奏：`pending → flush`。tick N 把 aim 写进 C03；tick N+1 开头用
+  **服务端已经收到的那个角度**在当前眼睛位置重做 ray trace，命中才发 C08；
+  打不到就重试（上限 2 次）。放置成功的那一 tick 把 aim 冻结成刚校验过的角度
+  （`holdPlaceAim`），保证 C08 之后那条飞包携带同一个角度（Grim `RotationPlace`）。
+- `CLUTCH`：用两 tick 垂直模拟判断“再掉下去目标就够不着了”，够不着时按住 aim
+  不放（`rotationDelay` 上限 8）；收到自己的 S12 且水平速度 ≥ 1.5 时
+  `velocityDelay=60`，期间同样走这个分支。
+- `SNEAK`：OpenZen 的 18→21 tick 潜行节拍（第 18 tick 停冲刺 + 按潜行，第 21 tick
+  松开）；`EAGLE` 是 `NORMAL` 下“脚下半格收缩一圈后没有碰撞面”才潜行。
+- `ITEM SPOOF`：tick 末尾把客户端槽位切回开启时的槽（不发 C09），手部渲染看到
+  旧物品；服务端仍然认为手持方块 —— 与 OpenZen 的 `Render Item Spoof` 可见效果一致。
+- 快捷栏：切到方块槽时显式补一条 `C09PacketHeldItemChange`（`serverSlot` 去重），
+  1.8.9 不会自动同步 `inventory.currentItem`。关闭模块会切回原槽并发 C09。
+- HUD：OpenZen 的“图标 + 计数条 + `N blocks` / `x.xxb/s`”，进度条颜色 `#9900FF`，
+  换方块时弹簧过渡；`scaffold.hud` 控制显示。
+- 世界渲染：目标空气格画成蓝色半透明方块（`RenderWorldLastEvent`）。
+- 与 OpenZen 的落地差异（OpenMaver 没有 Mixin / EventManager）：
+  - 静默转向在 `ScaffoldMovementInput`（vanilla `updatePlayerMoveState()` 之后、
+    `moveFlying()` 之前）写 `rotationYaw/Pitch`，`ClientTickEvent.END` 恢复相机；
+    第一人称不动，F5 身体保留服务端最后收到的 aim。
+  - MoveFix 在同一个 hook 里把输入吸附到相对 aim 的 8 个整数方向，并把
+    `forward` 等比放大到 0.8，避免原版随后关掉冲刺（否则 Grim `Simulation` 会看到
+    任意角度的位移）。
+  - `delayPackets`（OpenZen 在 clutch 分支拆 tick）没有等价注入点，只保留语义：
+    hold aim + `rotationDelay` 计数 + 到期重试，不再额外发 C05。
+  - 空闲时（没有目标格）aim 回落到相机角度，避免 OpenZen 那份 `(0,0)` 让服务端
+    视角在没有目标时漂到 yaw 0。
+- 实现位置：`mc/ScaffoldFeature.java`（完整行为）、`mc/ScaffoldMovementInput.java`
+  （静默 aim + MoveFix hook）、`mc/ScaffoldHud.java`（HUD）；`java/module/movement/Scaffold.java`
+  只负责模块开关；`OpenMaverFeatures.onTickStart()` / `onTick()` 每 tick 驱动。
+- 回归测试：`tools/scaffold-test/run.sh`（70 项：决策表、旋转数学、支撑面映射、
+  clutch 窗口、HUD/GUI 与源码结构断言）。
+- 实现说明：`design/SCAFFOLD_HANDOFF.md` 记录状态机、包序与反射/SRG 名称；
+  `design/SCAFFOLD_ROTATIONPLACE_HANDOFF.md` 保留 Grim `RotationPlace` 的判定链与
+  对测记录（新实现仍然遵守它）。
 
 ### Velocity 防击退（SPRINT SLAP / Blink Burst）
 
@@ -546,6 +545,201 @@ IO 失败只记录一次并自动停用 debug。
   最近 1 秒内的点击次数，数值会随时间自然回落。
 - 实现说明：绘制在 `mc/StatsHud.java`，由 `OpenMaverHud` 在
   `RenderGameOverlayEvent.Post` 中调用；ClickGUI 打开时会作为模糊背景的一部分保留。
+
+### Chest ESP 箱子透视
+
+- 配置路径：`render.chestesp`（默认关闭，默认键位 **P**）。
+- 每帧扫描 `World.loadedTileEntityList`，对箱子 / 大箱子 / 末影箱
+  （可选漏斗、熔炉、发射器、投掷器、酿造台）画 1.5px 穿墙线框，按距离过滤。
+  - 设置项：`RANGE`(8~128m)、`THICKNESS`(0.5~4px)、`OPACITY`(0.15~1)、
+    `COLOR`(Gold / Cyan / Violet / Red / White)、`STORAGE BLOCKS`(是否包含机器容器)。
+- 只读数据，不发送任何包。
+- **箱子内容预览已移除**：原来贴在左上角 CPS 下方的 `Chest Info` 信息栏（含
+  `NO DATA - OPEN ONCE` 提示、`ROWS`/`WIDTH` 设置、准星箱子的白线高亮、`render.chestinfo`
+  配置项与模块）整体删除。现在搬运走开箱会话（可见界面 / 静默两种，见下一节），客户端不再需要维护
+  「这个箱子我开过、里面有什么」的预览数据。
+- 实现说明：`mc/ChestFeature.java`（绘制挂在 `RenderWorldLastEvent`），开关模块为
+  `java/module/render/ChestEsp.java`。
+
+### Chest Stealer 开箱搬运（拾取 / 整理 / 存入）
+
+- 配置路径：`player.cheststealer`，默认关闭，默认不占按键（ClickGUI 里开）。
+- **两种开箱方式**（`SHOW CHEST GUI` 开关，默认开 = 可见）：
+  - **可见（默认，`chest.stealer.hideGui=false`）**：对着箱子按拾取键（或准星停留）时，
+    客户端替玩家发**一次**右键开箱包，服务端照常把容器开起来并同步内容，原版
+    `GuiChest` **就留在屏幕上**；搬运是在这个真界面里完成的（等于玩家自己开着箱子
+    shift-click），拿完再按「玩家关箱子」的流程发 `C0D` 关窗 + 关界面退出。
+    服务端与反作弊看到的是「打开了箱子 → 在界面里拿了东西 → 关掉界面」，
+    客户端与服务端的容器状态始终一致。
+  - **静默（`chest.stealer.hideGui=true`）**：界面在**同一个 client tick 内**被
+    `Minecraft.displayGuiScreen(null)` 收起来，屏幕上看不到箱子 GUI，但仍然 shift-click
+    搬运。这条路径「没有界面却在点窗口」，正是 Grim 那类 click window 预测检查最容易
+    盯上的形态 —— 只在需要完全隐藏界面时开。
+- **为什么必须先让原版把界面挂一遍**：1.8.9 的 `NetHandlerPlayClient.handleOpenWindow`
+  先让 `GuiChest` 构造出 `ContainerChest`，再由 `Minecraft.displayGuiScreen →
+  GuiScreen.setWorldAndResolution → GuiContainer.initGui` 把容器挂到
+  `player.openContainer`，**最后才写入服务端的 `windowId`**。所以
+  `ChestFeature.onGuiOpen` **不取消 `GuiOpenEvent`**：让原版把容器、`windowId`、
+  S30 窗口内容整套流程跑完（槽位内容只有窗口号对得上才会落到容器里），只是记下
+  「这一次箱子会话开始了」。以前「在事件里取消 + 自己 `setWorldAndResolution` 抢容器」
+  拿到的是 `GuiChest` 自己 new 的容器，`windowId` 停在 0（背包窗口），服务端发的 S30
+  内容被整包丢掉、C0E 点击也不认，表现就是「箱子开了、界面也没弹，但一件都搬不走」。
+- **内容同步门（S30）**：`ChestPacketHook` 把 handler 插在 Netty 管线的
+  `packet_handler` 之前，记下服务端 `S2D` 开窗 / `S30` 窗口物品 / `S2E` 关窗的窗口号。
+  只有在**本次会话开始之后**收到过这个 `windowId` 的窗口物品包，才会动手点格子 ——
+  人也是看到箱子里的东西才点的。两条免等捷径（本机实测修复）：
+  - **本地容器已有内容就直接开搬**：`chestSideHasItems()` 扫描容器槽位，箱子侧已经有
+    物品就说明内容早落到容器里了，不再等服务端 S30 的记账；
+  - 钩子晚挂 / 版本改包名时，兜底从 `OPEN DELAY + 12 tick`（≈600ms）收到
+    `+ 4 tick`（≈200ms），拿不到内容就早一点收摊。
+  - 包钩子现在**每 2 tick 重试挂载**（原来是每 40 tick ≈ 2 秒）：进服 / 重连之后
+    第一次开箱不再整场丢 S30 记账（本机日志里「开箱 0.9s 才点第一格」就是它）。
+  - 服务端自己关窗（走远 / 死亡 / 管理员指令）时，会话立刻作废，绝不对着已经不存在的
+    窗口继续点。
+  - 界面被玩家按 E 关掉、但服务端容器还挂着时，也立刻发 `C0D` 收摊并停止搬运。
+- **一件一件拿（`ONE BY ONE`，默认开）**：每批只 shift-click **一格**箱子，下一格由
+  **人类化节拍（`HUMANIZE`，默认开）** 决定：每格间隔是 **100~160ms** 的随机毫秒
+  （硬下限 `MIN_CLICK_INTERVAL_MS = 80`，配置写更小会被夹上来），不是「每 tick 一格」
+  的 50ms 等距；每连续 4 格之后才有 6% 概率插一段 200~380ms 的停顿，首格前还有一次
+  随机反应时间（80ms + 0~150ms 抖动），关箱前等 2~5 tick。
+  10 格满箱实测 ≈1.0~1.6s（客户端掉帧时按下面的「追赶」补点，最多 2 格/tick）。
+  `CLICKS/TICK` 只在同时关掉 `ONE BY ONE` 和 `HUMANIZE` 时才生效（那时一批可连拿 N 格）。
+- **点击包必须排在 C03 之前（本机实测修复，Grim `Post` 的根因）**：搬运逻辑现在挂在
+  `ClientTickEvent.START`，和玩家自己在 `GuiContainer` 里点鼠标的包序一致
+  （`C0F` ack（tick 开头的 scheduled task）→ `C0E` windowClick → `C03` flying）。
+  以前挂在 tick **END**：每个 `C0E` 都跨了 tick 边界，服务端的 transaction ack 必然
+  落在「END 的 `C0E`」和「下一个 `C03`」之间 —— Grim `Post` 的判据正是
+  「`C03` 之后、下一个 `C03` 之前出现 action 包 + 合法 transaction」，
+  于是**每一条搬运点击后面都跟着一条**
+  `[GrimAC] Mincx1203 failed Post (vl:x.x): click window v1.8`（本机日志 13:30
+  一次 10 格的箱子里 vl 从 0 涨到 13）。改到 START 之后这条包序特征消失。
+- **为什么不再「一格一 tick」**：本机在 `mc.loyisa.cn` 的日志里，6 格物品在
+  **12:55:23 一秒内、250ms 总时长**搬完（即每格精确 50ms），随即连续 6 条
+  `[GrimAC] Mincx1203 failed Post (vl:0.0): click window v1.8`，服务器同时广播
+  `CCBlueX ... 1504ms / 250ms / 6`（开箱到搬完的总时长 / 阈值 / 物品数）。
+  结合 Grim 2.0 `Post` 的源码，**真正被判的依据是「包序」**：`C03` 之后的
+  action 包只要没被下一个 `C03` 清掉，中间来了合法 transaction 就 flag。
+  `HUMANIZE` + START 发包一起解决这件事：
+  - 所有 `C0E` 都在本 tick 的 `C03` 之前发出（`ClientTickEvent.START`），包序 = 真人；
+  - 间隔取随机毫秒（100~160ms）并刻意避开 50ms 的整数倍，密度回到真人区间；
+  - 同一 client tick 内最多 2 个 `windowClick`（`MAX_CLICKS_PER_TICK`，只在客户端
+    掉帧、节拍落后时才补到 2；正常 20 TPS 永远是 1）；
+  - 关箱延迟、下一个箱子的冷却都随机化（关 2~5 tick；两箱之间 0.45~1.35s），
+    `SWEEP CD` 只是下限。
+- **连开箱子不再互相顶掉（本机实测修复）**：`GuiOpenEvent` 里以前只要 `armed=false`
+  就先把「上一个会话的容器」关掉（C0D + `openContainer` 换回背包）。快速连开或服务端
+  关窗包晚到时，被关掉的其实是**刚打开的新 GuiChest** —— 界面还在屏幕上、`openContainer`
+  却已经是背包容器（`windowId=0`），主循环一句 `windowId<=0` 直接 return，
+  表现就是「点开箱子直接不拿」，玩家一关界面再补一条 `chest session gone`。
+  现在任何箱子界面都接管成新会话（`startChestSession(gui, owned)`），
+  并且主循环发现「界面开着但容器是背包」时会从 `inventorySlots` 把容器和
+  `windowId` 恢复回来（日志 `recovered chest container from gui`）。
+- **过期关窗包拦截**：1.8.9 的 `handleCloseWindow` 不比较窗口号，任何 S2E 都会
+  `closeScreen()`。`ChestPacketHook` 现在按 `clientWindowId` 判断，窗口号不匹配的
+  S2E 只记账、不往下传；同时关窗后 450ms 内不再自动开下一个箱子
+  （`CLOSE_SETTLE_NANOS`），避免旧窗口关窗包追击新窗口。
+- **开箱后不再白等（本机实测修复）**：1.8 服务端把 S2D 与 S30 放在同一次 flush，
+  Netty 线程常常先处理完 S30、主线程下一 tick 才建会话。以前严格要求
+  `netItemsNanos >= sessionStartNanos`，这种同批到达被判成「内容没同步」，
+  白等 `12 tick`（≈600ms）才走 fallback ——「打开箱子一两秒才动手」的另一半就是它。
+  现在 `contentSynced()` 允许 S30 比会话开始早 400ms（`WINDOW_SYNC_TOLERANCE_NANOS`），
+  内容到齐就立刻按节拍点第一格。
+- **扫箱冷却（`SWEEP CD`，默认 450ms）**：搬完一个箱子到对下一个箱子动手之间的最短间隔，
+  `HUMANIZE` 打开时会再叠加 0~900ms 随机量。以前写死 1.2 秒，连续扫箱时一半时间在干等。
+- **刚搬空的箱子 1.5s 内不再扫（`SWEEP_REVISIT_NANOS`）**：本机日志里关箱 0.66s 之后
+  又对同一个箱子发了开箱包，窗口里 0 件物品 —— 白花一次往返，还让服务端的开箱统计
+  多记一条空箱。
+- 等窗口期间**绝不重发**右键包（`openPacketPending`），否则服务端会反复关旧容器
+  开新容器，手上挂着的容器随即作废（以前日志里一秒能出现三条 `send open packet`）。
+- **识别边界的坑**：背包界面 / 创造模式物品栏（`GuiInventory` / `GuiContainerCreative`
+  + `ContainerCreative`）永远不算箱子。创造物品栏有 45 个页签槽位、槽位里的
+  `inventory` 是 `InventoryCreative`（不是玩家背包），旧版「槽位 > 36 且有箱子侧」
+  的兜底会把它判成箱子 —— 于是按 E 打开物品栏时被开箱逻辑接管：容器被换成
+  `ContainerCreative`、界面被取消，玩家看到的就是「物品栏打不开 / 一打开就没了」。
+  现在 `isChestScreen` 先按类名排除 `guiinventory` / `creative`，接管会话还要过
+  更严格的 `isChestGuiStrict`（容器类名必须真是 chest / hopper / shulker / furnace…）。
+- 搬运原理：每一批从**第一个箱子格开始按槽位顺序（从上到下、从左到右）**扫一遍，
+  对命中的第一格调用 `PlayerControllerMP.windowClick(windowId, slotId, 0, 1, player)`
+  （shift-click 整摞搬运），等服务端 S32 确认后再扫下一格 —— 一次只拿一格，
+  直到箱子空或背包满。每批都重新扫描一次真实容器状态，天然自愈，
+  不会对着空槽打空气包。
+- **一轮没搬动不会立刻放弃**：服务端的窗口物品包（S30）可能比开窗包晚几个 tick 到，
+  会话会在「一件都没搬成」时继续等最多 6 轮，内容晚到也照常搬；以前第一轮空手就
+  `silent close ... moving 0`，内容晚到时就是「箱子开了、一件没拿」。
+- **过滤不再静默吞掉一切**：`TAKE` 选 `NO JUNK` / `VALUABLE` 时，如果箱子侧有物品但全被
+  过滤掉，会打一条 `loot: takeFilter=... 把箱子侧 N 格物品全过滤掉了` 日志，并提示改成
+  `0 = ALL`；默认就是 `ALL`（右键箱子全拿）。
+- 行为：
+  - **自动扫箱（`AUTO SWEEP`，默认开）**：不用按键也不用先开界面 —— 准星在同一个箱子上
+    停留 4 tick 就自动开箱并搬空，之后 1.2 秒冷却，避免扫过就乱开。
+  - **自动拾取**：开箱后自动把箱内物资搬走；背包满（主背包 36 格全占）自动停手。
+  - **快捷键**：`L` 拾取、`G` 整理、`O` 存入（可在
+    `config/openmaver-chest.properties` 的 `chest.key.*` 改）。
+    未开箱时按任一键：`AUTO OPEN` 开（默认）会先开箱，再自动搬运；
+    箱子一直开不了（领地保护 / 距离太远）时 2.5 秒后自动放弃。
+  - **整理**：先合并同物品的零散堆叠，再按「名称 → 数量」排序；每一组交换用
+    「拿起 → 放下 → 把原槽位剩下的放回去」三次点击完成，动手前先把鼠标上的
+    物品塞进背包空槽，避免关界面时把东西掉在地上。
+  - **存入**：`STORE` 过滤命中时反向 shift-click（背包 → 箱子），箱子没空槽时停手。
+  - **自动退出（`AUTO CLOSE`，默认开）**：确认没有可搬的东西后再等 2 tick 让服务端
+    结算完最后一次点击，然后 `EntityPlayerSP.closeScreen()` 发 `C0D` 关窗 +
+    `displayGuiScreen(null)` 关界面 —— 和玩家自己按 E 退出箱子完全一样。
+    我们替玩家开的箱子（拾取键 / 自动扫箱）无论如何都会退出，否则扫箱没法接着跑下一个；
+    玩家自己开的界面尊重这个开关（关掉时不会偷偷关掉你的界面，以前
+    「界面一闪就没了、东西一件没动」的观感就是这么来的）。
+- 设置项（ClickGUI 中展开 Chest Stealer）：
+  - `TAKE`：拾取过滤 `ALL / NO JUNK / VALUABLE`（默认 `ALL`：右键箱子从上到下全拿）。
+  - `STORE`：存入过滤 `ALL / JUNK / VALUABLE`（默认 `JUNK`）。
+  - `ONE BY ONE`：一件一件拿（默认 `开`）—— 每批只拿一格。
+  - `CLICKS/TICK`：一批最多几次 `windowClick`，1~9，默认 `3`
+    （`ONE BY ONE` 与 `HUMANIZE` 都关掉时才生效）。
+  - `CLICK GAP`：`HUMANIZE` 关掉时，两批点击之间至少隔几个 tick（0~10，默认 `1`）。
+  - `HUMANIZE`：人类化节拍总开关（默认 `开`）。关掉即回到旧的「一格一 tick」机械节奏。
+  - `CLICK MS` / `CLICK MS+`：两格之间的随机间隔区间（默认 `100`~`160` ms，硬下限 `80`）。
+  - `FIRST MS`：每箱第一格之前的额外反应时间（默认 `80` ms，按 tick 取整后最多 2 tick，另加 0~150ms 抖动）。
+  - `PAUSE %`：每连续 4 格之后插一段长停顿的概率（默认 `6` %）。
+  - `SKIP %`：真人偶尔漏拿一格的概率（默认 `0` %，长时间连续搬箱可开到 3~8 打散统计）。
+  - `CLOSE T` / `CLOSE T+`：搬完后等多少 tick 再关箱（默认 `2`~`5`）。
+  - `SWEEP CD`：自动扫箱冷却下限（100~3000ms，默认 `450`，humanize 时再叠加 0~900ms）。
+  - `OPEN DELAY`：开窗后等多少 tick 再动手，0~20，默认 `1`（humanize 另加 2~4 tick 反应）。
+  - `SHOW CHEST GUI`：默认 `开`（可见模式）；关掉 = 静默开箱。
+  - `AUTO LOOT` / `AUTO SORT` / `AUTO CLOSE` / `AUTO OPEN` / `AUTO SWEEP`：
+    默认 `开 / 关 / 开 / 开 / 开`。
+- 配置与持久化：参数写在 `config/openmaver-chest.properties`
+  （`chest.esp.* / chest.stealer.* / chest.key.*`），20 tick 检查一次
+  外部改动，和 `openmaver.properties` 的其它功能参数互不影响。
+- 实现说明：`mc/ChestFeature.java`（会话 / 搬运 / 识别）与 `mc/ChestPacketHook.java`
+  （入站窗口包记账），**tick 入口在 `OpenMaverClientHandler` 的 `ClientTickEvent.START`
+  阶段**（必须早于原版 `C03`，见上文「点击包必须排在 C03 之前」），
+  `GuiOpenEvent` 入口在同文件的 `onGuiOpen`；容器槽位 / 物品名等成员同时按 MCP 名、
+  SRG 名、字段类型名三级兜底读取，任一版本名对不上时只会降级，不会把异常抛进游戏循环。
+- 兼容性兜底：箱子界面 / 容器的识别是三级判定（`lowerChestInventory` 字段 → 类名 →
+  GUI 容器槽位），任何一级能命中就能搬；`runStealer` 出异常只跳过 4 tick（≈200ms）后重试，
+  不再永久停用（以前的「一次异常 = 整功能失效」是「箱子开了却没有拿」的元凶之一）。
+- 诊断日志：`[OpenMaver] chest:` 前缀同时写 stderr 与 `/tmp/openmaver-chest.log`
+  （日志流复用，不再每次 `open/close`），记录开箱包（`send open packet`）、会话接管
+  （`visible open accepted` / `silent open accepted`）、静默收起与 `windowId`
+  （`silent open ok (... windowId=N)`）、包钩子状态（`packet hook attached` /
+  `packet hook unavailable: ...`）、内容门捷径（`content gate: local container already
+  has items, skip S30 wait`）、每一次搬运的实际件数与档位（`loot: moved N stack(s) in
+  window W (filter=..., free slots=..., next in Xms)`）、**每箱速度小结**
+  （`session done: N stack(s) / M click(s), open→first Xms, first→last Yms, total Zms`）、
+  退出原因（`visible close after moving N stack(s)` / `chest gui closed mid-session`）、
+  以及放弃原因（`silent open dropped: ...`）。箱子「没反应」时先看这个文件：有 `moved`
+  就是过滤器/背包满，没有 `open accepted` 就是开箱包没被服务端接受（领地保护 / 距离 /
+  反作弊）；`session done` 里的 `open→first` > 300ms 说明开箱往返（RTT）或内容门还在拖。
+- 回归测试：`tools/chest-test/run.sh`（离线，用最小 MC 替身驱动真实 `ChestFeature`），
+  覆盖「可见模式界面留在屏幕上并在里面搬完再退出 / S30 没到不点格子 /
+  一件一件拿（一批只拿一格、等 S32 确认）/ CLICK GAP 隔开点击 / 界面被关掉立刻 C0D 收摊 / 只发一次开箱包 / 静默模式同 tick 收起界面 /
+  容器与 windowId 正常挂载 / 点击打在正确窗口上 / TAKE 过滤 / 自动 C0D 关窗 /
+  玩家自己开界面照常搬运 / AUTO CLOSE 关掉时全是垃圾也不关界面 / 字段名对不上时的兜底 /
+  AUTO SWEEP 免按键开箱 / 创造物品栏不被接管 / 打开别的界面先关容器 /
+  按格子顺序从上到下搬空 / S30 内容晚到仍会搬 / 过滤掉一切时容器仍会关掉 /
+  人类化节拍（6 格总时长 ≥900ms、相邻两格 ≥150ms、仍照常搬完关箱）」
+  共 100 项断言（含「9 格满箱 ≤16 tick 搬完并退出」的机械节奏速度基线、
+  humanize 打开后的时长/间隔下限、连开箱子时新界面被接管而不是被 C0D 掉、
+  过期窗口 S2E 被钩子拦下、S30 缺失但本地容器已有内容时直接开搬、
+  `CLICK MS` 低于 80ms 被夹上来、刚搬空的箱子 1.5s 内不会被重新扫）。
 
 ### Target HUD 目标信息面板
 

@@ -21,4 +21,6 @@ public class Keyboard {
     public static int getEventKey() { return 0; }
     public static boolean getEventKeyState() { return false; }
     public static String getKeyName(int key) { return ""; }
+    /** LWJGL 2: 键名 -> 键码，未知名字返回 -1（ChestFeature 的快捷键轮询用到）。 */
+    public static int getKeyIndex(String keyName) { return -1; }
 }

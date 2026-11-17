@@ -4,18 +4,22 @@ import module.Module;
 import util.Logger;
 
 /**
- * Scaffold（自动搭路 / 神桥）模块开关。
+ * Scaffold（自动搭路 / 搭桥）模块开关。
  *
- * <p>由原 {@code GodBridge} 重命名而来，行为参考 {@code OpenMyau-Fix} 的
- * {@code Scaffold}：开启后根据移动方向自动在脚下/前方放置方块，支持自动转向、
- * 自动跳跃与快速右键。真正的放置逻辑在 MC 侧的
- * {@code ScaffoldFeature}（ClientTickEvent + ScaffoldMovementInput）。
+ * <p>完整行为在 MC 侧的 {@code ScaffoldFeature}，按 {@code ../OpenZen} 的
+ * {@code shit.zen.modules.impl.movement.Scaffold} 重写：
+ * {@code Normal / Telly Bridge / Old Telly / Keep Y} 四种模式、Eagle/Sneak、
+ * Snap、Clutch、Rotation Tick 与 S12 击退抑制。
  *
  * <p>配置路径由基类按包名约定推导：{@code module.movement.Scaffold -> "movement.scaffold"}，
  * 对应 default.jsonc 中的：
  * <pre>
  *   "movement": { "scaffold": { "enabled": false, "key": "B" } }
  * </pre>
+ *
+ * <p>模块自身的设置（模式、Eagle/Sneak/Snap/Clutch/旋转速度/物品伪装/HUD）
+ * 由 {@code ScaffoldFeature} 持有，写入 {@code config/openmaver.properties} 的
+ * {@code scaffold.*}，在 ClickGUI 里展开 Scaffold 直接调。
  */
 public final class Scaffold extends Module {
 

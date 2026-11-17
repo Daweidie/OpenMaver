@@ -4,6 +4,21 @@
 > 目标：让 **Scaffold 在 GrimAC 上不再触发 `RotationPlace`**，同时不引入 `Timer` /
 > `MultiPlace` / `AirLiquidBreak` / `AimDuplicateLook`。
 > 本文只写「已确认的事实 + 可执行方案」，不含猜测性的调参玄学。
+>
+> **2026-11-17 更新**：Scaffold 已整体重写为 `../OpenZen` 的搭桥模块
+> （见 `design/SCAFFOLD_HANDOFF.md`）。本文描述的是 **Grim 的判定链**，它依然成立，
+> 新实现用 `pending → flush` + `holdPlaceAim` 同时满足：
+> `ScaffoldFeature.place()` 只由 `flushPending()` 调用，发 C08 的那一 tick 的 aim
+> 被冻结成刚校验过的角度。下文里出现的 `flushPendingPlace` / `pendingAction` 等
+> 名字属于重写前的实现，读的时候按下表映射（行号也已经过期，以函数名为准）：
+>
+> | 旧名（本文/旧实现） | 新实现 |
+> |---|---|
+> | `flushPendingPlace` | `flushPending` |
+> | `pendingAction` | `pendingDecision` |
+> | `planPlacement` / `queuePlacement` | `tick()` 里生成 `Pending` |
+> | `applyHoldAim` / `holdPlaceAim` | `aimForThisTick()` + `holdPlaceAim` |
+> | `place()` | `place()`（不变，唯一 `onPlayerRightClick` 调用点） |
 
 ---
 
