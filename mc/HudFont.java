@@ -47,6 +47,8 @@ public final class HudFont {
 
     private static final long GUI_SCALE_REFRESH_MS = 500L;
     private static final boolean[] SCALE_FAILED = new boolean[MAX_ATLAS_SCALE + 1];
+    private static final FontState HUD_STATE = new FontState();
+    private static final FontState MENU_STATE = new FontState();
 
     private static int textureId;
     private static int cell;
@@ -72,6 +74,25 @@ public final class HudFont {
     private HudFont() {
     }
 
+    private static final class FontState {
+        final boolean[] scaleFailed = new boolean[MAX_ATLAS_SCALE + 1];
+        int textureId;
+        int cell;
+        int columns;
+        int padding;
+        int atlasWidth;
+        int atlasHeight;
+        int fontTop;
+        int fontHeight;
+        int baseline;
+        int atlasScale = 1;
+        int canonicalAscent;
+        int[] codes;
+        int[] widths;
+        boolean initialized;
+        boolean failed;
+    }
+
     public static void useMenuFont() {
         selectFont(true);
     }
@@ -84,12 +105,47 @@ public final class HudFont {
         if (menuFont == menu) {
             return;
         }
+        saveFontState(menuFont ? MENU_STATE : HUD_STATE);
         menuFont = menu;
-        initialized = false;
-        failed = false;
-        for (int i = 0; i < SCALE_FAILED.length; i++) {
-            SCALE_FAILED[i] = false;
-        }
+        restoreFontState(menu ? MENU_STATE : HUD_STATE);
+    }
+
+    private static void saveFontState(FontState state) {
+        state.textureId = textureId;
+        state.cell = cell;
+        state.columns = columns;
+        state.padding = padding;
+        state.atlasWidth = atlasWidth;
+        state.atlasHeight = atlasHeight;
+        state.fontTop = fontTop;
+        state.fontHeight = fontHeight;
+        state.baseline = baseline;
+        state.atlasScale = atlasScale;
+        state.canonicalAscent = canonicalAscent;
+        state.codes = codes;
+        state.widths = widths;
+        state.initialized = initialized;
+        state.failed = failed;
+        System.arraycopy(SCALE_FAILED, 0, state.scaleFailed, 0, SCALE_FAILED.length);
+    }
+
+    private static void restoreFontState(FontState state) {
+        textureId = state.textureId;
+        cell = state.cell;
+        columns = state.columns;
+        padding = state.padding;
+        atlasWidth = state.atlasWidth;
+        atlasHeight = state.atlasHeight;
+        fontTop = state.fontTop;
+        fontHeight = state.fontHeight;
+        baseline = state.baseline;
+        atlasScale = state.atlasScale;
+        canonicalAscent = state.canonicalAscent;
+        codes = state.codes;
+        widths = state.widths;
+        initialized = state.initialized;
+        failed = state.failed;
+        System.arraycopy(state.scaleFailed, 0, SCALE_FAILED, 0, SCALE_FAILED.length);
     }
 
     public static int getStringWidth(FontRenderer fallback, String text) {

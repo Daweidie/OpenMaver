@@ -212,7 +212,7 @@ public final class OpenMaverHud {
             GuiBlur.beginFrame(resolution.getScaledWidth(),
                     resolution.getScaledHeight(), resolution.getScaleFactor());
             if (!entries.isEmpty() || !TOASTS.isEmpty() || !LIST_ENTRIES.isEmpty()
-                    || TargetHud.isEnabled() || ScaffoldHud.isEnabled()
+                    || ScaffoldHud.isEnabled()
                     || GodBridgeHud.isEnabled()) {
                 GuiBlur.capture();
             }
