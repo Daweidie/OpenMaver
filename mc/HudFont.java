@@ -261,7 +261,7 @@ public final class HudFont {
         GL11.glDisableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
         GL11.glDisable(GL11.GL_CULL_FACE);
         GL11.glDisable(GL11.GL_ALPHA_TEST);
-        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        // Keep the caller's scissor active so text follows animated panels and scroll clips.
         GL11.glDisable(GL11.GL_POLYGON_SMOOTH);
         GL11.glDisable(GL11.GL_LINE_SMOOTH);
         GL11.glDisable(GL11.GL_COLOR_LOGIC_OP);
