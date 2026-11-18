@@ -319,15 +319,17 @@ public final class TargetHud {
 
         // 名称
         GL11.glEnable(GL11.GL_TEXTURE_2D);
+        HudFont.useHudFont();
         text(font, name, (int) CONTENT_X, 6, TEXT, 0.95F, alpha);
 
         // 血量读数：位于血条正上方，格式为「当前血量/总血量」。
+        HudFont.useMenuFont();
         int healthRight = (int) (CONTENT_X + CONTENT_W);
         int maxWidth = HudFont.getStringWidth(font, healthMax, HEALTH_TEXT_SIZE);
         int nowWidth = HudFont.getStringWidth(font, healthNow, HEALTH_TEXT_SIZE);
-        text(font, healthNow, healthRight - maxWidth - nowWidth, (int) HEALTH_TEXT_Y,
+        sourceText(font, healthNow, healthRight - maxWidth - nowWidth, (int) HEALTH_TEXT_Y,
                 barColor, HEALTH_TEXT_SIZE, alpha);
-        text(font, healthMax, healthRight - maxWidth, (int) HEALTH_TEXT_Y,
+        sourceText(font, healthMax, healthRight - maxWidth, (int) HEALTH_TEXT_Y,
                 HEALTH_TEXT_MAX, HEALTH_TEXT_SIZE, alpha);
 
         // 细血条：颜色随血量从绿 -> 橙 -> 深红渐变
@@ -481,6 +483,15 @@ public final class TargetHud {
         if (value == null || value.isEmpty()) {
             return;
         }
+        font.drawString(value, x, y, color(rgb, alpha));
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+    }
+
+    private static void sourceText(FontRenderer font, String value, int x, int y, int rgb,
+            float size, float alpha) {
+        if (value == null || value.isEmpty()) {
+            return;
+        }
         HudFont.drawString(font, value, x, y, color(rgb, alpha), size);
         GL11.glDisable(GL11.GL_TEXTURE_2D);
     }
@@ -598,13 +609,13 @@ public final class TargetHud {
         if (text == null) {
             return "";
         }
-        if (HudFont.getStringWidth(font, text, size) <= maxWidth) {
+        if (font.getStringWidth(text) <= maxWidth) {
             return text;
         }
         String suffix = "..";
         int end = text.length();
         while (end > 0
-                && HudFont.getStringWidth(font, text.substring(0, end) + suffix, size)
+                && font.getStringWidth(text.substring(0, end) + suffix)
                         > maxWidth) {
             end--;
         }

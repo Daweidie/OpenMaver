@@ -222,7 +222,7 @@ public final class StatsHud {
         // ---- 先算布局，再统一画底板（避免玻璃绘制打断文字批次） ----
         if (fpsEnabled) {
             String label = fpsLabel();
-            int textW = HudFont.getStringWidth(font, label, FPS_TEXT_SIZE);
+            int textW = font.getStringWidth(label);
             fpsW = Math.max(FPS_MIN_W, textW + FPS_PAD_X * 2);
             fpsW = Math.min(fpsW, Math.max(FPS_MIN_W,
                     resolution.getScaledWidth() - x - MARGIN));
@@ -252,9 +252,9 @@ public final class StatsHud {
 
         if (fpsEnabled) {
             String label = fpsLabel();
-            int textX = x + (fpsW - HudFont.getStringWidth(font, label, FPS_TEXT_SIZE)) / 2;
+            int textX = x + (fpsW - font.getStringWidth(label)) / 2;
             int textY = y + (PANEL_H - 12) / 2;
-            HudFont.drawString(font, label, textX, textY, FPS_TEXT, FPS_TEXT_SIZE);
+            font.drawString(label, textX, textY, FPS_TEXT);
         }
         if (cpsEnabled) {
             drawKeyTexts(font, x, keysY);
@@ -351,23 +351,23 @@ public final class StatsHud {
 
     private static void drawKeyLabel(FontRenderer font, String text,
             int boxX, int boxY, int boxW, int boxH, boolean pressed, float size) {
-        int textW = HudFont.getStringWidth(font, text, size);
+        int textW = font.getStringWidth(text);
         int textX = boxX + (boxW - textW) / 2;
         int textY = boxY + (boxH - 12) / 2;
         if (!pressed) {
-            HudFont.drawString(font, text, textX + 1, textY + 1, KEY_SHADOW, size);
+            font.drawString(text, textX + 1, textY + 1, KEY_SHADOW);
         }
-        HudFont.drawString(font, text, textX, textY,
-                pressed ? KEY_TEXT_PRESSED : KEY_TEXT, size);
+        font.drawString(text, textX, textY,
+                pressed ? KEY_TEXT_PRESSED : KEY_TEXT);
     }
 
     private static void drawCpsText(FontRenderer font, int x, int y, int w, int h) {
         String text = "CPS " + LEFT_CLICKS.size() + " | " + RIGHT_CLICKS.size();
-        int textW = HudFont.getStringWidth(font, text, CPS_TEXT_SIZE);
+        int textW = font.getStringWidth(text);
         int textX = x + (w - textW) / 2;
         int textY = y + (h - 12) / 2;
-        HudFont.drawString(font, text, textX + 1, textY + 1, KEY_SHADOW, CPS_TEXT_SIZE);
-        HudFont.drawString(font, text, textX, textY, KEY_TEXT, CPS_TEXT_SIZE);
+        font.drawString(text, textX + 1, textY + 1, KEY_SHADOW);
+        font.drawString(text, textX, textY, KEY_TEXT);
     }
 
     // ==================================================================

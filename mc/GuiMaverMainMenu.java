@@ -201,6 +201,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
     @Override
     public void initGui() {
         super.initGui();
+        HudFont.useMenuFont();
         this.buttonList.clear();
         this.failed = false;
         this.openedAt = System.currentTimeMillis();
@@ -214,6 +215,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
 
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
+        HudFont.useMenuFont();
         this.lastMouseX = mouseX;
         this.lastMouseY = mouseY;
         long now = System.currentTimeMillis();

@@ -167,16 +167,16 @@ public final class GodBridgeHud {
 
         float textX = PAD;
         GL11.glEnable(GL11.GL_TEXTURE_2D);
-        HudFont.drawString(font, mode, Math.round(textX), 7, color(TEXT, alpha), 0.72F);
-        float phaseWidth = HudFont.getStringWidth(font, phase, 0.62F);
-        HudFont.drawString(font, phase, Math.round(CARD_W - PAD - phaseWidth), 7,
-                color(MUTED, alpha * 0.95F), 0.62F);
+        font.drawString(mode, Math.round(textX), 7, color(TEXT, alpha));
+        float phaseWidth = font.getStringWidth(phase);
+        font.drawString(phase, Math.round(CARD_W - PAD - phaseWidth), 7,
+                color(MUTED, alpha * 0.95F));
         String speedText = String.format(java.util.Locale.ROOT, "%.2fb/s", bps);
-        HudFont.drawString(font, speedText, Math.round(textX), 18, color(TEXT, alpha), 0.86F);
+        font.drawString(speedText, Math.round(textX), 18, color(TEXT, alpha));
         String countText = placed + " blocks";
-        float countWidth = HudFont.getStringWidth(font, countText, 0.62F);
-        HudFont.drawString(font, countText, Math.round(CARD_W - PAD - countWidth), 20,
-                color(MUTED, alpha * 0.95F), 0.62F);
+        float countWidth = font.getStringWidth(countText);
+        font.drawString(countText, Math.round(CARD_W - PAD - countWidth), 20,
+                color(MUTED, alpha * 0.95F));
         GL11.glDisable(GL11.GL_TEXTURE_2D);
 
         float barX = textX;

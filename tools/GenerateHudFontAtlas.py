@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Generate OpenMaver's packed font atlases using Pillow.
 
-Latin glyphs come from tools/fonts/SourceCodePro-Regular.ttf (Source Code Pro).
-It has no CJK coverage, so every non-ASCII character used by the UI (currently
-Chinese) is rendered with a CJK fallback font instead. The generated
+Glyphs come from tools/fonts/NotoSansSC-Regular.ttf (Noto Sans SC Regular). The
+generated
 PNG/metrics are the only runtime dependencies; the Latin/CJK font files
 themselves are not shipped in the mod jar.
 
@@ -28,10 +27,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 FONT_DIR = ROOT / "mc/resources/assets/openmaver/font"
+ATLAS_PREFIX = os.environ.get("OPENMAVER_ATLAS_PREFIX", "HudFontAtlas")
 # Kept outside mc/resources so the font file is not packaged into the mod jar;
 # only the generated atlas bitmaps ship.
 LATIN_FONT = Path(os.environ.get("OPENMAVER_LATIN_FONT",
-                                 ROOT / "tools/fonts/SourceCodePro-Regular.ttf"))
+                                 ROOT / "tools/fonts/NotoSansSC-Regular.ttf"))
 SOURCE_DIR = ROOT / "mc"
 
 FIRST_CHAR = 32
@@ -39,7 +39,7 @@ LAST_CHAR = 126
 # Logical (GUI unit) cell metrics. Every atlas is CELL * scale pixels wide.
 CELL = 32
 COLUMNS = 16
-SIZE = 10
+SIZE = 11
 # Horizontal padding around the glyph inside its cell. The renderer samples the
 # cell with the same padding so overhanging ink is not clipped.
 PAD = 2
@@ -47,6 +47,7 @@ SCALES = (1, 2, 3, 4, 5, 6, 7, 8)
 
 CJK_CANDIDATES = (
     os.environ.get("OPENMAVER_CJK_FONT"),
+    ROOT / "tools/fonts/NotoSansSC-Regular.ttf",
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
@@ -71,7 +72,7 @@ def ui_characters():
 def load_latin_font(size):
     if not LATIN_FONT.is_file():
         raise SystemExit(
-            "找不到拉丁字体 {}；请把 Source Code Pro 的 TTF 放到该路径，"
+            "找不到拉丁字体 {}；请把 Noto Sans SC Regular 的 TTF/OTF 放到该路径，"
             "或用 OPENMAVER_LATIN_FONT 指定一个 TTF/OTF 文件".format(LATIN_FONT))
     return ImageFont.truetype(str(LATIN_FONT), size)
 
@@ -104,9 +105,9 @@ def load_cjk_font(size):
 def atlas_paths(scale):
     """Runtime resource names; the 1x atlas has no scale suffix."""
     if scale == 1:
-        return FONT_DIR / "HudFontAtlas.png", FONT_DIR / "HudFontMetrics.txt"
-    return (FONT_DIR / "HudFontAtlas@{}x.png".format(scale),
-            FONT_DIR / "HudFontMetrics@{}x.txt".format(scale))
+        return FONT_DIR / (ATLAS_PREFIX + ".png"), FONT_DIR / (ATLAS_PREFIX.replace("Atlas", "Metrics") + ".txt")
+    return (FONT_DIR / (ATLAS_PREFIX + "@{}x.png".format(scale)),
+            FONT_DIR / (ATLAS_PREFIX.replace("Atlas", "Metrics") + "@{}x.txt".format(scale)))
 
 
 def render_atlas(scale, characters, widths1x, needs_cjk):

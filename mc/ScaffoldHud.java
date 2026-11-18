@@ -40,7 +40,7 @@ public final class ScaffoldHud {
     // 布局
     // ------------------------------------------------------------------
 
-    private static final int CARD_W = 196;
+    private static final int CARD_W = 160;
     private static final int CARD_H = 32;
     private static final float CARD_R = 7.0F;
 
@@ -49,7 +49,7 @@ public final class ScaffoldHud {
     private static final float ITEM_SIZE = 20.0F;
     private static final float BAR_H = 5.0F;
     /** 计数/速度文本区预留（右对齐时按实际宽度收窄）。 */
-    private static final float TEXT_MIN_W = 46.0F;
+    private static final float TEXT_MIN_W = 40.0F;
     private static final float COUNT_SIZE = 0.95F;
     private static final float SPEED_SIZE = 0.72F;
 
@@ -64,7 +64,7 @@ public final class ScaffoldHud {
     private static final float GLASS_ALPHA = 0.90F;
     /** OpenZen 的进度条底色与填充色。 */
     private static final int BAR_BG = 0x1E1E1E;
-    private static final int BAR_FILL = 0x9900FF;
+    private static final int BAR_FILL = 0xFFFFFF;
 
     /** 卡片出现/消失动画。 */
     private static final long FADE_IN_MS = 150L;
@@ -241,6 +241,7 @@ public final class ScaffoldHud {
         // 文本块：计数在上、速度在下，右对齐。
         String countText = count + (count == 1 ? " block" : " blocks");
         String speedText = String.format(java.util.Locale.ROOT, "%.2fb/s", speedBps);
+        HudFont.useMenuFont();
         float countWidth = HudFont.getStringWidth(font, countText, COUNT_SIZE);
         float speedWidth = HudFont.getStringWidth(font, speedText, SPEED_SIZE);
         float textWidth = Math.max(TEXT_MIN_W, Math.max(countWidth, speedWidth));
@@ -263,8 +264,8 @@ public final class ScaffoldHud {
         GL11.glEnable(GL11.GL_TEXTURE_2D);
         int countX = Math.round(textRight - countWidth);
         int speedX = Math.round(textRight - speedWidth);
-        text(font, countText, countX, 7, COUNT, COUNT_SIZE, alpha);
-        text(font, speedText, speedX, 19, MUTED, SPEED_SIZE, alpha);
+        sourceText(font, countText, countX, 7, COUNT, COUNT_SIZE, alpha);
+        sourceText(font, speedText, speedX, 19, MUTED, SPEED_SIZE, alpha);
 
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         GL11.glPopMatrix();
@@ -408,6 +409,15 @@ public final class ScaffoldHud {
     // ==================================================================
 
     private static void text(FontRenderer font, String value, int x, int y, int rgb,
+            float size, float alpha) {
+        if (value == null || value.isEmpty()) {
+            return;
+        }
+        font.drawString(value, x, y, color(rgb, alpha));
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+    }
+
+    private static void sourceText(FontRenderer font, String value, int x, int y, int rgb,
             float size, float alpha) {
         if (value == null || value.isEmpty()) {
             return;

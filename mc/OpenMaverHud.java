@@ -353,9 +353,9 @@ public final class OpenMaverHud {
             int rowRight = right + slide;
 
             // 右边缘固定对齐，每行宽度由自身文字决定，形成参考图里的阶梯感。
-            int nameW = HudFont.getStringWidth(font, names[i], ROW_TEXT_SIZE);
+            int nameW = font.getStringWidth(names[i]);
             int infoW = hasInfo(infos[i])
-                    ? HudFont.getStringWidth(font, infos[i], ROW_TEXT_SIZE) : 0;
+                    ? font.getStringWidth(infos[i]) : 0;
             int rowWidth = nameW + (infoW > 0 ? INFO_GAP + infoW : 0)
                     + ROW_PAD_LEFT + ROW_PAD_RIGHT;
             int rowX = rowRight - rowWidth;
@@ -609,7 +609,7 @@ public final class OpenMaverHud {
             }
 
             int iconW = toast.icon == TOAST_ICON_NONE ? 0 : TOAST_ICON_SIZE + TOAST_ICON_GAP;
-            int labelW = HudFont.getStringWidth(font, toast.text);
+            int labelW = font.getStringWidth(toast.text);
             int width = Math.max(180, TOAST_PAD_X * 2 + iconW + labelW);
             width = Math.min(width, screenW - MARGIN * 2);
             int targetX = screenW - MARGIN - width;
@@ -668,11 +668,9 @@ public final class OpenMaverHud {
         for (int i = 0; i < texts.size(); i++) {
             TextDraw text = texts.get(i);
             if ((text.shadowColor >>> 24) != 0) {
-                HudFont.drawString(font, text.text, text.x + 1, text.y + 1,
-                        text.shadowColor, text.size);
+                font.drawString(text.text, text.x + 1, text.y + 1, text.shadowColor);
             }
-            HudFont.drawString(font, text.text, text.x, text.y, text.color,
-                    text.size);
+            font.drawString(text.text, text.x, text.y, text.color);
         }
     }
 

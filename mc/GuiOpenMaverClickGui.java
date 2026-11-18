@@ -301,6 +301,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
+        HudFont.useHudFont();
         if (failed) {
             return;
         }
