@@ -240,6 +240,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private int searchW;
     private int searchH;
 
+    /** 上一帧到这一帧的毫秒数（已截断到 50ms），给列式界面的平滑动画用。 */
+    private float frameDelta;
+    /** 进入当前视图（列式 / SYSTEM 页面）的时刻，用于两种视图之间的淡入。 */
+    private long modeAt;
+
     /** 出错后停用绘制，避免崩溃。 */
     private boolean failed;
     private boolean drawLogged;
@@ -274,15 +279,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         layout();
         buildEntries();
 
-        // 默认展开 Aim Assist，打开即可看到设置控件
         expanded.clear();
-        for (int i = 0; i < entries.size(); i++) {
-            Entry entry = entries.get(i);
-            if ("aim".equals(entry.featureId)) {
-                expanded.add(entry.id);
-                break;
-            }
-        }
+        this.modeAt = this.openedAt;
+        this.columnsAt = this.openedAt;
+        initColumns();
 
         // 默认选中第一个有内容的分类
         if (!hasEntries(category)) {
@@ -322,6 +322,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             openProgress = easeOutCubic(openT);
         }
         scrollVisual = approach(scrollVisual, scroll, frameDelta, 180.0F);
+        this.frameDelta = frameDelta;
         lastMouseX = mouseX;
         lastMouseY = mouseY;
         try {
@@ -360,7 +361,12 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     OpenMaverFeatures.flushSettings();
                 }
             }
-            drawGui();
+            if (systemPage == null) {
+                updateColumnPress(mouseX, mouseY);
+                drawColumns();
+            } else {
+                drawGui();
+            }
         } catch (Throwable t) {
             failed = true;
             System.out.println("[OpenMaver] ClickGUI 绘制出错，已停用: " + t);
@@ -1063,7 +1069,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         ScaledResolution resolution = new ScaledResolution(this.mc);
         GuiBlur.beginFrame(this.width, this.height, resolution.getScaleFactor());
         GuiBlur.draw(0, 0, this.width, this.height, 0.0F, 0x0C0F15,
-                0.34F * reveal, reveal, reveal);
+                0.34F * openProgress, openProgress, openProgress);
 
         GL11.glPushMatrix();
         // 打开时从面板中心向外放大，关闭时沿同一路径缩回。
@@ -1091,6 +1097,610 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         drawFooter(font);
         drawSelectPopup(font);
         GL11.glPopMatrix();
+    }
+
+    // ==================================================================
+    // 列式 ClickGUI：每个分类一列，可拖动标题栏、点击标题折叠、右键模块展开设置
+    // ==================================================================
+
+    private static final int COL_W = 118;
+    private static final int COL_HEADER_H = 20;
+    private static final int COL_ROW_H = 16;
+    private static final int COL_RADIUS = 6;
+    private static final int COL_BOTTOM_PAD = 4;
+    private static final int COL_GAP = 10;
+    private static final int COL_TOP = 30;
+    private static final int SET_SLIDER_H = 20;
+    private static final int SET_LINE_H = 14;
+    private static final int SET_PAD = 2;
+
+    private static final int COL_HEADER_BG = 0xF2141518;
+    private static final int COL_BODY_BG = 0xE01C1D21;
+    private static final int COL_SETTINGS_BG = 0xF015161A;
+    private static final int COL_TITLE = 0xFFF2F3F6;
+    private static final int COL_ROW_TEXT = 0xFFE3E5EB;
+    private static final int COL_ON_FILL = 0xFFB3B9F0;
+    private static final int COL_ON_HOVER = 0xFFC4C9F7;
+    private static final int COL_ON_TEXT = 0xFF1C2573;
+    private static final int COL_DIM = 0xFF7C8494;
+
+    private static final String CLIENT_COLUMN = "client";
+
+    /** 列的位置 / 折叠状态在本次游戏会话内保留，重新打开 ClickGUI 不会复位。 */
+    private static final Map<String, ColumnState> COLUMN_STATE = new HashMap<String, ColumnState>();
+
+    /** 绘制顺序；最后一个在最上层，点击时倒序命中。 */
+    private final List<Column> columns = new ArrayList<Column>();
+    private long columnsAt;
+    private Column pressColumn;
+    private boolean pressMoved;
+    private int pressStartX;
+    private int pressStartY;
+    private int pressOffsetX;
+    private int pressOffsetY;
+
+    private void initColumns() {
+        columns.clear();
+        int x = COL_GAP;
+        int y = COL_TOP;
+        int rowMaxBottom = y;
+        for (int i = 0; i <= CATEGORIES.length; i++) {
+            String id = i < CATEGORIES.length ? CATEGORIES[i].id : CLIENT_COLUMN;
+            String title = i < CATEGORIES.length ? CATEGORIES[i].name : "Client";
+            if (i < CATEGORIES.length && !hasEntries(id)) {
+                continue;
+            }
+            if (x + COL_W > this.width - COL_GAP && x > COL_GAP) {
+                x = COL_GAP;
+                y = rowMaxBottom + COL_GAP;
+            }
+            ColumnState state = COLUMN_STATE.get(id);
+            if (state == null) {
+                state = new ColumnState(x, y);
+                COLUMN_STATE.put(id, state);
+            }
+            state.x = clampInt(state.x, 0, Math.max(0, this.width - COL_W));
+            state.y = clampInt(state.y, 0, Math.max(0, this.height - COL_HEADER_H));
+            Column column = new Column(id, title, state, columns.size());
+            columns.add(column);
+            int estimate = COL_HEADER_H + COL_BOTTOM_PAD
+                    + COL_ROW_H * (CLIENT_COLUMN.equals(id) ? SYSTEM_ITEMS.length : countCategory(id));
+            rowMaxBottom = Math.max(rowMaxBottom, y + estimate);
+            x += COL_W + COL_GAP;
+        }
+    }
+
+    private List<Entry> columnEntries(String cat) {
+        List<Entry> out = new ArrayList<Entry>();
+        String query = searchQuery.toLowerCase(Locale.ROOT);
+        for (int i = 0; i < entries.size(); i++) {
+            Entry entry = entries.get(i);
+            if (entry.category.equals(cat)
+                    && (query.isEmpty() || entry.name.toLowerCase(Locale.ROOT).contains(query))) {
+                out.add(entry);
+            }
+        }
+        Collections.sort(out, new Comparator<Entry>() {
+            @Override
+            public int compare(Entry a, Entry b) {
+                return a.name.compareToIgnoreCase(b.name);
+            }
+        });
+        return out;
+    }
+
+    private static int columnSettingHeight(Setting setting) {
+        return setting.kind == Setting.SLIDER ? SET_SLIDER_H : SET_LINE_H;
+    }
+
+    private static int columnSettingsHeight(Entry entry) {
+        int h = SET_PAD * 2;
+        for (int i = 0; i < entry.settings.size(); i++) {
+            h += columnSettingHeight(entry.settings.get(i));
+        }
+        return h;
+    }
+
+    /** 列的进场动画：依次从上方滑入并淡入，关闭时随 openProgress 一起淡出。 */
+    private float columnReveal(int index) {
+        float t = clamp01((frameNow - columnsAt - index * 28L) / 260.0F);
+        return easeOutCubic(t) * openProgress;
+    }
+
+    private static int fade(int argb, float alpha) {
+        return withAlpha(argb, Math.round((argb >>> 24) * clamp01(alpha)));
+    }
+
+    private void drawColumns() {
+        GlColor.restore();
+        ScaledResolution resolution = new ScaledResolution(this.mc);
+        GuiBlur.beginFrame(this.width, this.height, resolution.getScaleFactor());
+        GuiBlur.draw(0, 0, this.width, this.height, 0.0F, 0x0C0F15,
+                0.30F * openProgress, openProgress, openProgress);
+
+        FontRenderer font = this.mc.fontRendererObj;
+        Column top = topColumnAt(lastMouseX, lastMouseY);
+        for (int i = 0; i < columns.size(); i++) {
+            Column column = columns.get(i);
+            drawColumn(font, column, columnReveal(column.order), column == top);
+        }
+        drawSearchBar(font);
+    }
+
+    private void drawColumn(FontRenderer font, Column column, float alpha, boolean topmost) {
+        column.hits.clear();
+        if (alpha <= 0.02F) {
+            return;
+        }
+        long now = frameNow;
+        // 拖动时视觉位置快速追随目标位置，松手后也会平滑落位。
+        column.visX = approach(column.visX, column.state.x, frameDelta, 40.0F);
+        column.visY = approach(column.visY, column.state.y, frameDelta, 40.0F);
+        if (Math.abs(column.visX - column.state.x) < 0.3F) {
+            column.visX = column.state.x;
+        }
+        if (Math.abs(column.visY - column.state.y) < 0.3F) {
+            column.visY = column.state.y;
+        }
+        column.collapse = approach(column.collapse, column.state.collapsed ? 1.0F : 0.0F,
+                frameDelta, 150.0F);
+        float open = 1.0F - easeOutCubic(column.collapse);
+
+        int x = Math.round(column.visX);
+        int y = Math.round(column.visY - (1.0F - clamp01(alpha / Math.max(0.01F, openProgress))) * 14.0F);
+        boolean client = CLIENT_COLUMN.equals(column.id);
+        List<Entry> list = client ? null : columnEntries(column.id);
+
+        // 内容总高度（含正在展开的设置区）。
+        int contentH = 0;
+        int rows = client ? SYSTEM_ITEMS.length : list.size();
+        for (int i = 0; i < rows; i++) {
+            contentH += COL_ROW_H;
+            if (!client) {
+                Entry entry = list.get(i);
+                if (!entry.settings.isEmpty()) {
+                    contentH += Math.round(columnSettingsHeight(entry) * getEntryProgress(entry, now));
+                }
+            }
+        }
+        contentH += COL_BOTTOM_PAD;
+        int maxBody = Math.max(COL_ROW_H * 3, this.height - y - COL_HEADER_H - 6);
+        int fullBody = Math.min(contentH, maxBody);
+        int maxScroll = Math.max(0, contentH - fullBody);
+        column.scroll = clampInt(column.scroll, 0, maxScroll);
+        column.scrollVis = approach(column.scrollVis, column.scroll, frameDelta, 90.0F);
+        int bodyH = Math.round(fullBody * open);
+        int totalH = COL_HEADER_H + bodyH;
+
+        // 投影 + 外框
+        roundRect(x - 1, y + 1, COL_W + 2, totalH + 2, COL_RADIUS + 1,
+                fade(0x40000000, alpha));
+        roundRect(x, y, COL_W, totalH, COL_RADIUS, fade(COL_BODY_BG, alpha));
+        if (bodyH < COL_RADIUS) {
+            roundRect(x, y, COL_W, COL_HEADER_H, COL_RADIUS, fade(COL_HEADER_BG, alpha));
+        } else {
+            shapePolygon(x, y, COL_W, COL_HEADER_H, COL_RADIUS, COL_RADIUS, 0, 0,
+                    fade(COL_HEADER_BG, alpha));
+        }
+
+        // 标题栏
+        boolean headerHover = topmost && isHovered(lastMouseX, lastMouseY, x, y, COL_W, COL_HEADER_H);
+        ControlAnim headerAnim = control("col:" + column.id, headerHover, pressColumn == column && pressMoved, now);
+        if (headerAnim.hover > 0.01F) {
+            shapePolygon(x, y, COL_W, COL_HEADER_H, COL_RADIUS, COL_RADIUS,
+                    bodyH < COL_RADIUS ? COL_RADIUS : 0, bodyH < COL_RADIUS ? COL_RADIUS : 0,
+                    fade(0x0CFFFFFF, alpha * headerAnim.hover));
+        }
+        HudFont.drawString(font, column.title, x + 7, y + 6, fade(COL_TITLE, alpha), 1.12F);
+        drawChevronProgress(x + COL_W - 10, y + COL_HEADER_H / 2, open,
+                fade(blendColor(COL_DIM, COL_TITLE, headerAnim.hover), alpha));
+        column.headerX = x;
+        column.headerY = y;
+        column.bodyY = y + COL_HEADER_H;
+        column.bodyH = bodyH;
+
+        if (bodyH <= 0) {
+            return;
+        }
+
+        int bodyTop = y + COL_HEADER_H;
+        pushScissor(x, bodyTop, COL_W, bodyH);
+        int rowY = bodyTop - Math.round(column.scrollVis);
+        boolean bodyHoverable = topmost && open > 0.95F
+                && isHovered(lastMouseX, lastMouseY, x, bodyTop, COL_W, bodyH);
+        for (int i = 0; i < rows; i++) {
+            boolean hovered = bodyHoverable
+                    && isHovered(lastMouseX, lastMouseY, x, rowY, COL_W, COL_ROW_H);
+            if (client) {
+                SystemItem item = SYSTEM_ITEMS[i];
+                ControlAnim anim = control("colsys:" + item.id, hovered, false, now);
+                drawColumnRow(font, x, rowY, item.name, null, 0.0F, anim.hover, anim.press,
+                        false, 0.0F, alpha);
+                column.hits.add(Hit.system(item.id, x, rowY, COL_W, COL_ROW_H));
+                rowY += COL_ROW_H;
+                continue;
+            }
+            Entry entry = list.get(i);
+            entry.hoverProgress = approach(entry.hoverProgress, hovered ? 1.0F : 0.0F,
+                    Math.min(50.0F, now - entry.animationAt), HOVER_MS);
+            entry.animationAt = now;
+            entry.pressProgress = approach(entry.pressProgress, 0.0F,
+                    Math.min(50.0F, now - entry.pressAt), PRESS_MS);
+            entry.pressAt = now;
+            entry.toggleProgress = approach(entry.toggleProgress, entry.isEnabled() ? 1.0F : 0.0F,
+                    Math.min(50.0F, now - entry.toggleAt), 150.0F);
+            entry.toggleAt = now;
+            float expand = entry.settings.isEmpty() ? 0.0F : easeOutCubic(entry.expandProgress);
+            boolean nextOn = i + 1 < rows && list.get(i + 1).isEnabled() && expand < 0.01F;
+            drawColumnRow(font, x, rowY, entry.name, entry.keybind(), entry.toggleProgress,
+                    entry.hoverProgress, entry.pressProgress, !entry.settings.isEmpty(), expand,
+                    alpha);
+            if (entry.toggleProgress > 0.5F && nextOn) {
+                Gui.drawRect(x, rowY + COL_ROW_H - 1, x + COL_W, rowY + COL_ROW_H,
+                        fade(0x24000000, alpha));
+            }
+            column.hits.add(Hit.entry(entry, x, rowY, COL_W, COL_ROW_H));
+            rowY += COL_ROW_H;
+
+            if (expand > 0.001F) {
+                int fullH = columnSettingsHeight(entry);
+                int shownH = Math.round(fullH * expand);
+                int clipTop = Math.max(rowY, bodyTop);
+                int clipBottom = Math.min(rowY + shownH, bodyTop + bodyH);
+                if (clipBottom > clipTop) {
+                    pushScissor(x, clipTop, COL_W, clipBottom - clipTop);
+                    drawColumnSettings(font, column, entry, x, rowY, fullH, alpha * (0.4F + 0.6F * expand),
+                            bodyHoverable && isHovered(lastMouseX, lastMouseY, x, clipTop, COL_W, clipBottom - clipTop));
+                    pushScissor(x, bodyTop, COL_W, bodyH);
+                }
+                rowY += shownH;
+            }
+        }
+        popScissor();
+
+        // 内容超出时的细滚动条
+        if (maxScroll > 0) {
+            int trackH = bodyH - COL_BOTTOM_PAD - 2;
+            int thumbH = Math.max(12, trackH * fullBody / contentH);
+            int thumbY = bodyTop + 1 + Math.round((trackH - thumbH) * column.scrollVis / maxScroll);
+            roundRect(x + COL_W - 3, thumbY, 2, thumbH, 1, fade(0x50FFFFFF, alpha));
+        }
+    }
+
+    private void drawColumnRow(FontRenderer font, int x, int y, String name, String keybind,
+            float on, float hover, float press, boolean hasSettings, float expand, float alpha) {
+        if (on > 0.01F) {
+            int fill = blendColor(COL_ON_FILL, COL_ON_HOVER, hover);
+            Gui.drawRect(x, y, x + COL_W, y + COL_ROW_H, fade(fill, alpha * on));
+        }
+        if (hover > 0.01F && on < 0.99F) {
+            Gui.drawRect(x, y, x + COL_W, y + COL_ROW_H,
+                    fade(0x12FFFFFF, alpha * hover * (1.0F - on)));
+        }
+        if (press > 0.01F) {
+            Gui.drawRect(x, y, x + COL_W, y + COL_ROW_H, fade(0x18FFFFFF, alpha * press));
+        }
+        int textColor = blendColor(COL_ROW_TEXT, COL_ON_TEXT, on);
+        textColor = blendColor(textColor, on > 0.5F ? 0xFF0E1550 : 0xFFFFFFFF, hover * 0.5F);
+        // 悬停时文字轻轻右移 1.5px，增加手感。
+        int textX = x + 7 + Math.round(hover * 1.5F);
+        int right = x + COL_W - 6;
+        if (hasSettings) {
+            int chevColor = blendColor(blendColor(COL_DIM, 0xFF39408A, on), textColor, expand);
+            drawChevronProgress(right - 3, y + COL_ROW_H / 2, expand, fade(chevColor, alpha));
+            right -= 11;
+        }
+        if (keybind != null && !keybind.isEmpty()) {
+            String key = ellipsizeMicro(font, keybind, 30);
+            int keyW = microWidth(font, key);
+            micro(font, key, right - keyW, y + 5,
+                    fade(blendColor(COL_DIM, 0xFF4B5299, on), alpha));
+            right -= keyW + 4;
+        }
+        hud(font, ellipsizeHud(font, name, right - textX), textX, y + 4, fade(textColor, alpha));
+    }
+
+    private void drawColumnSettings(FontRenderer font, Column column, Entry entry, int x, int y,
+            int h, float alpha, boolean hoverable) {
+        long now = frameNow;
+        Gui.drawRect(x, y, x + COL_W, y + h, fade(COL_SETTINGS_BG, alpha));
+        Gui.drawRect(x, y, x + 2, y + h, fade(COL_ON_FILL, alpha * 0.85F));
+        int cx = x + 8;
+        int cw = COL_W - 14;
+        int cy = y + SET_PAD;
+        for (int i = 0; i < entry.settings.size(); i++) {
+            Setting setting = entry.settings.get(i);
+            int sh = columnSettingHeight(setting);
+            boolean hovered = hoverable && isHovered(lastMouseX, lastMouseY, x, cy, COL_W, sh);
+            String key = settingKey(entry, setting);
+            ControlAnim anim = control("colset:" + key, hovered, dragSetting == setting, now);
+            float hi = Math.max(anim.hover, anim.active);
+            if (hi > 0.01F) {
+                Gui.drawRect(x + 2, cy, x + COL_W, cy + sh, fade(0x0AFFFFFF, alpha * hi));
+            }
+            int labelColor = fade(blendColor(0xFF9AA2B2, 0xFFE6E8EE, hi), alpha);
+            if (setting.kind == Setting.SLIDER) {
+                micro(font, ellipsizeMicro(font, setting.label, cw - 34), cx, cy + 3, labelColor);
+                String value = setting.display();
+                micro(font, value, cx + cw - microWidth(font, value), cy + 3,
+                        fade(0xFFFFFFFF, alpha));
+                int trackY = cy + 13;
+                roundRect(cx, trackY, cw, 3, 1, fade(0x26FFFFFF, alpha));
+                int fillW = (int) Math.round(cw * clamp01((float) setting.percent()));
+                if (fillW > 0) {
+                    roundRect(cx, trackY, fillW, 3, 1, fade(COL_ON_FILL, alpha));
+                }
+                int thumbX = cx + fillW;
+                fillCircle(thumbX, trackY + 1, 3 + Math.round(hi), fade(0xFFFFFFFF, alpha));
+                addSettingHit(column, entry, setting, x, cy, sh, cx, cw);
+            } else if (setting.kind == Setting.SELECT) {
+                micro(font, ellipsizeMicro(font, setting.label, cw / 2), cx, cy + 4, labelColor);
+                String value = ellipsizeMicro(font, setting.display(), cw / 2);
+                micro(font, value, cx + cw - microWidth(font, value), cy + 4,
+                        fade(blendColor(COL_ON_FILL, 0xFFFFFFFF, hi * 0.5F), alpha));
+                addSettingHit(column, entry, setting, x, cy, sh, cx, cw);
+            } else {
+                boolean checked = setting.checked();
+                ControlAnim box = control("colchk:" + key, false, checked, now);
+                micro(font, ellipsizeMicro(font, setting.label, cw - 14), cx, cy + 4, labelColor);
+                int bx = cx + cw - 8;
+                int by = cy + 3;
+                roundRect(bx, by, 8, 8, 2, fade(0x30FFFFFF, alpha));
+                if (box.active > 0.01F) {
+                    roundRect(bx, by, 8, 8, 2, fade(COL_ON_FILL, alpha * box.active));
+                    drawCheck(bx + 2, by + 4, fade(COL_ON_TEXT, alpha * box.active));
+                }
+                addSettingHit(column, entry, setting, x, cy, sh, cx, cw);
+            }
+            cy += sh;
+        }
+    }
+
+    /** 设置区还在展开 / 收起动画中时不登记点击区域，避免被下一行遮住的控件抢点击。 */
+    private static void addSettingHit(Column column, Entry entry, Setting setting,
+            int x, int y, int h, int controlX, int controlW) {
+        if (entry.expandProgress >= 0.95F) {
+            column.hits.add(Hit.setting(entry, setting, x, y, COL_W, h, controlX, controlW));
+        }
+    }
+
+    private void drawSearchBar(FontRenderer font) {
+        float alpha = openProgress;
+        boolean active = searchFocused || !searchQuery.isEmpty();
+        ControlAnim anim = control("colsearch", active, active, frameNow);
+        int w = 170;
+        int h = 16;
+        int x = (this.width - w) / 2;
+        int y = this.height - h - 8;
+        float shown = 0.45F + 0.55F * anim.active;
+        roundRect(x, y, w, h, h / 2, fade(0xD0141518, alpha * shown));
+        drawSearchIcon(x + 7, y + 3, fade(0xFF9AA2B2, alpha * shown));
+        String text;
+        int color;
+        if (searchQuery.isEmpty()) {
+            text = "Type to search  ·  right-click: settings";
+            color = 0xFF7C8494;
+        } else {
+            text = searchQuery;
+            color = 0xFFF2F3F6;
+        }
+        if (searchFocused && (frameNow / 500L) % 2L == 0L && !searchQuery.isEmpty()) {
+            text = text + "_";
+        }
+        micro(font, ellipsizeMicro(font, text, w - 30), x + 21, y + 5, fade(color, alpha * shown));
+        searchX = x;
+        searchY = y;
+        searchW = w;
+        searchH = h;
+    }
+
+    private Column topColumnAt(int mx, int my) {
+        for (int i = columns.size() - 1; i >= 0; i--) {
+            Column column = columns.get(i);
+            if (isHovered(mx, my, column.headerX, column.headerY, COL_W,
+                    COL_HEADER_H + column.bodyH)) {
+                return column;
+            }
+        }
+        return null;
+    }
+
+    private void bringToFront(Column column) {
+        if (columns.remove(column)) {
+            columns.add(column);
+        }
+    }
+
+    private void handleColumnClick(int mx, int my, int button) {
+        if (isHovered(mx, my, searchX, searchY, searchW, searchH)) {
+            searchFocused = true;
+            return;
+        }
+        searchFocused = false;
+        Column column = topColumnAt(mx, my);
+        if (column == null) {
+            return;
+        }
+        bringToFront(column);
+        if (my < column.headerY + COL_HEADER_H) {
+            if (button == 0) {
+                pressColumn = column;
+                pressMoved = false;
+                pressStartX = mx;
+                pressStartY = my;
+                pressOffsetX = mx - column.state.x;
+                pressOffsetY = my - column.state.y;
+            } else if (button == 1) {
+                toggleCollapse(column);
+            }
+            return;
+        }
+        if (column.state.collapsed) {
+            return;
+        }
+        for (int i = 0; i < column.hits.size(); i++) {
+            Hit hit = column.hits.get(i);
+            if (!isHovered(mx, my, hit.x, hit.y, hit.w, hit.h)
+                    || my < column.bodyY || my >= column.bodyY + column.bodyH) {
+                continue;
+            }
+            if (hit.systemId != null) {
+                if (button == 0) {
+                    press("colsys:" + hit.systemId);
+                    OpenMaverFeatures.playUiClick(1.0F);
+                    systemPage = hit.systemId;
+                    modeAt = System.currentTimeMillis();
+                    layout();
+                }
+            } else if (hit.setting == null) {
+                Entry entry = hit.entry;
+                entry.press();
+                if (button == 0) {
+                    entry.toggle();
+                } else if (button == 1 && !entry.settings.isEmpty()) {
+                    toggleExpanded(entry);
+                    OpenMaverFeatures.playUiClick(expanded.contains(entry.id) ? 1.1F : 0.95F);
+                }
+            } else {
+                handleColumnSettingClick(hit, mx, button);
+            }
+            return;
+        }
+    }
+
+    private void handleColumnSettingClick(Hit hit, int mx, int button) {
+        Setting setting = hit.setting;
+        if (setting.kind == Setting.SLIDER) {
+            if (button == 0) {
+                dragEntry = hit.entry;
+                dragSetting = setting;
+                dragX = hit.controlX;
+                dragW = hit.controlW;
+                updateDrag(mx);
+            }
+        } else if (setting.kind == Setting.SELECT) {
+            int size = setting.options.length;
+            int current = (int) Math.round(setting.value());
+            int next = button == 1 ? current - 1 : current + 1;
+            setting.set(((next % size) + size) % size);
+            OpenMaverFeatures.flushSettings();
+        } else if (button == 0) {
+            setting.toggle();
+            OpenMaverFeatures.flushSettings();
+        }
+    }
+
+    private void toggleCollapse(Column column) {
+        column.state.collapsed = !column.state.collapsed;
+        OpenMaverFeatures.playUiClick(column.state.collapsed ? 0.95F : 1.1F);
+    }
+
+    /** 每帧轮询标题栏按压：移动超过 2px 视为拖动，否则松手时折叠 / 展开。 */
+    private void updateColumnPress(int mx, int my) {
+        if (pressColumn == null) {
+            return;
+        }
+        if (Mouse.isButtonDown(0)) {
+            if (!pressMoved && (Math.abs(mx - pressStartX) > 2 || Math.abs(my - pressStartY) > 2)) {
+                pressMoved = true;
+            }
+            if (pressMoved) {
+                ColumnState state = pressColumn.state;
+                state.x = clampInt(mx - pressOffsetX, 0, Math.max(0, this.width - COL_W));
+                state.y = clampInt(my - pressOffsetY, 0, Math.max(0, this.height - COL_HEADER_H));
+            }
+        } else {
+            if (!pressMoved) {
+                toggleCollapse(pressColumn);
+            }
+            pressColumn = null;
+            pressMoved = false;
+        }
+    }
+
+    private void scrollColumn(int mx, int my, int wheel) {
+        Column column = topColumnAt(mx, my);
+        if (column != null && my >= column.bodyY) {
+            column.scroll -= Integer.signum(wheel) * COL_ROW_H * 2;
+        }
+    }
+
+    private static final class ColumnState {
+        int x;
+        int y;
+        boolean collapsed;
+
+        ColumnState(int x, int y) {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    private static final class Column {
+        final String id;
+        final String title;
+        final ColumnState state;
+        final int order;
+        final List<Hit> hits = new ArrayList<Hit>();
+        float visX;
+        float visY;
+        float collapse;
+        int scroll;
+        float scrollVis;
+        int headerX;
+        int headerY;
+        int bodyY;
+        int bodyH;
+
+        Column(String id, String title, ColumnState state, int order) {
+            this.id = id;
+            this.title = title;
+            this.state = state;
+            this.order = order;
+            this.visX = state.x;
+            this.visY = state.y;
+            this.collapse = state.collapsed ? 1.0F : 0.0F;
+            this.headerX = state.x;
+            this.headerY = state.y;
+        }
+    }
+
+    /** 上一帧绘制时记录的可点击区域；点击直接按它命中，保证与画面完全一致。 */
+    private static final class Hit {
+        Entry entry;
+        Setting setting;
+        String systemId;
+        int x;
+        int y;
+        int w;
+        int h;
+        int controlX;
+        int controlW;
+
+        static Hit entry(Entry entry, int x, int y, int w, int h) {
+            Hit hit = new Hit();
+            hit.entry = entry;
+            hit.x = x;
+            hit.y = y;
+            hit.w = w;
+            hit.h = h;
+            return hit;
+        }
+
+        static Hit system(String id, int x, int y, int w, int h) {
+            Hit hit = entry(null, x, y, w, h);
+            hit.systemId = id;
+            return hit;
+        }
+
+        static Hit setting(Entry entry, Setting setting, int x, int y, int w, int h,
+                int controlX, int controlW) {
+            Hit hit = entry(entry, x, y, w, h);
+            hit.setting = setting;
+            hit.controlX = controlX;
+            hit.controlW = controlW;
+            return hit;
+        }
     }
 
     // ------------------------------------------------------------------
@@ -2308,6 +2918,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             lastMouseX = mouseX;
             lastMouseY = mouseY;
 
+            if (systemPage == null) {
+                handleColumnClick(mouseX, mouseY, mouseButton);
+                return;
+            }
+
             if (handleSelectClick(mouseX, mouseY)) {
                 return;
             }
@@ -2355,6 +2970,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                         navY + i * RAIL_NAV_STRIDE, railW - 12, RAIL_NAV_H)) {
                     category = CATEGORIES[i].id;
                     systemPage = null;
+                    columnsAt = System.currentTimeMillis();
+                    modeAt = columnsAt;
                     filter = 0;
                     searchQuery = "";
                     searchFocused = false;
@@ -2676,12 +3293,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             if (wheel == 0) {
                 return;
             }
-            if (systemPage == null
-                    && isHovered(lastMouseX, lastMouseY, listX, listY, listW, listH)) {
-                List<Entry> visible = visibleEntries();
-                int max = Math.max(0, contentHeight(visible) - listH);
-                scroll = Math.max(0, Math.min(max, scroll - Integer.signum(wheel) * 18));
-                selectSetting = null;
+            if (systemPage == null) {
+                scrollColumn(lastMouseX, lastMouseY, wheel);
             } else if ("wallpaper".equals(systemPage)
                     && isHovered(lastMouseX, lastMouseY, listX, wallpaperListTop(),
                             listW, Math.max(1, wallpaperListBottom() - wallpaperListTop()))) {
@@ -2707,6 +3320,18 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             if (selectSetting != null) {
                 selectSetting = null;
                 selectEntry = null;
+                return;
+            }
+            if (systemPage == null && (searchFocused || !searchQuery.isEmpty())) {
+                searchQuery = "";
+                searchFocused = false;
+                return;
+            }
+            if (systemPage != null && initialSystemPage == null) {
+                // 从列式界面进入的 SYSTEM 页面：ESC 先回到模块列。
+                systemPage = null;
+                columnsAt = System.currentTimeMillis();
+                modeAt = columnsAt;
                 return;
             }
             OpenMaverFeatures.flushSettings();
@@ -2768,6 +3393,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         panelDragging = false;
         logoSizeDragging = false;
         wallpaperBlurDragging = false;
+        pressColumn = null;
         selectSetting = null;
         selectEntry = null;
         searchFocused = false;
@@ -3399,13 +4025,13 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     /** 当前整体可见度。 */
     private float viewReveal() {
-        return openProgress;
+        return openProgress * easeOutCubic(clamp01((frameNow - modeAt) / OPEN_DURATION_MS));
     }
 
     /** 面板缩放：打开时带一点轻微回弹，关闭时直接跟随可见度收回。 */
     private float panelScale() {
         if (!closing) {
-            float t = clamp01((frameNow - openedAt) / OPEN_DURATION_MS);
+            float t = clamp01((frameNow - Math.max(openedAt, modeAt)) / OPEN_DURATION_MS);
             float spring = easeOutBack(t);
             return OPEN_SCALE_FROM + (1.0F - OPEN_SCALE_FROM) * spring;
         }
