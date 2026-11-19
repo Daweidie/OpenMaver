@@ -42,6 +42,9 @@ import java.util.Set;
 @SideOnly(Side.CLIENT)
 public final class GuiOpenMaverClickGui extends GuiScreen {
 
+    /** ClickGUI 文字整体缩小 5%，绘制与宽度测量使用相同比例。 */
+    private static final float FONT_SCALE = 0.95F;
+
     // ------------------------------------------------------------------
     // 布局（GUI 单位，最终按屏幕缩放）
     // ------------------------------------------------------------------
@@ -1291,7 +1294,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     bodyH < COL_RADIUS ? COL_RADIUS : 0, bodyH < COL_RADIUS ? COL_RADIUS : 0,
                     fade(0x0CFFFFFF, alpha * headerAnim.hover));
         }
-        HudFont.drawString(font, column.title, x + 7, y + 6, fade(COL_TITLE, alpha), 1.12F);
+        HudFont.drawString(font, column.title, x + 7, y + 6, fade(COL_TITLE, alpha), 1.12F * FONT_SCALE);
         drawChevronProgress(x + COL_W - 10, y + COL_HEADER_H / 2, open,
                 fade(blendColor(COL_DIM, COL_TITLE, headerAnim.hover), alpha));
         column.headerX = x;
@@ -3547,27 +3550,27 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     /** 正文 / 模块名：保留原始大小写（模块名由 prettyName 统一成词首大写）。 */
     private static void hud(FontRenderer font, String text, int x, int y, int color) {
-        HudFont.drawString(font, text, x, y, color, 1.02F);
+        HudFont.drawString(font, text, x, y, color, 1.02F * FONT_SCALE);
     }
 
     private static void hudBold(FontRenderer font, String text, int x, int y, int color) {
-        HudFont.drawString(font, "\u00a7l" + text, x, y, color, 1.44F);
+        HudFont.drawString(font, "\u00a7l" + text, x, y, color, 1.44F * FONT_SCALE);
     }
 
     private static int hudWidth(FontRenderer font, String text) {
-        return HudFont.getStringWidth(font, text, 1.02F);
+        return HudFont.getStringWidth(font, text, 1.02F * FONT_SCALE);
     }
 
     private static int hudBoldWidth(FontRenderer font, String text) {
-        return HudFont.getStringWidth(font, "\u00a7l" + text, 1.44F);
+        return HudFont.getStringWidth(font, "\u00a7l" + text, 1.44F * FONT_SCALE);
     }
 
     private static void micro(FontRenderer font, String text, int x, int y, int color) {
-        HudFont.drawString(font, text, x, y, color, 0.80F);
+        HudFont.drawString(font, text, x, y, color, 0.80F * FONT_SCALE);
     }
 
     private static int microWidth(FontRenderer font, String text) {
-        return HudFont.getStringWidth(font, text, 0.80F);
+        return HudFont.getStringWidth(font, text, 0.80F * FONT_SCALE);
     }
 
     private static String ellipsizeMicro(FontRenderer font, String text, int maxWidth) {
@@ -4156,15 +4159,27 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
         private Setting(String label, int kind, float min, float max, float step,
                 int decimals, String suffix, String[] options, Binding binding) {
-            this.label = label;
+            this.label = sentenceCase(label);
             this.kind = kind;
             this.min = min;
             this.max = max;
             this.step = step;
             this.decimals = decimals;
             this.suffix = suffix;
-            this.options = options;
+            this.options = options == null ? null : options.clone();
+            if (this.options != null) {
+                for (int i = 0; i < this.options.length; i++) {
+                    this.options[i] = sentenceCase(this.options[i]);
+                }
+            }
             this.binding = binding;
+        }
+
+        /** 展开配置的名称与选项统一为句首大写，不改动模块共享的名称数组。 */
+        private static String sentenceCase(String text) {
+            String lower = text.toLowerCase(Locale.ROOT);
+            return lower.isEmpty() ? lower
+                    : lower.substring(0, 1).toUpperCase(Locale.ROOT) + lower.substring(1);
         }
 
         static Setting slider(String label, float min, float max, float step,
