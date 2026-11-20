@@ -424,6 +424,11 @@ IO 失败只记录一次并自动停用 debug。
 - 目标格搜索：从 `targetYLevel` 开始，半径 1..6 的菱形向下扩；目标格必须是空气，
   六个邻居里要有实心支撑面，且面中心到眼睛 ≤ 4.5 格、法线朝向眼睛（`dot >= 0`）。
   放置点记成“支撑方块 + 指向目标格的那一面”。
+- 点击点（aim）：`Placement` 在选定支撑面时取一次**面内随机点**
+  （`randomFacePoint`：法线方向精确落在面平面上，切向 ±0.3 格），aim 指向这个点，
+  C08 的 `hitVec` 也用同一个点（能取到 aim 射线与面平面的交点时优先用交点，
+  telly 被限速夹住时也不会让 vec 落在射线外面）。同一个目标在命中期间复用同一个点，
+  换目标才重掷。这样每一下都点在面上某个随机位置，而不是永远停在方块几何中心。
 - 放置节奏：`pending → flush`。tick N 把 aim 写进 C03；tick N+1 开头用
   **服务端已经收到的那个角度**在当前眼睛位置重做 ray trace，命中才发 C08；
   打不到就重试（上限 2 次）。放置成功的那一 tick 把 aim 冻结成刚校验过的角度
@@ -433,10 +438,22 @@ IO 失败只记录一次并自动停用 debug。
   `velocityDelay=60`，期间同样走这个分支。
 - `SNEAK`：OpenZen 的 18→21 tick 潜行节拍（第 18 tick 停冲刺 + 按潜行，第 21 tick
   松开）；`EAGLE` 是 `NORMAL` 下“脚下半格收缩一圈后没有碰撞面”才潜行。
-- `ITEM SPOOF`：tick 末尾把客户端槽位切回开启时的槽（不发 C09），手部渲染看到
-  旧物品；服务端仍然认为手持方块 —— 与 OpenZen 的 `Render Item Spoof` 可见效果一致。
-- 快捷栏：切到方块槽时显式补一条 `C09PacketHeldItemChange`（`serverSlot` 去重），
-  1.8.9 不会自动同步 `inventory.currentItem`。关闭模块会切回原槽并发 C09。
+- `SLOT`（`scaffold.slotMode`）决定“手里的方块从哪来”：
+  - `HOTBAR`（默认）：真的换到方块槽 —— 只改客户端 `currentItem`，C09 由原版发
+    （1.8.9 每 tick 的 `playerController.updateController()` 和每次右键的第一步都是
+    `syncCurrentPlayItem()`，它按内部缓存补一条 C09）。**模块自己不碰 C09 包**：
+    手发一条之后原版还会补一条相同 slot 的，服务端连着收到两条一样的
+    `C09PacketHeldItemChange` 就是 Grim `BadPacketsA`（`Sent duplicate slot id`，
+    日志里 `BadPacketsA: slot=1/0`）。C08 用 `getHeldItem()` 那一组物品，
+    选中槽 / C08 物品 / C09 顺序三者自洽；换手那一 tick 不放置，下一 tick 的 C08
+    一定排在原版那条 C09 之后。手上的不是方块时直接不放置，绝不伪造 C08。
+    方块搭完会正常换回开启模块时的槽位。
+  - `SILENT`：OpenZen 的旧行为，tick 末尾把客户端槽位切回开启时的槽（不发 C09），
+    手部渲染看到旧物品、服务端认为手持方块（`ITEM SPOOF`）。槽位本身不一致，属于
+    可判定特征，只在明确需要时开启。
+- 快捷栏：1.8.9 不会在改 `inventory.currentItem` 时立即同步，但原版每 tick 都会
+  `syncCurrentPlayItem()` 自查一次，所以切槽只改客户端字段即可，C09 交给原版。
+  关闭模块会切回原槽，同样由原版补包。
 - HUD：OpenZen 的“图标 + 计数条 + `N blocks` / `x.xxb/s`”，进度条颜色 `#9900FF`，
   换方块时弹簧过渡；`scaffold.hud` 控制显示。
 - 世界渲染：目标空气格画成蓝色半透明方块（`RenderWorldLastEvent`）。
@@ -987,6 +1004,11 @@ IO 失败只记录一次并自动停用 debug。
   现在 AutoClicker 开启且准星指着实体时，会把这个计数器压到 `2`，让原版的
   “按住连点”分支跳过；模块自己真正攻击前再清回 `0`。这只在准星命中实体时生效，
   挖方块 / 右键放置不受影响。
+- `CLICK ONLY` 默认开启（`autoclicker.clickOnly`）：准星在方块上时只发 `C0A`
+  挥手，不调用 `clickMouse()` —— 也就是不发 `C07PacketPlayerDigging(START_DESTROY_BLOCK)`，
+  不会把方块挖掉。同时原版“按住左键”那条挖掘路径会被 `leftClickCounter = 2`
+  拦住（这一条不受 `REQUIRE HOLD` 影响，模块开着就不会拆方块）。关掉后恢复旧行为：
+  左键点击命中方块会正常开挖掘，10~20 CPS 下等于自动挖矿。
 - 模块绑定键（默认 `R`）只在按下边沿触发一次；按住不会因为系统键盘重复而
   反复开关 AutoClicker。
 - `MODE`（`autoclicker.attackMode`）决定 C02 节奏，三档：

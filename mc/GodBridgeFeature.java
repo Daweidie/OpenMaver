@@ -184,8 +184,6 @@ public final class GodBridgeFeature {
     private static Class<?> vec3Type;
     private static Constructor<?> vec3Constructor;
     private static Object[] facings;
-    private static Constructor<?> heldItemChangeConstructor;
-    private static boolean heldItemChangeFailed;
     private static final Map<Class<?>, Boolean> SOLID_CACHE =
             new ConcurrentHashMap<Class<?>, Boolean>();
     private static final Map<Class<?>, Boolean> PLACEABLE_CACHE =
@@ -854,8 +852,7 @@ public final class GodBridgeFeature {
                 setSlotClientOnly(player, found);
             }
             if (serverSlot != found) {
-                sendHeldItemChange(player, found);
-                serverSlot = found;
+                applyHeldSlot(player, found);
             }
         }
     }
@@ -893,34 +890,20 @@ public final class GodBridgeFeature {
         if (oldSlot < 0) {
             return;
         }
-        setSlotClientOnly(player, oldSlot);
-        if (serverSlot != oldSlot) {
-            sendHeldItemChange(player, oldSlot);
-            serverSlot = oldSlot;
-        }
+        applyHeldSlot(player, oldSlot);
     }
 
-    private static void sendHeldItemChange(Object player, int slot) {
-        if (heldItemChangeFailed) {
-            return;
-        }
-        try {
-            if (heldItemChangeConstructor == null) {
-                Class<?> type = Class.forName(
-                        "net.minecraft.network.play.client.C09PacketHeldItemChange");
-                heldItemChangeConstructor = type.getConstructor(Integer.TYPE);
-            }
-            Object sendQueue = OpenMaverFeatures.read(player, "sendQueue", "field_71174_a", null);
-            if (sendQueue == null) {
-                return;
-            }
-            OpenMaverFeatures.callVoid(sendQueue, "addToSendQueue", "func_147297_a", null,
-                    heldItemChangeConstructor.newInstance(Integer.valueOf(slot)));
-        } catch (Throwable error) {
-            heldItemChangeFailed = true;
-            OpenMaverDebug.noticeOnce("godbridge.slot.packet",
-                    "C09PacketHeldItemChange unavailable: " + error);
-        }
+    /**
+     * 切换到某个槽位：只改客户端 {@code inventory.currentItem}，C09 交给原版。
+     *
+     * <p>1.8.9 每 tick 的 {@code updateController()}、以及原版每次右键 / 挖掘的第一
+     * 步都是 {@code syncCurrentPlayItem()}，它按 {@code currentPlayerItem} 缓存决定
+     * 要不要发 C09。我们手发一条之后原版还会再补一条相同 slot 的 C09，直接命中
+     * Grim 的 {@code BadPacketsA}（"Sent duplicate slot id"）。
+     */
+    private static void applyHeldSlot(Object player, int slot) {
+        setSlotClientOnly(player, slot);
+        serverSlot = slot;
     }
 
     private static boolean isPlaceableBlock(Object stack) {

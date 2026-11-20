@@ -178,6 +178,17 @@ public final class OpenMaverFeatures {
      */
     private static boolean autoclickerRequireHold = true;
     /**
+     * 仅点击（CLICK ONLY）：准星指着方块时只挥手，不启动挖掘。
+     *
+     * <p>默认 {@code clickMouse()} 命中方块会走 {@code PlayerControllerMP.clickBlock}，
+     * 也就是 {@code C07PacketPlayerDigging(START_DESTROY_BLOCK)} + 持续破坏。
+     * 10~20 CPS 的自动点击会把整排方块拆掉，服务端也能从“每秒十几个破坏开始包”
+     * 直接看出是宏。开启后左键只发 {@code C0A}（挥手），不碰挖掘状态机；
+     * 同时 {@link #suppressVanillaDuplicateAttack(Minecraft)} 会拦住原版
+     * “按住左键”那条挖掘路径，所以开模块期间盯着地面也不会挖掉方块。
+     */
+    private static boolean autoclickerClickOnly = true;
+    /**
      * 准星在实体上时，等目标的受击无敌帧结束再发送真正的攻击。
      *
      * <p>1.8.9 的 {@code EntityLivingBase.hurtResistantTime} 会让 10 tick 内的
@@ -599,7 +610,8 @@ public final class OpenMaverFeatures {
     }
 
     /**
-     * 拦住原版「按住左键」路径在同一 tick 额外补发的 C02。
+     * 拦住原版「按住左键」路径在同一 tick 额外补发的 C02，并在仅点击模式下
+     * 拦住原版的挖掘。
      *
      * <p>1.8.9 的 {@code Minecraft.runTick} 只要左键按住且
      * {@code leftClickCounter == 0} 就会再调一次 {@code clickMouse()}，
@@ -608,17 +620,22 @@ public final class OpenMaverFeatures {
      * 攻击包（约 20 CPS）。在 1.9+ 子服上这会让服务端的攻击冷却读数一直贴在
      * 0 附近，真正结算的那一下伤害极低，看起来就像「连点伤害全无效」。
      *
-     * <p>这里只在准星确实指着实体时把计数器抬到 2：原版递减后仍 > 0，
-     * 「按住攻击」分支会被跳过；AutoClicker 自己真正攻击前会再清回 0，
-     * 因此既不影响挖方块，也能保证每个受击窗口最多一条有效 C02。
+     * <p>准星在实体上时把计数器抬到 2：原版递减后仍 > 0，「按住攻击」分支会被
+     * 跳过；AutoClicker 自己真正攻击前会再清回 0，因此既不影响挖方块，也能保证
+     * 每个受击窗口最多一条有效 C02。
+     *
+     * <p>开了 CLICK ONLY 且准星在方块上时同样抬到 2：原版那条
+     * {@code clickMouse -> clickBlock} 分支（也就是 C07 + 持续破坏）被整条跳过，
+     * 宏只留下挥手动画，服务端看不到“按住左键的连续破坏开始包”。
      */
     private static void suppressVanillaDuplicateAttack(Minecraft mc) {
         try {
             Module killAura = ModuleManager.getModule("KillAura");
             boolean killAuraActive = killAura != null && killAura.isEnabled()
                     && (!killAuraRequirePress || Mouse.isButtonDown(0));
+            Module autoClicker = null;
             if (!killAuraActive) {
-                Module autoClicker = ModuleManager.getModule("AutoClicker");
+                autoClicker = ModuleManager.getModule("AutoClicker");
                 if (autoClicker == null || !autoClicker.isEnabled() || !autoclickerLeft) {
                     return;
                 }
@@ -627,10 +644,18 @@ public final class OpenMaverFeatures {
                 }
             }
             Object hit = read(mc, "objectMouseOver", "field_71476_x", null);
-            if (hit == null || !isEntityHit(hit)) {
+            if (hit == null) {
                 return;
             }
-            writeIntField(mc, "leftClickCounter", "field_71429_W", 2);
+            if (isEntityHit(hit)) {
+                writeIntField(mc, "leftClickCounter", "field_71429_W", 2);
+                return;
+            }
+            // 仅点击模式不看 requireHold：只要模块开着，左键就不该拆方块。
+            if (autoclickerClickOnly && isBlockHit(hit)
+                    && autoClicker != null && autoClicker.isEnabled()) {
+                writeIntField(mc, "leftClickCounter", "field_71429_W", 2);
+            }
         } catch (Throwable ignored) {
             // objectMouseOver 在切世界时可能为空，忽略即可。
         }
@@ -753,8 +778,20 @@ public final class OpenMaverFeatures {
         //   AttackStrengthTicker（MC-255058），等待期间的挥手会把后面的真正
         //   C02 压到 0.2 倍伤害。CPS HUD 仍按配置显示。
         boolean entityHit = !miss && isEntityHit(hit);
+        boolean blockHit = !miss && isBlockHit(hit);
         long interval = clickIntervalMillis(now);
         Object player = read(mc, "thePlayer", "field_71439_g", null);
+        // 仅点击：准星在方块上时什么都不挖，只补一个挥手动画（真人点一下的观感）。
+        // 不走 clickMouse 就不会发 C07，也不会进入持续破坏状态。
+        if (blockHit && autoclickerClickOnly) {
+            autoclickerMissStreak = 0;
+            callVoid(player, "swingItem", "func_71038_i", null);
+            StatsHud.recordAutoClick(true, now);
+            OpenMaverDebug.click("block-swing", interval, autoclickerCpsMax,
+                    Mouse.isButtonDown(0), autoclickerMissStreak);
+            autoclickerLastClickNanos = now;
+            return true;
+        }
         long waitTicks = autoclickerAttackMode == ATTACK_MODE_FULL_CHARGE
                 ? autoclickerAttackTicks(player) : AUTOCLICKER_HURT_TICKS;
         if (entityHit
@@ -874,6 +911,15 @@ public final class OpenMaverFeatures {
         }
         Object type = read(hit, "typeOfHit", "field_72313_a", null);
         return type != null && "ENTITY".equals(String.valueOf(type));
+    }
+
+    /** 当前准星目标是否为方块（1.8.9 的 {@code MovingObjectType.BLOCK}）。 */
+    private static boolean isBlockHit(Object hit) {
+        if (hit == null) {
+            return false;
+        }
+        Object type = read(hit, "typeOfHit", "field_72313_a", null);
+        return type != null && "BLOCK".equals(String.valueOf(type));
     }
 
     private static boolean tryAutoRightClick(Minecraft mc, long now) {
@@ -2596,6 +2642,7 @@ public final class OpenMaverFeatures {
         autoclickerLeft = readBoolean(values, "autoclicker.left", true);
         autoclickerRight = readBoolean(values, "autoclicker.right", false);
         autoclickerRequireHold = readBoolean(values, "autoclicker.requireHold", true);
+        autoclickerClickOnly = readBoolean(values, "autoclicker.clickOnly", true);
         autoclickerWaitForHurt = readBoolean(values, "autoclicker.waitForHurt", true);
         autoclickerAttackMode = readAttackMode(values);
         if (settingsVersion < 3) {
@@ -2889,6 +2936,15 @@ public final class OpenMaverFeatures {
     public static boolean isAutoClickerRequireHold() { return autoclickerRequireHold; }
     public static void setAutoClickerRequireHold(boolean value) {
         autoclickerRequireHold = value;
+        resetAutoClickerTimers();
+        markDirty();
+    }
+
+    public static boolean isAutoClickerClickOnly() { return autoclickerClickOnly; }
+    public static void setAutoClickerClickOnly(boolean value) {
+        autoclickerClickOnly = value;
+        // 关掉时把原版挖掘的抑制还原，避免上一次留下的计数器把点击吞一 tick。
+        writeIntField(Minecraft.getMinecraft(), "leftClickCounter", "field_71429_W", 0);
         resetAutoClickerTimers();
         markDirty();
     }
@@ -3277,6 +3333,7 @@ public final class OpenMaverFeatures {
                     + "\nautoclicker.right=" + autoclickerRight
                     + "\nautoclicker.requireHold=" + autoclickerRequireHold
                     + "\nautoclicker.waitForHurt=" + autoclickerWaitForHurt
+                    + "\nautoclicker.clickOnly=" + autoclickerClickOnly
                     + "\nautoclicker.attackMode="
                     + ATTACK_MODE_KEYS[clamp(autoclickerAttackMode,
                             ATTACK_MODE_FULL_CHARGE, ATTACK_MODE_VANILLA)]

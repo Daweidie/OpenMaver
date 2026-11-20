@@ -58,10 +58,17 @@ import java.util.concurrent.ConcurrentHashMap;
  *       冻结成刚校验过的角度（{@code holdPlaceAim}），保证 C08 之后那条飞包携带同一
  *       个角度。</li>
  *   <li><b>快捷栏</b>：1.8.9 的 {@code inventory.currentItem} 不会自动同步给服务端，
- *       所以切到方块槽时会显式发 {@code C09PacketHeldItemChange}（{@code serverSlot}
- *       去重）。{@code itemSpoof} 在 tick 末尾把客户端槽位切回开启时的槽（不发 C09），
- *       于是手部渲染看到旧物品、服务端仍然认为手持方块 —— 与 OpenZen 的
- *       {@code Render Item Spoof} 可见效果一致。</li>
+ *       但原版每 tick 的 {@code playerController.updateController()}（以及每次右键 /
+ *       挖掘的第一步）都会调 {@code syncCurrentPlayItem()}，按它自己的
+ *       {@code currentPlayerItem} 缓存补一条 C09。所以模块只改客户端槽位，
+ *       <b>不再自己发 C09</b> —— 手发会和缓存打架，服务端收到两条相同 slot 的 C09，
+ *       直接命中 Grim 的 {@code BadPacketsA}（"Sent duplicate slot id"）。
+ *       默认走 {@code SLOT = HOTBAR}：真的切到方块槽，C08 用 {@code getHeldItem()}
+ *       那一组物品，服务端看到的选中槽 / C08 物品 / C09 顺序三者自洽；换手那一 tick
+ *       不放置，下一 tick 的 C08 一定在 C09 之后。{@code SILENT} 是 OpenZen 的旧行为：
+ *       客户端槽位只在本 tick 内临时切过去，tick 末尾由 {@code itemSpoof} 切回开启时
+ *       的槽（不发包），手部渲染看到旧物品、服务端认为手持方块 —— 槽位不一致本身
+ *       就是可判定特征，只在明确需要时开启。</li>
  *   <li><b>空闲时不转</b>：OpenZen 的 {@code getPlayerYawRotation()} 在
  *       {@code currentPlacement == null} 时返回 {@code (0,0)}，会让服务端视角在没有
  *       目标时漂到 yaw 0。这里改成回落到相机角度（见 {@link #getPlayerYawRotation}），
@@ -87,6 +94,22 @@ public final class ScaffoldFeature {
     public static final int MODE_KEEP_Y = 3;
     public static final String[] MODE_NAMES = {"NORMAL", "TELLY BRIDGE", "OLD TELLY", "KEEP Y"};
 
+    /**
+     * 手持方块的来源：
+     * <ul>
+     *   <li>{@link #SLOT_SILENT}：客户端槽位临时切到方块槽并补 C09，tick 结束再把
+     *       客户端槽位切回原槽（不发 C09）。手部渲染还是原来的物品，服务端认为手持
+     *       方块；C08 里的物品是直接从背包里取的 —— OpenZen 的旧行为。</li>
+     *   <li>{@link #SLOT_HOTBAR}：真的切到方块槽（客户端 + C09），C08 用
+     *       {@code getHeldItem()} 拿到的那一组物品，和原版按热键换手完全一致。
+     *       服务端看到的“选中槽 / C08 物品 / C09 顺序”三者自洽，没有
+     *       “没换手却用手里的方块”这种可判定特征。</li>
+     * </ul>
+     */
+    public static final int SLOT_SILENT = 0;
+    public static final int SLOT_HOTBAR = 1;
+    public static final String[] SLOT_NAMES = {"SILENT", "HOTBAR"};
+
     /** Normal / Telly Bridge / Old Telly / Keep Y */
     private static int mode = MODE_NORMAL;
     /** Normal 模式下“贴边才潜行”。 */
@@ -99,8 +122,10 @@ public final class ScaffoldFeature {
     private static boolean clutch = true;
     /** 旋转速度档位 1..6：单 tick 步长 = 360 / tick。 */
     private static int rotationTick = 3;
-    /** 手部渲染保持开启时的物品（服务端仍认为手持方块）。 */
+    /** 手部渲染保持开启时的物品（仅 SILENT 槽位模式有效）。 */
     private static boolean itemSpoof = true;
+    /** 手持方块来源：{@link #SLOT_SILENT} / {@link #SLOT_HOTBAR}。 */
+    private static int slotMode = SLOT_HOTBAR;
     /** 方块计数 HUD。 */
     private static boolean hud = true;
 
@@ -153,6 +178,14 @@ public final class ScaffoldFeature {
     private static int blockSlot = -1;
     /** 服务端已经确认的槽位（C09 去重用）。 */
     private static int serverSlot = -1;
+    /**
+     * 本 tick 刚发过 C09 的标记（= 当时的 {@link #currentTick}）。
+     *
+     * <p>HOTBAR 模式下 C09 与 C08 落在同一个 tick 时，服务端可能还在用旧槽位
+     * 处理那条放置；真人按热键之后一般下一 tick 才点右键，所以这里让放置晚一
+     * tick 再发，避免“换手与放置同 tick”这个可判定特征。
+     */
+    private static long slotSwitchTick = Long.MIN_VALUE;
     private static int blockCount = -1;
 
     private static int eagleTimer;
@@ -206,8 +239,6 @@ public final class ScaffoldFeature {
     private static Class<?> vec3Type;
     private static Constructor<?> vec3Constructor;
     private static Object[] facings;
-    private static Constructor<?> heldItemChangeConstructor;
-    private static boolean heldItemChangeFailed;
     private static Object sprintKeyBinding;
     private static final Map<Class<?>, Boolean> SOLID_CACHE =
             new ConcurrentHashMap<Class<?>, Boolean>();
@@ -221,23 +252,36 @@ public final class ScaffoldFeature {
     // 数据载体
     // ==================================================================
 
-    /** 支撑方块与要点击的面。 */
+    /**
+     * 支撑方块与要点击的面。
+     *
+     * <p>{@code hitX/hitY/hitZ} 是这个面上的一次性随机点击点：它同时决定 aim
+     * （{@link #rotationToBlock}）和 C08 的 {@code hitVec}。瞄准方块正中心
+     * （{@code x+0.5, y+0.5, z+0.5}）是最好识别的一类 scaffold 特征 —— 每一下
+     * 都停在几何中心、yaw/pitch 完全一致；真人永远点在面上某个随机位置。
+     */
     private static final class Placement {
         final int x;
         final int y;
         final int z;
         final int face;
+        final double hitX;
+        final double hitY;
+        final double hitZ;
 
         Placement(int x, int y, int z, int face) {
             this.x = x;
             this.y = y;
             this.z = z;
             this.face = face;
+            double[] hit = randomFacePoint(x, y, z, face);
+            this.hitX = hit[0];
+            this.hitY = hit[1];
+            this.hitZ = hit[2];
         }
 
-        boolean sameAs(Placement other) {
-            return other != null && other.x == x && other.y == y && other.z == z
-                    && other.face == face;
+        boolean sameTarget(int x, int y, int z, int face) {
+            return this.x == x && this.y == y && this.z == z && this.face == face;
         }
     }
 
@@ -247,6 +291,10 @@ public final class ScaffoldFeature {
         final int y;
         final int z;
         final int face;
+        /** C08 里真正发送的 {@code hitVec}：优先取 aim 射线与面平面的交点。 */
+        final double hitX;
+        final double hitY;
+        final double hitZ;
         float aimYaw;
         float aimPitch;
         float sentYaw;
@@ -254,11 +302,15 @@ public final class ScaffoldFeature {
         boolean sent;
         int retries;
 
-        Pending(Placement placement, float aimYaw, float aimPitch) {
+        Pending(Placement placement, float aimYaw, float aimPitch,
+                double hitX, double hitY, double hitZ) {
             this.x = placement.x;
             this.y = placement.y;
             this.z = placement.z;
             this.face = placement.face;
+            this.hitX = hitX;
+            this.hitY = hitY;
+            this.hitZ = hitZ;
             this.aimYaw = aimYaw;
             this.aimPitch = aimPitch;
         }
@@ -361,7 +413,10 @@ public final class ScaffoldFeature {
             }
         }
         aimApplied = false;
-        if (itemSpoof && oldSlot >= 0 && serverSlot >= 0) {
+        // 只有 SILENT 模式才在 tick 末尾把客户端槽位切回去（服务端仍认为手持方块）。
+        // HOTBAR 模式下客户端和服务端都停在方块槽上，任何多余的反向切槽都会
+        // 变成“客户端手里没方块、服务端却收到方块 C08”的破绽。
+        if (slotMode == SLOT_SILENT && itemSpoof && oldSlot >= 0 && serverSlot >= 0) {
             setSlotClientOnly(player, oldSlot);
         }
     }
@@ -389,6 +444,7 @@ public final class ScaffoldFeature {
         holdPlaceAim = false;
         rotationDirty = false;
         aimApplied = false;
+        slotSwitchTick = Long.MIN_VALUE;
 
         if (player != null) {
             oldSlot = currentHotbarSlot(player);
@@ -431,6 +487,7 @@ public final class ScaffoldFeature {
         blockCount = -1;
         rotationDelay = 0;
         aimApplied = false;
+        slotSwitchTick = Long.MIN_VALUE;
         OpenMaverDebug.trace("scaffold", "disabled");
     }
 
@@ -456,6 +513,7 @@ public final class ScaffoldFeature {
         rotationDelay = 0;
         aimApplied = false;
         rotationDirty = false;
+        slotSwitchTick = Long.MIN_VALUE;
     }
 
     /** 由 OpenMaverFeatures 每 tick 递增，仅用于 debug 与 snap 的相位。 */
@@ -579,7 +637,14 @@ public final class ScaffoldFeature {
         // 7) 用本 tick 的 aim 规划下一 tick 的放置
         if (!holding && !holdPlaceAim && placement != null && pending == null
                 && canBuildNow && shouldBuild(player, world)) {
-            pending = new Pending(placement, rotsYaw, rotsPitch);
+            Placement target = placement;
+            // C08 的 vec 优先取 aim 射线与这个面的交点，取不到再用目标自带的点。
+            double[] hit = rayFacePoint(eyePosition(player), rotsYaw, rotsPitch,
+                    target.x, target.y, target.z, target.face);
+            if (hit == null) {
+                hit = new double[]{target.hitX, target.hitY, target.hitZ};
+            }
+            pending = new Pending(target, rotsYaw, rotsPitch, hit[0], hit[1], hit[2]);
         }
 
         aimForThisTick();
@@ -698,7 +763,13 @@ public final class ScaffoldFeature {
             if (dot < 0.0D) {
                 continue;
             }
-            placement = new Placement(supportX, supportY, supportZ, OPPOSITE_FACING[face]);
+            int clickedFace = OPPOSITE_FACING[face];
+            // 同一个目标在命中期间复用同一个 Placement：点击点不重掷，aim 也不会
+            // 每 tick 换一处（真人不会连续几 tick 换落点）。
+            if (placement == null
+                    || !placement.sameTarget(supportX, supportY, supportZ, clickedFace)) {
+                placement = new Placement(supportX, supportY, supportZ, clickedFace);
+            }
             return true;
         }
         return false;
@@ -903,7 +974,14 @@ public final class ScaffoldFeature {
         return rotationToBlock(player, placement, 0.0F);
     }
 
-    /** 从眼睛指向支撑面中心（带 OpenZen rotationToBlock 的噪声）。 */
+    /**
+     * 从眼睛指向支撑面上的一次性随机点击点（带 OpenZen rotationToBlock 的噪声）。
+     *
+     * <p>注意这里不再指向方块正中心：OpenZen 原版用的是 {@code x+0.5, y+0.5, z+0.5}，
+     * 于是每一格脚手架的 aim 都精确落在几何中心，yaw/pitch 也几乎完全相同。
+     * 现在改成 {@link #randomFacePoint} 选出的面内随机点，同一个目标在命中期间
+     * 保持不变（{@link #isAbovePlaceable} 会复用 {@link #placement}），换目标才重新取点。
+     */
     private static float[] rotationToBlock(Object player, Placement target, float partialTicks) {
         double px = OpenMaverFeatures.number(player, "posX", "field_70165_t")
                 + OpenMaverFeatures.number(player, "motionX", "field_70159_w") * partialTicks;
@@ -912,9 +990,9 @@ public final class ScaffoldFeature {
                 + OpenMaverFeatures.number(player, "motionY", "field_70181_x") * partialTicks;
         double pz = OpenMaverFeatures.number(player, "posZ", "field_70161_v")
                 + OpenMaverFeatures.number(player, "motionZ", "field_70179_y") * partialTicks;
-        double dx = target.x - px + 0.5D;
-        double dy = target.y - py + 0.5D;
-        double dz = target.z - pz + 0.5D;
+        double dx = target.hitX - px;
+        double dy = target.hitY - py;
+        double dz = target.hitZ - pz;
         return rotationFromDeltas(addNoise(dx), addNoise(dy), addNoise(dz));
     }
 
@@ -960,6 +1038,17 @@ public final class ScaffoldFeature {
             pending = null;
             return;
         }
+        if (slotMode == SLOT_HOTBAR && slotSwitchTick == currentTick) {
+            // 本 tick 刚换过手：我们注入的 C08 在 tick 开头，而原版那条 C09 在
+            // tick 中段的 updateController() 里才发出。隔一 tick 才能保证服务端
+            // 先收到 C09 再收到 C08（和真人“先按热键、下一 tick 才点右键”一致）。
+            if (target.retries >= MAX_PENDING_RETRIES) {
+                pending = null;
+            } else {
+                target.retries++;
+            }
+            return;
+        }
         if (!canPlaceNow(player, world) || !shouldBuild(player, world)) {
             pending = null;
             return;
@@ -999,7 +1088,7 @@ public final class ScaffoldFeature {
                     "another module already sent a C08 this tick (MultiPlace)");
             return false;
         }
-        Object stack = blockStack(player);
+        Object stack = placedStack(player);
         Object controller = OpenMaverFeatures.read(mc, "playerController", "field_71442_b", null);
         if (stack == null || controller == null) {
             return false;
@@ -1018,6 +1107,24 @@ public final class ScaffoldFeature {
         OpenMaverDebug.place(target.x, target.y, target.z, FACING_NAMES[target.face],
                 target.sentYaw, target.sentPitch, false, false, 1);
         return true;
+    }
+
+    /**
+     * C08 里到底带哪一组物品。
+     *
+     * <p>HOTBAR 模式取 {@code getHeldItem()}：服务端刚收到 C09 把选中槽切到方块槽，
+     * C08 的物品就是那个槽里的方块，和原版右键完全一致。手里的不是方块（例如
+     * 刚被别的模块换走了）时返回 {@code null}，这一 tick 直接不放置，绝不伪造
+     * “手上有方块”的包。
+     *
+     * <p>SILENT 模式沿用 OpenZen 的做法，直接从背包的方块槽里取。
+     */
+    private static Object placedStack(Object player) {
+        if (slotMode == SLOT_HOTBAR) {
+            Object held = OpenMaverFeatures.call(player, "getHeldItem", "func_70694_bm", null);
+            return isPlaceableBlock(held) ? held : null;
+        }
+        return blockStack(player);
     }
 
     /** OpenZen doSnap 里的额外过滤：向上搭时空中平走不点顶面。 */
@@ -1351,8 +1458,18 @@ public final class ScaffoldFeature {
     /**
      * 扫描快捷栏并切到第一组可放置方块。
      *
-     * <p>切槽必须让服务端知道（否则 C08 会在服务端用错槽位的物品）：
-     * {@code serverSlot} 变化时补一条 C09。
+     * <p>切槽必须让服务端知道（否则 C08 会在服务端用错槽位的物品）。这条 C09 交给
+     * 原版：{@code updateController()} 每 tick 都会 {@code syncCurrentPlayItem()}，
+     * 见 {@link #applyHeldSlot(Object, int)}；模块自己不发。
+     *
+     * <p>两种模式的区别只在“切过去之后怎么办”：
+     * <ul>
+     *   <li>{@link #SLOT_HOTBAR}：就这么停着，方块真的在手上，放置用
+     *       {@code getHeldItem()}。方块用完（{@code found < 0}）时再按同样的
+     *       方式切回开启时的槽位。</li>
+     *   <li>{@link #SLOT_SILENT}：客户端槽位在 tick 末尾由 {@code itemSpoof}
+     *       切回原槽（不发 C09），服务端仍认为手持方块。</li>
+     * </ul>
      */
     private static void updateHotbar(Object player) {
         Object inventory = OpenMaverFeatures.read(player, "inventory", "field_71071_by", null);
@@ -1373,12 +1490,12 @@ public final class ScaffoldFeature {
         blockSlot = found;
         if (found >= 0) {
             if (currentHotbarSlot(player) != found) {
-                setSlotClientOnly(player, found);
+                applyHeldSlot(player, found);
+                slotSwitchTick = currentTick;
             }
-            if (serverSlot != found) {
-                sendHeldItemChange(player, found);
-                serverSlot = found;
-            }
+        } else if (slotMode == SLOT_HOTBAR && oldSlot >= 0 && serverSlot != oldSlot) {
+            // 方块搭完了：用正常的换手回到开启模块时的槽位，而不是留在一个空格上。
+            restoreSlot(player);
         }
         blockCount = countBlocks(slots);
     }
@@ -1531,6 +1648,29 @@ public final class ScaffoldFeature {
         return (int) OpenMaverFeatures.number(inventory, "currentItem", "field_70461_c");
     }
 
+    /**
+     * 切换到某个快捷栏槽位：只改客户端 {@code inventory.currentItem}，C09 交给原版。
+     *
+     * <p>为什么不能自己 {@code addToSendQueue(C09)}：1.8.9 的
+     * {@code Minecraft.runTick} 每 tick 都会调 {@code playerController.updateController()}，
+     * 而它的第一步就是 {@code syncCurrentPlayItem()}；{@code onPlayerRightClick()}
+     * 第一步也是它。原版用 {@code currentPlayerItem} 缓存判断「要不要发 C09」，
+     * 我们绕开缓存手发一条之后，原版紧接着又补一条相同 slot 的 C09，
+     * 于是一次换手会在服务端看到两条相同 slot 的 C09 ——
+     * 正是 Grim {@code BadPacketsA}（"Sent duplicate slot id"）判的东西
+     * （日志里的 {@code BadPacketsA: slot=1/0}）。
+     *
+     * <p>只改客户端槽位时，原版会在**本 tick 中段**（{@code updateController}）
+     * 发现变化并自己发一条 C09、同步缓存；我们注入的 C08 在 tick 开头，
+     * 所以换手的那个 tick 由 {@code slotSwitchTick} 挡住不放置，
+     * 下一 tick 的 C08 一定在 C09 之后（{@code onPlayerRightClick} 自己也会再兜一次）。
+     */
+    private static void applyHeldSlot(Object player, int slot) {
+        setSlotClientOnly(player, slot);
+        // 原版在同 tick 的 updateController 里一定会把这条 C09 发出去。
+        serverSlot = slot;
+    }
+
     /** 只改客户端槽位（渲染用），不给服务端发 C09。 */
     private static void setSlotClientOnly(Object player, int slot) {
         Object inventory = OpenMaverFeatures.read(player, "inventory", "field_71071_by", null);
@@ -1543,34 +1683,7 @@ public final class ScaffoldFeature {
         if (oldSlot < 0) {
             return;
         }
-        setSlotClientOnly(player, oldSlot);
-        if (serverSlot != oldSlot) {
-            sendHeldItemChange(player, oldSlot);
-            serverSlot = oldSlot;
-        }
-    }
-
-    private static void sendHeldItemChange(Object player, int slot) {
-        if (heldItemChangeFailed) {
-            return;
-        }
-        try {
-            if (heldItemChangeConstructor == null) {
-                Class<?> type = Class.forName(
-                        "net.minecraft.network.play.client.C09PacketHeldItemChange");
-                heldItemChangeConstructor = type.getConstructor(Integer.TYPE);
-            }
-            Object sendQueue = OpenMaverFeatures.read(player, "sendQueue", "field_71174_a", null);
-            if (sendQueue == null) {
-                return;
-            }
-            OpenMaverFeatures.callVoid(sendQueue, "addToSendQueue", "func_147297_a", null,
-                    heldItemChangeConstructor.newInstance(Integer.valueOf(slot)));
-        } catch (Throwable error) {
-            heldItemChangeFailed = true;
-            OpenMaverDebug.noticeOnce("scaffold.slot.packet",
-                    "C09PacketHeldItemChange unavailable: " + error);
-        }
+        applyHeldSlot(player, oldSlot);
     }
 
     // ==================================================================
@@ -1725,28 +1838,92 @@ public final class ScaffoldFeature {
         return hitPos != null && facingIndex(side) == face && blockPosEquals(hitPos, x, y, z);
     }
 
-    /** OpenZen getHitVec：面中心 + 面内随机偏移（不沿法线偏移）。 */
+    /**
+     * 面上的随机点击点：法线方向上精确落在该面所在的平面，面内偏移 ±0.3 格
+     * （离边缘还剩 0.2 格），所以永远是“面上某处”而不是方块中心。
+     */
+    static double[] randomFacePoint(int x, int y, int z, int face) {
+        double u = randomDouble(-0.3D, 0.3D);
+        double v = randomDouble(-0.3D, 0.3D);
+        switch (face) {
+            case 0:  // DOWN：y 面，xz 内偏移
+                return new double[]{x + 0.5D + u, y, z + 0.5D + v};
+            case 1:  // UP
+                return new double[]{x + 0.5D + u, y + 1.0D, z + 0.5D + v};
+            case 2:  // NORTH
+                return new double[]{x + 0.5D + u, y + 0.5D + v, z};
+            case 3:  // SOUTH
+                return new double[]{x + 0.5D + u, y + 0.5D + v, z + 1.0D};
+            case 4:  // WEST
+                return new double[]{x, y + 0.5D + v, z + 0.5D + u};
+            default: // EAST
+                return new double[]{x + 1.0D, y + 0.5D + v, z + 0.5D + u};
+        }
+    }
+
+    /**
+     * C08 的 {@code hitVec}：就是 aim 瞄准的那个点。
+     *
+     * <p>旧实现每次发送时重新取随机点，而且从不沿法线偏移（up 面发的是方块中心
+     * {@code y+0.5}），于是“服务端拿 aim 复现出来的交点”和包里带的 vec 是两回事。
+     * 现在 aim 与 vec 使用同一个面内点，Grim 的 {@code RotationPlace} 能把两者对上。
+     */
     private static double[] hitVec(Placement target) {
-        double x = target.x + 0.5D;
-        double y = target.y + 0.5D;
-        double z = target.z + 0.5D;
-        if (target.face != 1 && target.face != 0) {
-            y += randomDouble(0.3D, -0.3D);
-        } else {
-            x += randomDouble(0.3D, -0.3D);
-            z += randomDouble(0.3D, -0.3D);
-        }
-        if (target.face == 4 || target.face == 5) {
-            z += randomDouble(0.3D, -0.3D);
-        }
-        if (target.face == 2 || target.face == 3) {
-            x += randomDouble(0.3D, -0.3D);
-        }
-        return new double[]{x, y, z};
+        return new double[]{target.hitX, target.hitY, target.hitZ};
     }
 
     private static double[] hitVec(Pending target) {
-        return hitVec(new Placement(target.x, target.y, target.z, target.face));
+        return new double[]{target.hitX, target.hitY, target.hitZ};
+    }
+
+    /**
+     * aim 射线与点击面平面的交点（换算成绝对坐标）。
+     *
+     * <p>telly 模式下 aim 会被 75.5° 俯角 / 50~90° yaw 步长夹住，未必正好指向
+     * {@link Placement#hitX} 那个点；能落在同一个面内就改用射线交点，让 C08 的
+     * vec 始终在服务端复现出来的那条射线上。落不到面内（或面在眼睛背面）时返回
+     * {@code null}，由调用方回退到 {@code placement} 的点。
+     */
+    static double[] rayFacePoint(float[] eye, float yaw, float pitch,
+            int x, int y, int z, int face) {
+        double yawRad = Math.toRadians(yaw);
+        double pitchRad = Math.toRadians(pitch);
+        double dirX = -Math.sin(yawRad) * Math.cos(pitchRad);
+        double dirY = -Math.sin(pitchRad);
+        double dirZ = Math.cos(yawRad) * Math.cos(pitchRad);
+        double[] origin = {eye[0], eye[1], eye[2]};
+        double[] dir = {dirX, dirY, dirZ};
+        int axis;
+        double plane;
+        switch (face) {
+            case 0: axis = 1; plane = y; break;
+            case 1: axis = 1; plane = y + 1.0D; break;
+            case 2: axis = 2; plane = z; break;
+            case 3: axis = 2; plane = z + 1.0D; break;
+            case 4: axis = 0; plane = x; break;
+            default: axis = 0; plane = x + 1.0D; break;
+        }
+        if (Math.abs(dir[axis]) < 1.0E-6D) {
+            return null;
+        }
+        double t = (plane - origin[axis]) / dir[axis];
+        if (t <= 0.0D) {
+            return null;
+        }
+        double hitX = origin[0] + dir[0] * t;
+        double hitY = origin[1] + dir[1] * t;
+        double hitZ = origin[2] + dir[2] * t;
+        double[] point = {hitX, hitY, hitZ};
+        for (int i = 0; i < 3; i++) {
+            if (i == axis) {
+                continue;
+            }
+            int base = i == 0 ? x : (i == 1 ? y : z);
+            if (point[i] < base + 0.01D || point[i] > base + 0.99D) {
+                return null;
+            }
+        }
+        return point;
     }
 
     private static Object blockPos(int x, int y, int z) {
@@ -2157,6 +2334,7 @@ public final class ScaffoldFeature {
         clutch = readBoolean(values, "scaffold.clutch", true);
         rotationTick = clamp(readInt(values, "scaffold.rotationTick", 3), 1, 6);
         itemSpoof = readBoolean(values, "scaffold.itemSpoof", true);
+        slotMode = clamp(readInt(values, "scaffold.slotMode", SLOT_HOTBAR), SLOT_SILENT, SLOT_HOTBAR);
         hud = readBoolean(values, "scaffold.hud", true);
         reset();
     }
@@ -2169,6 +2347,7 @@ public final class ScaffoldFeature {
                 + "\nscaffold.clutch=" + clutch
                 + "\nscaffold.rotationTick=" + rotationTick
                 + "\nscaffold.itemSpoof=" + itemSpoof
+                + "\nscaffold.slotMode=" + slotMode
                 + "\nscaffold.hud=" + hud;
     }
 
@@ -2257,6 +2436,38 @@ public final class ScaffoldFeature {
     public static void setItemSpoof(boolean value) {
         itemSpoof = value;
         OpenMaverFeatures.markDirty();
+    }
+
+    /** 手持方块来源：0 = SILENT（旧行为），1 = HOTBAR（真实换手）。 */
+    public static int getSlotMode() {
+        return slotMode;
+    }
+
+    public static void setSlotMode(int value) {
+        int next = clamp(value, SLOT_SILENT, SLOT_HOTBAR);
+        if (next == slotMode) {
+            return;
+        }
+        slotMode = next;
+        // 切回 SILENT 时下一次 tick 会重新按静默规则切槽；切到 HOTBAR 时
+        // 客户端槽位保持当前值，下一 tick 就会用真实换手补 C09。
+        slotSwitchTick = Long.MIN_VALUE;
+        Minecraft mc = Minecraft.getMinecraft();
+        Object player = mc == null ? null
+                : OpenMaverFeatures.read(mc, "thePlayer", "field_71439_g", null);
+        if (slotMode == SLOT_HOTBAR && active && player != null) {
+            // 先把客户端槽位归位，避免上一条 tick 末尾的伪装让手部一直显示旧物品。
+            if (blockSlot >= 0) {
+                setSlotClientOnly(player, blockSlot);
+            } else if (oldSlot >= 0) {
+                setSlotClientOnly(player, oldSlot);
+            }
+        }
+        OpenMaverFeatures.markDirty();
+    }
+
+    public static String getSlotModeName() {
+        return SLOT_NAMES[clamp(slotMode, SLOT_SILENT, SLOT_HOTBAR)];
     }
 
     public static boolean isHud() {

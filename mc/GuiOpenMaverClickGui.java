@@ -159,6 +159,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final String[] KILLAURA_SORTS = {"Distance", "Health"};
     /** OpenZen Scaffold 的四种模式。 */
     private static final String[] SCAFFOLD_MODES = ScaffoldFeature.MODE_NAMES;
+    /** Scaffold 手持方块来源：SILENT（伪装换手）/ HOTBAR（真实换手）。 */
+    private static final String[] SCAFFOLD_SLOT_MODES = ScaffoldFeature.SLOT_NAMES;
     /** GodBridge 的三种教材手法。 */
     private static final String[] GODBRIDGE_MODES = GodBridgeFeature.MODE_NAMES;
     private static final String[] SCAFFOLD2_MODES = Scaffold2Feature.MODE_NAMES;
@@ -754,6 +756,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             public double get() { return OpenMaverFeatures.isAutoClickerWaitForHurt() ? 1.0D : 0.0D; }
             public void set(double value) { OpenMaverFeatures.setAutoClickerWaitForHurt(value > 0.5D); }
         }));
+        entry.settings.add(Setting.check("CLICK ONLY", new Binding() {
+            public double get() { return OpenMaverFeatures.isAutoClickerClickOnly() ? 1.0D : 0.0D; }
+            public void set(double value) { OpenMaverFeatures.setAutoClickerClickOnly(value > 0.5D); }
+        }));
         entry.settings.add(Setting.select("MODE", AUTOCLICKER_MODES, new Binding() {
             public double get() { return OpenMaverFeatures.getAutoClickerAttackMode(); }
             public void set(double value) { OpenMaverFeatures.setAutoClickerAttackMode((int) Math.round(value)); }
@@ -880,6 +886,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             public void set(double value) {
                 ScaffoldFeature.setRotationTick((int) Math.round(value));
             }
+        }));
+        entry.settings.add(Setting.select("SLOT", SCAFFOLD_SLOT_MODES, new Binding() {
+            public double get() { return ScaffoldFeature.getSlotMode(); }
+            public void set(double value) { ScaffoldFeature.setSlotMode((int) Math.round(value)); }
         }));
         entry.settings.add(Setting.check("ITEM SPOOF", new Binding() {
             public double get() { return ScaffoldFeature.isItemSpoof() ? 1.0D : 0.0D; }

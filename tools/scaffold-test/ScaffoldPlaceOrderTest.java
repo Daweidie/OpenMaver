@@ -41,6 +41,7 @@ public final class ScaffoldPlaceOrderTest {
         blockDistance();
         clutchWindow();
         floorBehaviour();
+        faceAimPoint();
         sourceStructure();
         hudAndGui();
 
@@ -185,7 +186,61 @@ public final class ScaffoldPlaceOrderTest {
     }
 
     // ------------------------------------------------------------------
-    // 8) 源码结构
+    // 8) 点击点：不落在方块中心，且 aim 射线与面平面一致
+    // ------------------------------------------------------------------
+
+    private static void faceAimPoint() {
+        // 每个面都必须精确落在该面所在的平面上，并且面内偏移不超过 0.5（留边）。
+        boolean onPlane = true;
+        boolean inside = true;
+        boolean offCenter = false;
+        int[] faces = {0, 1, 2, 3, 4, 5};
+        for (int i = 0; i < 200; i++) {
+            for (int face : faces) {
+                double[] p = ScaffoldFeature.randomFacePoint(4, 64, -7, face);
+                double planeValue = face == 0 ? 64.0D : face == 1 ? 65.0D
+                        : face == 2 ? -7.0D : face == 3 ? -6.0D
+                        : face == 4 ? 4.0D : 5.0D;
+                int axis = face <= 1 ? 1 : (face <= 3 ? 2 : 0);
+                if (Math.abs(p[axis] - planeValue) > 1.0E-9D) {
+                    onPlane = false;
+                }
+                for (int k = 0; k < 3; k++) {
+                    if (k == axis) {
+                        continue;
+                    }
+                    int base = k == 0 ? 4 : (k == 1 ? 64 : -7);
+                    if (p[k] < base + 0.19D || p[k] > base + 0.81D) {
+                        inside = false;
+                    }
+                }
+                double dx = Math.abs(p[0] - 4.5D);
+                double dy = Math.abs(p[1] - 64.5D);
+                double dz = Math.abs(p[2] - (-6.5D));
+                if (face <= 1 ? (dx > 0.15D || dz > 0.15D) : (dy > 0.15D)) {
+                    offCenter = true;
+                }
+            }
+        }
+        check("click point lies exactly on the clicked face plane", onPlane);
+        check("click point stays inside the face (no edge hits)", inside);
+        check("click point is not pinned to the block centre", offCenter);
+
+        // 直下瞄准：射线与 up 面相交，落点在面内。
+        float[] eye = {4.5F, 68.0F, -6.5F};
+        double[] hit = ScaffoldFeature.rayFacePoint(eye, 0.0F, 90.0F, 4, 64, -7, 1);
+        check("aim ray intersects the up face",
+                hit != null && Math.abs(hit[1] - 65.0D) < 1.0E-6D);
+        // 反方向（抬头）：面在眼睛背面，不能给出交点。
+        check("aim ray pointing away yields no face point",
+                ScaffoldFeature.rayFacePoint(eye, 0.0F, -90.0F, 4, 64, -7, 1) == null);
+        // 射线落在面外（这里瞄准正上方），应当回退而不是返回越界点。
+        check("aim ray outside the face yields no face point",
+                ScaffoldFeature.rayFacePoint(eye, 0.0F, 0.0F, 4, 64, -7, 1) == null);
+    }
+
+    // ------------------------------------------------------------------
+    // 9) 源码结构
     // ------------------------------------------------------------------
 
     private static void sourceStructure() throws Exception {
@@ -208,11 +263,46 @@ public final class ScaffoldPlaceOrderTest {
                         && feature.contains("setFloat(player, \"rotationYaw\""));
         check("silent aim is restored to the camera",
                 feature.contains("restoreCameraView") && feature.contains("renderArmYaw"));
-        check("hotbar switch sends C09 to the server",
-                feature.contains("C09PacketHeldItemChange")
-                        && feature.contains("sendHeldItemChange"));
+        // C09 一律由原版发：1.8.9 每 tick 的 updateController() / onPlayerRightClick()
+        // 第一步都是 syncCurrentPlayItem()，手发一条会让服务端收到两条相同 slot 的
+        // C09 -> Grim BadPacketsA("Sent duplicate slot id")。
+        check("held-slot switch never hand-sends C09",
+                !feature.contains("C09PacketHeldItemChange")
+                        && !feature.contains("sendHeldItemChange"));
+        check("slot switch documents the vanilla per-tick sync",
+                feature.contains("updateController"));
+        String godBridge = read("mc/GodBridgeFeature.java");
+        check("god bridge uses the same vanilla-synced slot switch",
+                !godBridge.contains("C09PacketHeldItemChange")
+                        && godBridge.contains("private static void applyHeldSlot"));
         check("item spoof flips the client slot without a C09",
                 feature.contains("setSlotClientOnly(player, oldSlot)"));
+        // 手持方块来源：HOTBAR（真实换手）为默认，SILENT 只在显式切换时生效。
+        check("hotbar slot mode is the default",
+                ScaffoldFeature.getSlotMode() == ScaffoldFeature.SLOT_HOTBAR
+                        && ScaffoldFeature.SLOT_NAMES.length == 2);
+        check("placed stack comes from the held item in HOTBAR mode",
+                feature.contains("placedStack(player)")
+                        && feature.contains("private static Object placedStack(Object player)")
+                        && feature.contains("\"getHeldItem\", \"func_70694_bm\""));
+        check("a non-block held item never fakes a C08",
+                feature.contains("return isPlaceableBlock(held) ? held : null;"));
+        check("item spoof is gated to the SILENT slot mode",
+                feature.contains("slotMode == SLOT_SILENT && itemSpoof"));
+        check("C09 and C08 are separated by one tick",
+                feature.contains("slotSwitchTick == currentTick"));
+        check("slot mode is persisted",
+                feature.contains("scaffold.slotMode")
+                        && feature.contains("getSlotMode()") && feature.contains("setSlotMode("));
+        // aim 不再指向方块中心：rotationToBlock 用 Placement 的随机面点。
+        check("aim targets the random face point, not the block centre",
+                feature.contains("double dx = target.hitX - px;")
+                        && !feature.contains("double dx = target.x - px + 0.5D;"));
+        check("C08 hitVec reuses the same point as the aim",
+                feature.contains("return new double[]{target.hitX, target.hitY, target.hitZ};")
+                        && !feature.contains("new Placement(target.x, target.y, target.z, target.face)"));
+        check("placement is reused while the target is unchanged",
+                feature.contains("placement.sameTarget(supportX, supportY, supportZ, clickedFace)"));
         check("knockback window is observed from S12",
                 feature.contains("S12PacketEntityVelocity"));
         check("knockback window decays every tick",
@@ -250,6 +340,9 @@ public final class ScaffoldPlaceOrderTest {
         String gui = read("mc/GuiOpenMaverClickGui.java");
         check("ClickGUI exposes the OpenZen mode list",
                 gui.contains("SCAFFOLD_MODES = ScaffoldFeature.MODE_NAMES"));
+        check("ClickGUI exposes the slot mode select",
+                gui.contains("SCAFFOLD_SLOT_MODES = ScaffoldFeature.SLOT_NAMES")
+                        && gui.contains("Setting.select(\"SLOT\""));
         check("ClickGUI no longer exposes Myau settings",
                 !gui.contains("SCAFFOLD_TOWER") && !gui.contains("SCAFFOLD_ROTATIONS"));
 

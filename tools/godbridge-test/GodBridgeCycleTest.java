@@ -222,7 +222,9 @@ public final class GodBridgeCycleTest {
 
         check("exactly one right-click call site", count(feature, "onPlayerRightClick") == 1);
         check("placement takes the shared C08 slot", feature.contains("claimPlacement()"));
-        check("hotbar switch sends C09", feature.contains("C09PacketHeldItemChange"));
+        check("hotbar switch leaves C09 to vanilla sync",
+                !feature.contains("C09PacketHeldItemChange")
+                        && feature.contains("applyHeldSlot"));
         check("Shift is driven through KeyBinding.pressed",
                 feature.contains("setKeyPressed(mc, \"keyBindSneak\""));
         check("edge detection uses collide boxes",
