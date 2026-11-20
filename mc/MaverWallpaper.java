@@ -78,7 +78,7 @@ public final class MaverWallpaper {
     private static volatile int mode = MODE_PANORAMA;
     private static volatile int fit = FIT_COVER;
     private static volatile String path = "";
-    private static volatile float blurStrength = 0.35F;
+    private static volatile float blurStrength = 0.0F;
     private static volatile long revision = 1L;
 
     // ------------------------------------------------------------------
@@ -1033,7 +1033,7 @@ public final class MaverWallpaper {
                 // fall through
             }
         }
-        return 0.35F;
+        return 0.0F;
     }
 
     /** Properties 值需要转义反斜杠、冒号、等号与前导空格。 */

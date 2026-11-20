@@ -36,6 +36,7 @@ public class GL11 {
     public static final int GL_TEXTURE_WRAP_S = 0x2802;
     public static final int GL_TEXTURE_WRAP_T = 0x2803;
     public static final int GL_LINEAR = 0x2601;
+    public static final int GL_NEAREST = 0x2600;
     public static final int GL_CLAMP = 0x2900;
     public static final int GL_CLAMP_TO_EDGE = 0x812F;
     public static final int GL_VIEWPORT_BIT = 0x00000800;
@@ -61,6 +62,7 @@ public class GL11 {
     public static void glShadeModel(int mode) {}
     public static void glColorMask(boolean red, boolean green, boolean blue, boolean alpha) {}
     public static void glDepthMask(boolean flag) {}
+    public static void glClear(int mask) {}
     public static void glDepthFunc(int func) {}
     public static void glAlphaFunc(int func, float ref) {}
     public static void glPushAttrib(int mask) {}

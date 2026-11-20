@@ -47,6 +47,10 @@ public final class OpenMaverHud {
     // ------------------------------------------------------------------
 
     private static final int MARGIN = 12;
+    /** 原版主菜单风格的黄色标语，位于功能栏上方。 */
+    private static final String SPLASH_TEXT = "Maver!";
+    private static final float SPLASH_ANGLE = -20.0F;
+    private static final int SPLASH_GAP = 2;
     private static final int ROW_H = 20;
     private static final int ROW_GAP = 0;
     private static final int ROW_PAD_LEFT = 6;
@@ -279,14 +283,13 @@ public final class OpenMaverHud {
         }
 
         int screenW = resolution.getScaledWidth();
-        int screenH = resolution.getScaledHeight();
         // 功能栏紧贴右边缘，最右侧再压一条白色分隔线。
         int right = screenW;
-        int startY = MARGIN;
 
         if (LIST_ENTRIES.isEmpty()) {
-            return startY;
+            return MARGIN;
         }
+        int startY = renderModuleSplash(font, screenW, now);
 
         List<HudEntry> display = new ArrayList<HudEntry>(LIST_ENTRIES.values());
         Collections.sort(display, new Comparator<HudEntry>() {
@@ -311,9 +314,6 @@ public final class OpenMaverHud {
         }
 
         int totalHeight = count * ROW_H + (count - 1) * ROW_GAP;
-        if (startY + totalHeight > screenH - MARGIN) {
-            startY = Math.max(MARGIN, screenH - MARGIN - totalHeight);
-        }
 
         List<TextDraw> texts = new ArrayList<TextDraw>(count * 2);
 
@@ -402,6 +402,38 @@ public final class OpenMaverHud {
 
         drawTexts(font, texts);
         return startY + totalHeight;
+    }
+
+    /** 使用 MC 像素字体、黄色阴影字与原版一秒周期的缩放脉冲。 */
+    private static int renderModuleSplash(FontRenderer font, int screenW, long now) {
+        int textWidth = font.getStringWidth(SPLASH_TEXT);
+        float fit = Math.min(64.0F, Math.max(1, screenW - MARGIN * 2))
+                / (textWidth + 32.0F);
+        float maxScale = 1.8F * fit;
+        double angle = Math.toRadians(SPLASH_ANGLE);
+        float sin = (float) Math.abs(Math.sin(angle));
+        float cos = (float) Math.abs(Math.cos(angle));
+        // 按最大缩放计算旋转后的边界（含 1px 阴影），避免脉冲带动列表跳动或越界。
+        float halfWidth = ((textWidth + 1) * cos + 10.0F * sin) * maxScale / 2.0F;
+        float halfHeight = ((textWidth + 1) * sin + 10.0F * cos) * maxScale / 2.0F;
+        float centerX = screenW - MARGIN - halfWidth;
+        float centerY = halfHeight;
+        double phase = (now % 1_000_000_000L) / 1_000_000_000.0 * Math.PI * 2.0;
+        float scale = (1.8F - (float) Math.abs(Math.sin(phase)) * 0.1F) * fit;
+
+        GlColor.restore();
+        GL11.glPushMatrix();
+        try {
+            GL11.glTranslatef(centerX, centerY, 0.0F);
+            GL11.glRotatef(SPLASH_ANGLE, 0.0F, 0.0F, 1.0F);
+            GL11.glScalef(scale, scale, 1.0F);
+            font.drawStringWithShadow(SPLASH_TEXT, -(textWidth + 1) / 2.0F,
+                    -5.0F, 0xFFFFFF00);
+        } finally {
+            GL11.glPopMatrix();
+            GlColor.restore();
+        }
+        return (int) Math.ceil(centerY + halfHeight) + SPLASH_GAP;
     }
 
     private static float approach(float value, float target, float amount) {

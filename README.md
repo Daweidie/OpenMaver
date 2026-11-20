@@ -57,7 +57,8 @@ OpenMaver/
 │   ├── ChestFeature.java          # 箱子：存储方块 ESP + 开箱搬运/整理/存入
 │   ├── ChestPacketHook.java       # 入站 S2D/S30/S2E 窗口包记账（Netty 管线）
 │   ├── GuiOpenMaverClickGui.java  # 游戏内 ClickGUI（分类 / 搜索 / 展开设置）
-│   ├── GuiMaverMainMenu.java      # Badlion 风格主菜单（Logo / 按钮 / 账号 / 快捷菜单）
+│   ├── GuiMaverMainMenu.java      # MC 标题界面风格主菜单（灰色按钮 / 皮肤展示）
+│   ├── MenuSkinPreview.java       # 无需世界实体的完整皮肤模型展示
 │   ├── MaverWallpaper.java        # 主菜单壁纸（静态图片 / GIF / 内置动态背景）
 │   ├── MaverLogo.java             # 打包的 Maver Logo 纹理绘制
 │   ├── BundledResourcePack.java   # 首次启动安装自带的 2pimp v2 [16x] 材质包
@@ -271,12 +272,13 @@ java -Djava.library.path=build/lib \
   游戏内启用 / 禁用功能时也会弹出「xxx enabled / xxx disabled」。
   绘制在 `RenderGameOverlayEvent.Post`（`type == ALL`）里，ClickGUI 内由 GUI 自己绘制。
 - **Maver 主菜单** `mc/GuiMaverMainMenu.java`：替换原版标题界面（`GuiOpenEvent`），
-  使用原版全景图 + 高斯模糊背景，正上方六边形 Maver Logo、`Maver` 标题、
-  `A Open Src Cheat Client` 副标题、
-  Singleplayer / Multiplayer / Client Settings / Configs / Options / Quit Game 按钮，
-  右上角账号胶囊（从微软 / Mojang 官方皮肤服务获取的账号头像 + 用户名）与左上角快捷菜单。
-  Client Settings / Configs 会直接打开对应页面的 ClickGUI；快捷菜单里的 **Wallpaper**
-  会直接打开壁纸设置页。背景可以替换成静态图片、动态 GIF 或内置动态渐变，
+  使用明亮的全景图背景、Maver Logo 和黄色 `Maver!` 缩放标语。
+  中央为灰色方框 **Singleplayer / Multiplayer / Settings** 按钮，底部提供
+  **Client Settings / Wallpaper / Quit Game**；界面文字使用英文。
+  右侧只展示当前账号的完整皮肤和用户名，无商店、Realms 或更衣室入口。
+  皮肤从微软 / Mojang 官方服务异步获取，支持旧版 64×32 皮肤，失败时展示 Steve。
+  Client Settings 打开 ClickGUI，Wallpaper 直接打开壁纸设置页。
+  背景可以替换成静态图片、动态 GIF 或内置动态渐变，
   详见下面「主菜单壁纸」。
 - **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关。
   纯灰色面板 + 中性灰描边，全部强调色统一为白色；左侧 Combat / Movement / Render /
@@ -290,7 +292,7 @@ java -Djava.library.path=build/lib \
   Criticals、FastPlace、Target HUD 与 Player X-Ray 的设置直接绑定 `OpenMaverFeatures`，参数写入
   `config/openmaver.properties`（拖拽结束与关闭 GUI 时落盘）。
 - **主菜单壁纸** `mc/MaverWallpaper.java`：ClickGUI 的 **SYSTEM → Wallpaper**
-  （或主菜单左上角快捷菜单的 **Wallpaper**）可以切换开始菜单背景：
+  （或主菜单底部的 **Wallpaper**）可以切换开始菜单背景：
 
   | 模式 | 效果 |
   |---|---|

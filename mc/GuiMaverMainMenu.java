@@ -1,12 +1,12 @@
 import com.mojang.authlib.GameProfile;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiMultiplayer;
 import net.minecraft.client.gui.GuiOptions;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiSelectWorld;
+import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.client.renderer.texture.TextureManager;
@@ -16,7 +16,6 @@ import net.minecraft.util.Session;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 
-import org.lwjgl.input.Keyboard;
 import org.lwjgl.opengl.GL11;
 
 import java.awt.Graphics2D;
@@ -39,39 +38,11 @@ import java.util.UUID;
 import javax.imageio.ImageIO;
 
 /**
- * Maver 的主菜单（Forge 1.8.9 / {@link GuiScreen}）。
- *
- * <p>布局对应 Badlion 风格标题界面：正上方六边形 Logo、客户端名、副标题、
- * 主按钮与次级按钮、左上角快捷菜单、右上角账号胶囊、左下角版本号。
- * 背景沿用原版全景图，再叠加项目自己的毛玻璃模糊层。
- *
- * <p>所有控件都由 {@link Gui#drawRect} / 立即模式几何自绘，不依赖 GuiButton，
- * 因此字体、缩放和运行期注入环境都能保持一致。
- *
- * <p>注意：这些是 MCP 名，注入前会由 {@code tools/McpReobf} 改成 SRG 名。
+ * Minecraft 标题界面风格的 Maver 主菜单：中央灰色按钮、右侧皮肤展示。
+ * 自绘皮肤不依赖世界或玩家实体，因此尚未进入世界也能显示。
  */
 @SideOnly(Side.CLIENT)
 public final class GuiMaverMainMenu extends GuiScreen {
-
-    // ------------------------------------------------------------------
-    // 配色
-    // ------------------------------------------------------------------
-
-    private static final int TEXT = 0xFFFFFFFF;
-    private static final int TEXT_DIM = 0xFFC0C8D4;
-    private static final int TEXT_MUTED = 0xFF8793A5;
-
-    private static final int CYAN = 0xFF56B8E8;
-
-    private static final int GLASS = 0x6410161E;
-    private static final int GLASS_HOVER = 0x8A202B38;
-    private static final int EDGE_HOVER = 0xC8FFFFFF;
-    private static final int PANEL = 0xE20D1219;
-
-    // ------------------------------------------------------------------
-    // 资源与尺寸
-    // ------------------------------------------------------------------
-
     private static final ResourceLocation[] PANORAMA = {
         new ResourceLocation("textures/gui/title/background/panorama_0.png"),
         new ResourceLocation("textures/gui/title/background/panorama_1.png"),
@@ -80,157 +51,79 @@ public final class GuiMaverMainMenu extends GuiScreen {
         new ResourceLocation("textures/gui/title/background/panorama_4.png"),
         new ResourceLocation("textures/gui/title/background/panorama_5.png")
     };
-
-    private static final String TITLE = "Maver";
-    private static final String SUBTITLE = "A Open Src Cheat Client";
-
-    /**
-     * 每个全景面比单位立方体略大。原版是在 256×256 的 FBO 里画完再裁切缩放，
-     * 直接画到全屏时单位立方体覆盖不到 120° 视场的边缘，底部会出现一条硬缝。
-     */
     private static final float PANORAMA_SCALE = 1.8F;
-    private static final float AA_FEATHER = 1.0F;
-    private static final int AA_ARC_SEGMENTS = 24;
-    private static final int AA_POINT_COUNT = 4 * (AA_ARC_SEGMENTS + 1);
-    private static final float[] AA_INNER_X = new float[AA_POINT_COUNT];
-    private static final float[] AA_INNER_Y = new float[AA_POINT_COUNT];
-    private static final float[] AA_OUTER_X = new float[AA_POINT_COUNT];
-    private static final float[] AA_OUTER_Y = new float[AA_POINT_COUNT];
-
-    // ------------------------------------------------------------------
-    // 动作
-    // ------------------------------------------------------------------
-
-    private static final int ACTION_NONE = 0;
     private static final int ACTION_SINGLEPLAYER = 1;
     private static final int ACTION_MULTIPLAYER = 2;
     private static final int ACTION_CLIENT = 3;
-    private static final int ACTION_CONFIGS = 4;
-    private static final int ACTION_OPTIONS = 5;
-    private static final int ACTION_QUIT = 6;
-    private static final int ACTION_WALLPAPER = 7;
-
-    private static final int DROPDOWN_NONE = 0;
-    private static final int DROPDOWN_HAMBURGER = 1;
-    private static final int DROPDOWN_ACCOUNT = 2;
-
-    private static final int[] HAMBURGER_ACTIONS = {
-        ACTION_SINGLEPLAYER, ACTION_MULTIPLAYER, ACTION_CLIENT,
-        ACTION_WALLPAPER, ACTION_CONFIGS, ACTION_OPTIONS, ACTION_QUIT
-    };
-    private static final String[] HAMBURGER_LABELS = {
-        "Singleplayer", "Multiplayer", "Client Settings",
-        "Wallpaper", "Configs", "Options", "Quit Game"
-    };
-
-    private static final int[] ACCOUNT_ACTIONS = {
-        ACTION_CLIENT, ACTION_CONFIGS, ACTION_OPTIONS, ACTION_QUIT
-    };
-    private static final String[] ACCOUNT_LABELS = {
-        "Client Settings", "Configs", "Options", "Quit Game"
-    };
-
-    // ------------------------------------------------------------------
-    // 状态
-    // ------------------------------------------------------------------
+    private static final int ACTION_OPTIONS = 4;
+    private static final int ACTION_QUIT = 5;
+    private static final int ACTION_WALLPAPER = 6;
 
     private final List<MenuButton> buttons = new ArrayList<MenuButton>();
-    private int activeDropdown = DROPDOWN_NONE;
-    private int lastMouseX;
-    private int lastMouseY;
-    private long openedAt;
-    private long lastFrameAt;
-    private float reveal;
     private String username = "Player";
-    private UUID profileId = new UUID(0L, 0L);
     private boolean profileResolved;
     private boolean failed;
-
-    private int hamburgerX;
-    private int hamburgerY;
-    private int hamburgerW;
-    private int hamburgerH;
-    private float hamburgerHover;
-
-    private int accountX;
-    private int accountY;
-    private int accountW;
-    private int accountH;
-    private float accountHover;
-
-    /** 已从微软 / Mojang 官方皮肤服务取回的皮肤图；为空时退回默认皮肤。 */
+    private boolean previewFailed;
     private volatile BufferedImage skinImage;
-    /** 皮肤纹理只在渲染线程创建一次，避免每帧重复上传。 */
     private ResourceLocation skinTexture;
     private boolean skinFetchStarted;
-
-    /**
-     * 按用户名缓存皮肤图，避免每次重新打开主菜单都重新联网。
-     * 头像本身来自 textures.minecraft.net（微软 / Mojang 官方皮肤 CDN）。
-     */
     private static final Map<String, BufferedImage> SKIN_CACHE =
             new HashMap<String, BufferedImage>();
 
-    /** 一个标题界面按钮；几何由 {@link #layoutMenu()} 计算。 */
     private static final class MenuButton {
-        final int action;
         final String label;
-        final boolean primary;
-        int x;
-        int y;
-        int w;
-        int h;
-        float hover;
-        float press;
-        long lastAt;
+        final int action;
+        final int x, y, w, h;
 
-        MenuButton(String label, int action, boolean primary) {
+        MenuButton(String label, int action, int x, int y, int w, int h) {
             this.label = label;
             this.action = action;
-            this.primary = primary;
+            this.x = x;
+            this.y = y;
+            this.w = w;
+            this.h = h;
         }
     }
-
-    public GuiMaverMainMenu() {
-    }
-
-    // ==================================================================
-    // 生命周期
-    // ==================================================================
 
     @Override
     public void initGui() {
         super.initGui();
-        HudFont.useMenuFont();
-        this.buttonList.clear();
-        this.failed = false;
-        this.openedAt = System.currentTimeMillis();
-        this.lastFrameAt = this.openedAt;
-        this.reveal = 0.0F;
-        this.activeDropdown = DROPDOWN_NONE;
-        this.buttons.clear();
+        buttonList.clear();
+        failed = false;
+        previewFailed = false;
         resolveProfile();
         layoutMenu();
     }
 
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
-        HudFont.useMenuFont();
-        this.lastMouseX = mouseX;
-        this.lastMouseY = mouseY;
-        long now = System.currentTimeMillis();
-        float delta = Math.max(0.0F, Math.min(50.0F, now - lastFrameAt));
-        lastFrameAt = now;
-        reveal = approach(reveal, 1.0F, delta, 240.0F);
         try {
-            drawMenu(mouseX, mouseY, delta);
+            resetUiState();
+            drawBackground();
+            drawTitle();
+            if (!previewFailed) {
+                try {
+                    drawPlayerPreview();
+                } catch (Throwable t) {
+                    previewFailed = true;
+                    System.err.println("[OpenMaver] Skin preview unavailable: " + t);
+                } finally {
+                    resetUiState();
+                }
+            }
+            drawButtons(mouseX, mouseY);
+            drawFooter();
         } catch (Throwable t) {
             if (!failed) {
                 failed = true;
-                System.err.println("[OpenMaver] 主菜单绘制失败，已切换简易模式: " + t);
-                t.printStackTrace();
+                System.err.println("[OpenMaver] Main menu fallback: " + t);
             }
-            drawFallback(mouseX, mouseY);
+            resetUiState();
+            Gui.drawRect(0, 0, width, height, 0xFF343434);
+            drawPixelText("Maver", width / 2.0F, height * 0.18F, 2.0F * uiScale(),
+                    0xFFFFFFFF, true);
+            drawButtons(mouseX, mouseY);
+            drawFooter();
         }
     }
 
@@ -239,34 +132,8 @@ public final class GuiMaverMainMenu extends GuiScreen {
         if (mouseButton != 0) {
             return;
         }
-        this.lastMouseX = mouseX;
-        this.lastMouseY = mouseY;
-
-        if (activeDropdown != DROPDOWN_NONE) {
-            int action = dropdownActionAt(mouseX, mouseY);
-            if (action != ACTION_NONE) {
-                perform(action);
-                return;
-            }
-            if (insideDropdown(mouseX, mouseY)) {
-                return;
-            }
-            activeDropdown = DROPDOWN_NONE;
-            return;
-        }
-
-        if (inside(mouseX, mouseY, hamburgerX, hamburgerY, hamburgerW, hamburgerH)) {
-            activeDropdown = DROPDOWN_HAMBURGER;
-            return;
-        }
-        if (inside(mouseX, mouseY, accountX, accountY, accountW, accountH)) {
-            activeDropdown = DROPDOWN_ACCOUNT;
-            return;
-        }
-        for (int i = 0; i < buttons.size(); i++) {
-            MenuButton button = buttons.get(i);
-            if (inside(mouseX, mouseY, button.x, button.y, button.w, button.h)) {
-                button.press = 1.0F;
+        for (MenuButton button : buttons) {
+            if (inside(mouseX, mouseY, button)) {
                 perform(button.action);
                 return;
             }
@@ -275,20 +142,13 @@ public final class GuiMaverMainMenu extends GuiScreen {
 
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
-        // 原版 GuiMainMenu 同样吞掉按键；只在快捷菜单打开时响应 ESC。
-        if (keyCode == Keyboard.KEY_ESCAPE && activeDropdown != DROPDOWN_NONE) {
-            activeDropdown = DROPDOWN_NONE;
-        }
+        // 与原版标题界面一样，ESC 不会关闭菜单进入空白画面。
     }
 
     @Override
     public boolean doesGuiPauseGame() {
         return false;
     }
-
-    // ==================================================================
-    // 账户
-    // ==================================================================
 
     private void resolveProfile() {
         if (profileResolved) {
@@ -307,9 +167,6 @@ public final class GuiMaverMainMenu extends GuiScreen {
                         username = name;
                     }
                     profile = session.getProfile();
-                    if (profile != null && profile.getId() != null) {
-                        profileId = profile.getId();
-                    }
                     token = session.getToken();
                 }
             }
@@ -625,8 +482,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
     }
 
     /**
-     * 把官方皮肤图统一成 64×64 纹理。旧版 64×32 皮肤放在左上角保留原始 UV，
-     * 高清皮肤则缩放到 64×64，保证头部 UV 与 Minecraft 的标准布局一致。
+     * 把官方皮肤图统一成 64×64 纹理，并为旧版皮肤镜像补全左手 / 左腿。
      */
     private static BufferedImage normalizeSkin(BufferedImage source) {
         if (source == null || source.getWidth() <= 0 || source.getHeight() <= 0) {
@@ -637,11 +493,21 @@ public final class GuiMaverMainMenu extends GuiScreen {
         BufferedImage result = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = result.createGraphics();
         try {
-            if (height >= 64) {
-                graphics.drawImage(source, 0, 0, 64, 64, null);
-            } else {
-                int scaledHeight = Math.max(1, Math.round(64.0F * height / width));
-                graphics.drawImage(source, 0, 0, 64, Math.min(64, scaledHeight), null);
+            boolean legacy = width == height * 2;
+            graphics.drawImage(source, 0, 0, 64, legacy ? 32 : 64, null);
+            if (legacy) {
+                graphics.drawImage(result, 24, 48, 20, 52, 4, 16, 8, 20, null);
+                graphics.drawImage(result, 28, 48, 24, 52, 8, 16, 12, 20, null);
+                graphics.drawImage(result, 20, 52, 16, 64, 8, 20, 12, 32, null);
+                graphics.drawImage(result, 24, 52, 20, 64, 4, 20, 8, 32, null);
+                graphics.drawImage(result, 28, 52, 24, 64, 0, 20, 4, 32, null);
+                graphics.drawImage(result, 32, 52, 28, 64, 12, 20, 16, 32, null);
+                graphics.drawImage(result, 40, 48, 36, 52, 44, 16, 48, 20, null);
+                graphics.drawImage(result, 44, 48, 40, 52, 48, 16, 52, 20, null);
+                graphics.drawImage(result, 36, 52, 32, 64, 48, 20, 52, 32, null);
+                graphics.drawImage(result, 40, 52, 36, 64, 44, 20, 48, 32, null);
+                graphics.drawImage(result, 44, 52, 40, 64, 40, 20, 44, 32, null);
+                graphics.drawImage(result, 48, 52, 44, 64, 52, 20, 56, 32, null);
             }
         } finally {
             graphics.dispose();
@@ -649,92 +515,39 @@ public final class GuiMaverMainMenu extends GuiScreen {
         return result;
     }
 
-    // ==================================================================
-    // 布局
-    // ==================================================================
-
     private float uiScale() {
-        return Math.max(0.55F, Math.min(1.8F, height / 480.0F));
+        return Math.max(0.5F, Math.min(2.0F, Math.min(width / 600.0F, height / 270.0F)));
     }
 
     private void layoutMenu() {
         float ui = uiScale();
-        int center = width / 2;
-        int buttonW = Math.max(200, Math.min(Math.round(width * 0.32F),
-                Math.round(300.0F * ui)));
-        int buttonH = clampInt(Math.round(31.0F * ui), 18, 44);
-        int gap = clampInt(Math.round(6.0F * ui), 3, 10);
-        int startY = Math.round(height * 0.575F);
-        int blockH = 4 * buttonH + 3 * gap;
-        int lowestStart = height - Math.round(24.0F * ui) - blockH;
-        startY = Math.min(startY, Math.max(Math.round(height * 0.46F), lowestStart));
-
+        int buttonW = Math.round(190.0F * ui);
+        int buttonH = Math.round(36.0F * ui);
+        int gap = Math.max(2, Math.round(5.0F * ui));
+        int x = (width - buttonW) / 2;
+        int top = Math.round(height * 0.36F);
         buttons.clear();
-        buttons.add(button("Singleplayer", ACTION_SINGLEPLAYER, true,
-                center - buttonW / 2, startY, buttonW, buttonH));
-        buttons.add(button("Multiplayer", ACTION_MULTIPLAYER, true,
-                center - buttonW / 2, startY + buttonH + gap, buttonW, buttonH));
+        buttons.add(new MenuButton("Singleplayer", ACTION_SINGLEPLAYER,
+                x, top, buttonW, buttonH));
+        buttons.add(new MenuButton("Multiplayer", ACTION_MULTIPLAYER,
+                x, top + buttonH + gap, buttonW, buttonH));
+        buttons.add(new MenuButton("Settings", ACTION_OPTIONS,
+                x, top + 2 * (buttonH + gap), buttonW, buttonH));
 
-        int smallW = (buttonW - gap) / 2;
-        int leftX = center - buttonW / 2;
-        int rightX = leftX + smallW + gap;
-        int row1 = startY + 2 * (buttonH + gap);
-        int row2 = row1 + buttonH + gap;
-        buttons.add(button("Client Settings", ACTION_CLIENT, false,
-                leftX, row1, smallW, buttonH));
-        buttons.add(button("Configs", ACTION_CONFIGS, false,
-                rightX, row1, smallW, buttonH));
-        buttons.add(button("Options", ACTION_OPTIONS, false,
-                leftX, row2, smallW, buttonH));
-        buttons.add(button("Quit Game", ACTION_QUIT, false,
-                rightX, row2, smallW, buttonH));
-
-        hamburgerW = clampInt(Math.round(40.0F * ui), 28, 54);
-        hamburgerH = clampInt(Math.round(30.0F * ui), 22, 44);
-        hamburgerX = clampInt(Math.round(10.0F * ui), 5, 22);
-        hamburgerY = hamburgerX;
-
-        int nameWidth = textWidth(fontRendererObj, username, 1.15F * ui);
-        accountH = clampInt(Math.round(34.0F * ui), 24, 48);
-        accountW = Math.max(Math.round(126.0F * ui), nameWidth + Math.round(70.0F * ui));
-        accountX = width - Math.round(10.0F * ui) - accountW;
-        accountY = hamburgerY;
-
+        int pad = Math.max(4, Math.round(8.0F * ui));
+        int bottomY = height - Math.round(47.0F * ui);
+        int smallH = Math.round(28.0F * ui);
+        int clientW = Math.round(112.0F * ui);
+        int wallpaperW = Math.round(82.0F * ui);
+        int quitW = Math.round(82.0F * ui);
+        buttons.add(new MenuButton("Client Settings", ACTION_CLIENT,
+                pad, bottomY, clientW, smallH));
+        buttons.add(new MenuButton("Wallpaper", ACTION_WALLPAPER,
+                pad + clientW + gap, bottomY, wallpaperW, smallH));
+        buttons.add(new MenuButton("Quit Game", ACTION_QUIT,
+                width - pad - quitW, bottomY, quitW, smallH));
     }
 
-    private static MenuButton button(String label, int action, boolean primary,
-            int x, int y, int w, int h) {
-        MenuButton button = new MenuButton(label, action, primary);
-        button.x = x;
-        button.y = y;
-        button.w = w;
-        button.h = h;
-        return button;
-    }
-
-    // ==================================================================
-    // 绘制
-    // ==================================================================
-
-    private void drawMenu(int mouseX, int mouseY, float delta) {
-        resetUiState();
-        drawBackground();
-        drawLogo();
-        drawTitle();
-        drawButtons(mouseX, mouseY, delta);
-        drawVersion();
-        drawHamburgerButton(mouseX, mouseY, delta);
-        drawAccountChip(mouseX, mouseY, delta);
-        drawDropdowns(mouseX, mouseY);
-    }
-
-    /**
-     * 重置本帧依赖的固定管线状态。
-     *
-     * <p>从原版界面 / ClickGUI 返回后，GL 的 alpha test、flat shading、scissor
-     * 等状态可能仍是上一个界面的值。菜单的圆角与文字抗锯齿依赖逐顶点 alpha，
-     * 这些状态残留会让边缘变成硬像素（看起来就是锯齿），因此每帧显式恢复。
-     */
     private static void resetUiState() {
         GL11.glShadeModel(GL11.GL_SMOOTH);
         GL11.glDisable(GL11.GL_ALPHA_TEST);
@@ -745,6 +558,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
         GL11.glDisable(GL11.GL_POLYGON_SMOOTH);
         GL11.glDisable(GL11.GL_LINE_SMOOTH);
         GL11.glDisable(GL11.GL_COLOR_LOGIC_OP);
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         GL11.glColorMask(true, true, true, true);
@@ -753,48 +567,22 @@ public final class GuiMaverMainMenu extends GuiScreen {
     }
 
     private void drawBackground() {
-        boolean custom = false;
-        try {
-            // 自定义壁纸（静态图片 / GIF / 内置动态背景）直接铺满全屏；
-            // 没启用时继续走原版全景图 + 毛玻璃。
-            custom = MaverWallpaper.draw(mc, width, height);
-        } catch (Throwable ignored) {
-            custom = false;
+        boolean custom = MaverWallpaper.draw(mc, width, height);
+        if (!custom) {
+            drawPanorama();
         }
         float blur = MaverWallpaper.getBlurStrength();
-        if (!custom) {
+        if (blur > 0.01F) {
             try {
-                drawPanorama();
-                if (blur > 0.01F) {
-                    // 项目现有的毛玻璃实现：抓取刚画好的全景图做高斯模糊。
-                    // 原版在最终合成时会水平翻转全景图，这里通过 drawMirrored 保持一致。
-                    GuiBlur.beginFrame(width, height, 1);
-                    GuiBlur.drawMirrored(0, 0, width, height, 0.0F,
-                            0x0A0F16, 0.22F, 1.0F, blur);
-                }
+                ScaledResolution resolution = new ScaledResolution(mc);
+                GuiBlur.beginFrame(width, height, resolution.getScaleFactor());
+                GuiBlur.draw(0, 0, width, height, 0.0F, 0x000000, 0.0F, 1.0F, blur);
             } catch (Throwable ignored) {
-                // 模糊不可用时下面的深色渐变仍然保证界面可读。
-            }
-        } else if (blur > 0.01F) {
-            try {
-                // 自定义壁纸不镜像；模糊强度与底部的进度条保持一致。
-                GuiBlur.beginFrame(width, height, 1);
-                GuiBlur.draw(0, 0, width, height, 0.0F,
-                        0x0A0F16, 0.18F, 1.0F, blur);
-            } catch (Throwable ignored) {
-                // 模糊不可用时直接显示清晰的壁纸。
+                // 模糊不可用时仍保留全景图 / 壁纸。
             }
         }
-        if (custom) {
-            // 自定义壁纸保留更多画面细节，只压一层较轻的暗色蒙版。
-            drawVerticalGradient(0, 0, width, height, 0x55080B12, 0x94080B12);
-        } else {
-            drawVerticalGradient(0, 0, width, height, 0x66080B12, 0xA0080B12);
-        }
-        // 顶部和底部再压一层，让标题与按钮从背景里浮出来。
-        drawVerticalGradient(0, 0, width, Math.max(1, height / 4), 0x5003070C, 0x0003070C);
-        drawVerticalGradient(0, height - Math.max(1, height / 4), width,
-                Math.max(1, height / 4), 0x0003070C, 0x6003070C);
+        Gui.drawRect(0, 0, width, height, 0x18000000);
+        Gui.drawRect(0, height - Math.round(16.0F * uiScale()), width, height, 0x35000000);
     }
 
     private void drawPanorama() {
@@ -878,333 +666,182 @@ public final class GuiMaverMainMenu extends GuiScreen {
         }
     }
 
-    private void drawLogo() {
-        float ui = uiScale();
-        int cx = width / 2;
-        int cy = Math.round(height * 0.235F);
-        float radius = 64.0F * ui;
-
-        // 光晕：三圈逐渐放大的低透明度六边形。
-        fillHexagon(cx, cy, radius + 22.0F * ui, withAlpha(CYAN, 0x08));
-        fillHexagon(cx, cy, radius + 12.0F * ui, withAlpha(CYAN, 0x10));
-        fillHexagon(cx, cy, radius + 5.0F * ui, withAlpha(CYAN, 0x1C));
-
-        fillHexagonGradient(cx, cy, radius, 0xFF3C9CC8, 0xFF1B4E69);
-        // 上半部加一点高光。
-        drawHexagonRing(cx, cy, radius - 1.0F, Math.max(1.0F, radius * 0.22F),
-                withAlpha(0xFFFFFF, 0x10));
-        drawHexagonRing(cx, cy, radius, Math.max(1.0F, 1.5F * ui),
-                withAlpha(0xFFFFFF, 0x72));
-        drawHexagonRing(cx, cy, radius - 2.0F * ui, Math.max(1.0F, 1.0F * ui),
-                withAlpha(CYAN, 0x40));
-
-        MaverLogo.drawCentered(fontRendererObj, cx, cy,
-                Math.round(radius * 1.30F), Math.round(radius * 1.02F),
-                1.0F, TEXT);
-    }
-
     private void drawTitle() {
         float ui = uiScale();
-        int center = width / 2;
-        int titleY = Math.round(height * 0.39F);
-        int subtitleY = titleY + Math.round(42.0F * ui);
-        int titleColor = scaleAlpha(TEXT, reveal);
-        int subtitleColor = scaleAlpha(TEXT, reveal);
-        drawTrackedCentered(fontRendererObj, TITLE, center, titleY, titleColor,
-                2.5F * ui, 7.0F * ui, true, true);
-        drawTrackedCentered(fontRendererObj, SUBTITLE, center, subtitleY, subtitleColor,
-                1.35F * ui, 0.5F * ui, false, false);
-    }
-
-    private void drawButtons(int mouseX, int mouseY, float delta) {
-        for (int i = 0; i < buttons.size(); i++) {
-            MenuButton button = buttons.get(i);
-            boolean hovered = inside(mouseX, mouseY, button.x, button.y, button.w, button.h);
-            if (button.lastAt == 0L) {
-                button.lastAt = lastFrameAt;
-            }
-            long deltaMs = Math.max(0L, Math.min(50L, lastFrameAt - button.lastAt));
-            button.lastAt = lastFrameAt;
-            button.hover = approach(button.hover, hovered ? 1.0F : 0.0F,
-                    deltaMs, 120.0F);
-            button.press = approach(button.press, 0.0F, deltaMs, 150.0F);
-            drawButton(button);
-        }
-    }
-
-    private void drawButton(MenuButton button) {
-        float ui = uiScale();
-        float hover = button.hover;
-        float press = button.press;
-        int radius = Math.max(2, Math.round((button.primary ? 4.0F : 3.0F) * ui));
-        int fill = blendColor(button.primary ? GLASS : 0x4E0F141B,
-                GLASS_HOVER, hover);
-        if (press > 0.01F) {
-            fill = blendColor(fill, 0xA8FFFFFF, press * 0.12F);
-        }
-        int edge = blendColor(button.primary ? 0x58FFFFFF : 0x48FFFFFF,
-                EDGE_HOVER, hover);
-        int textColor = blendColor(button.primary ? TEXT : 0xFFF3F7FC,
-                0xFFFFFFFF, hover);
-        textColor = scaleAlpha(textColor, reveal);
-
-        roundRect(button.x, button.y + Math.round(2.0F * ui), button.w, button.h,
-                radius, 0x36000000);
-        roundRect(button.x, button.y, button.w, button.h, radius, edge);
-        roundRect(button.x + 1, button.y + 1, button.w - 2, button.h - 2,
-                Math.max(0, radius - 1), scaleAlpha(fill, reveal));
-
-        // 顶部一条很细的折射光，悬停时明显一些。
-        Gui.drawRect(button.x + radius, button.y + 1,
-                button.x + button.w - radius, button.y + 2,
-                withAlpha(0xFFFFFF, Math.round((0x14 + 0x28 * hover) * reveal)));
-
-        // 悬停时左右两侧各出现一小段高光竖线，和 ClickGUI 的卡片语言保持一致。
-        if (hover > 0.02F) {
-            int glow = Math.round(0x32 * hover * reveal);
-            Gui.drawRect(button.x + 1, button.y + button.h / 4,
-                    button.x + 2, button.y + button.h - button.h / 4,
-                    withAlpha(0xFFFFFF, glow));
-            Gui.drawRect(button.x + button.w - 2, button.y + button.h / 4,
-                    button.x + button.w - 1, button.y + button.h - button.h / 4,
-                    withAlpha(0xFFFFFF, glow));
-        }
-
-        float labelSize = 1.52F * ui;
-        float tracking = 0.35F * ui;
-        float maxLabelWidth = button.w - 16.0F * ui;
-        float labelWidth = trackedWidth(fontRendererObj, button.label,
-                labelSize, tracking, false);
-        if (labelWidth > maxLabelWidth && labelWidth > 0.0F) {
-            // Source Code Pro is monospace; long labels such as "Client Settings"
-            // would overflow the half-width buttons at large GUI scales.
-            labelSize *= maxLabelWidth / labelWidth;
-        }
-        int baseline = button.y + (button.h - Math.round(13.0F * ui)) / 2;
-        drawTrackedCentered(fontRendererObj, button.label,
-                button.x + button.w / 2, baseline, textColor,
-                labelSize, tracking, false, false);
-    }
-
-    private void drawVersion() {
-        float ui = uiScale();
-        int x = clampInt(Math.round(10.0F * ui), 6, 22);
-        int y = height - clampInt(Math.round(17.0F * ui), 14, 26);
-        String version = "Maver " + OpenMaver.VERSION;
-        drawTrackedLeft(fontRendererObj, version, x, y,
-                scaleAlpha(TEXT_MUTED, reveal), 0.98F * ui, 0.25F * ui, false);
-    }
-
-    private void drawHamburgerButton(int mouseX, int mouseY, float delta) {
-        boolean hovered = inside(mouseX, mouseY, hamburgerX, hamburgerY,
-                hamburgerW, hamburgerH);
-        hamburgerHover = approach(hamburgerHover, hovered ? 1.0F : 0.0F, delta, 120.0F);
-        float hover = hamburgerHover;
-        int radius = Math.max(2, Math.round(4.0F * uiScale()));
-        roundRect(hamburgerX, hamburgerY, hamburgerW, hamburgerH, radius,
-                blendColor(0x2EFFFFFF, 0xC8FFFFFF, hover));
-        roundRect(hamburgerX + 1, hamburgerY + 1, hamburgerW - 2, hamburgerH - 2,
-                Math.max(0, radius - 1),
-                scaleAlpha(blendColor(0x6610161E, 0x8A1E2936, hover), reveal));
-
-        int left = hamburgerX + Math.round(hamburgerW * 0.27F);
-        int right = hamburgerX + hamburgerW - Math.round(hamburgerW * 0.27F);
-        int centerY = hamburgerY + hamburgerH / 2;
-        int thickness = Math.max(1, Math.round(1.5F * uiScale()));
-        int color = withAlpha(0xFFFFFF, Math.round((0xC8 + 0x30 * hover) * reveal));
-        Gui.drawRect(left, centerY - Math.round(5.0F * uiScale()),
-                right, centerY - Math.round(5.0F * uiScale()) + thickness, color);
-        Gui.drawRect(left, centerY - thickness / 2,
-                right, centerY - thickness / 2 + thickness, color);
-        Gui.drawRect(left, centerY + Math.round(4.0F * uiScale()),
-                right, centerY + Math.round(4.0F * uiScale()) + thickness, color);
-    }
-
-    private void drawAccountChip(int mouseX, int mouseY, float delta) {
-        boolean hovered = inside(mouseX, mouseY, accountX, accountY, accountW, accountH);
-        accountHover = approach(accountHover, hovered ? 1.0F : 0.0F, delta, 120.0F);
-        float hover = accountHover;
-        float ui = uiScale();
-        int radius = Math.max(3, Math.round(5.0F * ui));
-        roundRect(accountX, accountY, accountW, accountH, radius,
-                blendColor(0x35FFFFFF, 0x9AFFFFFF, hover));
-        roundRect(accountX + 1, accountY + 1, accountW - 2, accountH - 2,
-                Math.max(0, radius - 1),
-                scaleAlpha(blendColor(0x7010161E, 0x9A1E2936, hover), reveal));
-        Gui.drawRect(accountX + radius, accountY + 1, accountX + accountW - radius,
-                accountY + 2, withAlpha(0xFFFFFF, Math.round((0x12 + 0x24 * hover) * reveal)));
-
-        int headSize = accountH - Math.round(10.0F * ui);
-        int headX = accountX + Math.round(5.0F * ui);
-        int headY = accountY + (accountH - headSize) / 2;
-        drawHead(headX, headY, headSize);
-        Gui.drawRect(headX - 1, headY - 1, headX + headSize + 1, headY,
-                withAlpha(0x000000, 0x60));
-        Gui.drawRect(headX - 1, headY + headSize, headX + headSize + 1,
-                headY + headSize + 1, withAlpha(0x000000, 0x60));
-        Gui.drawRect(headX - 1, headY, headX, headY + headSize,
-                withAlpha(0x000000, 0x60));
-        Gui.drawRect(headX + headSize, headY, headX + headSize + 1,
-                headY + headSize, withAlpha(0x000000, 0x60));
-
-        int nameX = headX + headSize + Math.round(8.0F * ui);
-        int nameY = accountY + (accountH - Math.round(11.0F * ui)) / 2;
-        drawTrackedLeft(fontRendererObj, username, nameX, nameY,
-                scaleAlpha(TEXT, reveal), 1.15F * ui, 0.2F * ui, false);
-
-        // 下拉箭头
-        int chevronX = accountX + accountW - Math.round(17.0F * ui);
-        int chevronY = accountY + accountH / 2 - Math.round(1.0F * ui);
-        int chevronColor = withAlpha(0xFFFFFF, Math.round((0xB0 + 0x30 * hover) * reveal));
-        drawLine(chevronX, chevronY, chevronX + Math.round(3.0F * ui),
-                chevronY + Math.round(3.0F * ui), chevronColor);
-        drawLine(chevronX + Math.round(3.0F * ui), chevronY + Math.round(3.0F * ui),
-                chevronX + Math.round(6.0F * ui), chevronY, chevronColor);
-    }
-
-    private void drawHead(int x, int y, int size) {
-        if (drawOfficialSkin(x, y, size)) {
-            return;
-        }
+        drawMinecraftWordmark();
+        double phase = (System.nanoTime() % 1_000_000_000L) / 1_000_000_000.0 * Math.PI * 2.0;
+        float pulse = 1.8F - (float) Math.abs(Math.sin(phase)) * 0.1F;
+        GL11.glPushMatrix();
         try {
-            Minecraft minecraft = Minecraft.getMinecraft();
-            ResourceLocation skin = DefaultPlayerSkin.getDefaultSkin(
-                    profileId != null ? profileId : new UUID(0L, 0L));
-            if (minecraft != null && minecraft.getTextureManager() != null && skin != null) {
-                GlStateManager.bindTexture(0);
-                minecraft.getTextureManager().bindTexture(skin);
-                Gui.drawModalRectWithCustomSizedTexture(x, y, 8, 8, size, size, 64, 64);
-                GlStateManager.bindTexture(0);
-                return;
-            }
-        } catch (Throwable ignored) {
-            // 纹理不可用时退回首字母方块。
+            GL11.glTranslatef(width / 2.0F + 66.0F * ui, height * 0.285F, 0.0F);
+            GL11.glRotatef(-20.0F, 0.0F, 0.0F, 1.0F);
+            drawPixelText("Maver!", 0, -4.0F * pulse * ui, pulse * ui, 0xFFFFFF00, true);
+        } finally {
+            GL11.glPopMatrix();
+            GlColor.restore();
         }
-        int hash = username == null ? 0 : username.hashCode();
-        int color = 0xFF000000 | ((hash & 0x3F) << 18)
-                | ((hash >> 6 & 0x3F) << 10) | (hash >> 12 & 0x3F);
-        Gui.drawRect(x, y, x + size, y + size, scaleAlpha(color, reveal));
-        String initial = username == null || username.length() == 0
-                ? "?" : username.substring(0, 1).toUpperCase(Locale.ROOT);
-        int textY = y + (size - Math.round(8.0F * uiScale())) / 2;
-        drawTrackedCentered(fontRendererObj, initial, x + size / 2, textY,
-                scaleAlpha(TEXT, reveal), uiScale(), 0.0F, true, false);
     }
 
-    /**
-     * 用刚从微软 / Mojang 官方服务下载的皮肤绘制头像（底层 + 帽子层）。
-     * 纹理必须在渲染线程创建并注册，因此在这里而不是下载线程里调用 {@link DynamicTexture}。
-     */
-    private boolean drawOfficialSkin(int x, int y, int size) {
-        BufferedImage image = skinImage;
-        if (image == null) {
-            return false;
-        }
+    /** Five-by-seven block lettering with the pale stone face and dark extrusion of the MC title. */
+    private void drawMinecraftWordmark() {
+        final String[] glyphs = {
+            // A proper M: the two outer stems stay vertical while the inner
+            // diagonals meet at the top, so it can never be read as N.
+            "10001/11011/10101/10101/10001/10001/10001", // M
+            "01110/10001/10001/11111/10001/10001/10001", // A
+            "10001/10001/10001/10001/10001/01010/00100", // V
+            "11111/10000/10000/11110/10000/10000/11111", // E
+            "11110/10001/10001/11110/10100/10010/10001"  // R
+        };
+        // Keep the brand mark present without letting it dominate the menu.
+        float scale = Math.min(width * 0.44F / 29.0F, height * 0.16F / 7.0F);
+        scale = Math.max(1.0F, scale);
+        float depth = Math.max(2.0F, scale * 0.18F);
+        float originX = width / 2.0F - 14.5F * scale;
+        float originY = height * 0.13F;
+
+        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
+                | GL11.GL_TEXTURE_BIT | GL11.GL_DEPTH_BUFFER_BIT);
         try {
-            Minecraft minecraft = Minecraft.getMinecraft();
-            if (minecraft == null) {
-                return false;
-            }
-            TextureManager textures = minecraft.getTextureManager();
-            if (textures == null) {
-                return false;
-            }
-            if (skinTexture == null) {
-                String textureName = username == null || username.length() == 0
-                        ? "player" : username.toLowerCase(Locale.ROOT);
-                ResourceLocation location = new ResourceLocation(
-                        "openmaver", "skin/" + textureName);
-                if (!textures.loadTexture(location, new DynamicTexture(image))) {
-                    return false;
-                }
-                skinTexture = location;
-            }
+            GL11.glDisable(GL11.GL_TEXTURE_2D);
+            GL11.glDisable(GL11.GL_DEPTH_TEST);
+            GL11.glDisable(GL11.GL_CULL_FACE);
             GL11.glEnable(GL11.GL_BLEND);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            GL11.glEnable(GL11.GL_TEXTURE_2D);
-            GL11.glDisable(GL11.GL_ALPHA_TEST);
-            GL11.glShadeModel(GL11.GL_SMOOTH);
+            GL11.glBegin(GL11.GL_QUADS);
+
+            // Offset layers build a chunky black outline and the title's extruded edge.
+            for (int layer = 4; layer >= 0; layer--) {
+                int color = layer == 0 ? 0xFF101010 : 0xFF181818;
+                float offset = depth + layer * Math.max(1.0F, scale * 0.06F);
+                drawWordPixels(glyphs, originX + offset, originY + offset,
+                        scale, color, false);
+            }
+            drawWordPixels(glyphs, originX, originY, scale, 0xFFE2E0DC, false);
+            // A sparse darker pixel pattern gives the light face a stone-cut look.
+            drawWordPixels(glyphs, originX, originY, scale, 0xFFAAA8A5, true);
+            GL11.glEnd();
+        } finally {
             GlColor.restore();
-            textures.bindTexture(skinTexture);
-            Gui.drawModalRectWithCustomSizedTexture(x, y, 8, 8, size, size, 64, 64);
-            textures.bindTexture(skinTexture);
-            Gui.drawModalRectWithCustomSizedTexture(x, y, 40, 8, size, size, 64, 64);
-            GL11.glDisable(GL11.GL_TEXTURE_2D);
-            GlStateManager.bindTexture(0);
-            return true;
-        } catch (Throwable ignored) {
-            GL11.glDisable(GL11.GL_TEXTURE_2D);
-            GlStateManager.bindTexture(0);
-            return false;
+            GL11.glPopAttrib();
+            GlColor.restore();
         }
     }
 
-    private void drawDropdowns(int mouseX, int mouseY) {
-        if (activeDropdown == DROPDOWN_NONE) {
+    private static void drawWordPixels(String[] glyphs, float x, float y,
+            float scale, int color, boolean texture) {
+        int cursor = 0;
+        for (int glyph = 0; glyph < glyphs.length; glyph++) {
+            String[] rows = glyphs[glyph].split("/");
+            for (int row = 0; row < rows.length; row++) {
+                for (int column = 0; column < rows[row].length(); column++) {
+                    if (rows[row].charAt(column) != '1'
+                            || (texture && (row + column + glyph) % 4 != 0)) {
+                        continue;
+                    }
+                    GL11.glColor4f((color >> 16 & 0xFF) / 255.0F,
+                            (color >> 8 & 0xFF) / 255.0F,
+                            (color & 0xFF) / 255.0F,
+                            (color >>> 24) / 255.0F);
+                    float left = x + (cursor + column) * scale;
+                    float top = y + row * scale;
+                    GL11.glVertex2f(left, top);
+                    GL11.glVertex2f(left, top + scale);
+                    GL11.glVertex2f(left + scale, top + scale);
+                    GL11.glVertex2f(left + scale, top);
+                }
+            }
+            cursor += 6;
+        }
+    }
+
+    private void drawButtons(int mouseX, int mouseY) {
+        for (MenuButton button : buttons) {
+            boolean hover = inside(mouseX, mouseY, button);
+            int x = button.x, y = button.y, w = button.w, h = button.h;
+            Gui.drawRect(x + 2, y + 3, x + w + 2, y + h + 3, 0x65000000);
+            Gui.drawRect(x, y, x + w, y + h, 0xFF171717);
+            Gui.drawRect(x + 1, y + 1, x + w - 1, y + h - 1,
+                    hover ? 0xFF218306 : 0xFFC6C6C6);
+            Gui.drawRect(x + 2, y + 2, x + w - 2, y + 3,
+                    hover ? 0xFF59BA39 : 0xFFF2F2F2);
+            Gui.drawRect(x + 2, y + 3, x + 3, y + h - 3,
+                    hover ? 0xFF59BA39 : 0xFFE8E8E8);
+            Gui.drawRect(x + 2, y + h - 3, x + w - 2, y + h - 1,
+                    hover ? 0xFF135000 : 0xFF656565);
+            Gui.drawRect(x + w - 3, y + 3, x + w - 1, y + h - 3,
+                    hover ? 0xFF135000 : 0xFF777777);
+            float size = 1.05F * uiScale();
+            size = Math.min(size, (w - 10.0F) / Math.max(1, fontRendererObj.getStringWidth(button.label)));
+            drawPixelText(button.label, x + w / 2.0F, y + (h - 8.0F * size) / 2.0F,
+                    size, hover ? 0xFFFFFFFF : 0xFF383838, false);
+        }
+    }
+
+    private void drawFooter() {
+        float size = uiScale();
+        float y = height - 12.0F * size;
+        drawPixelText("OPEN CLIENT  ·  Minecraft 1.8.9", 5.0F * size, y,
+                size, 0xFFFFFFFF, false, false);
+        String version = "Maver " + OpenMaver.VERSION;
+        drawPixelText(version, width - (5.0F + fontRendererObj.getStringWidth(version)) * size,
+                y, size, 0xFFFFFFFF, false, false);
+    }
+
+    private void drawPixelText(String text, float x, float y, float size, int color,
+            boolean shadow) {
+        drawPixelText(text, x, y, size, color, shadow, true);
+    }
+
+    private void drawPixelText(String text, float x, float y, float size, int color,
+            boolean shadow, boolean centered) {
+        GlColor.restore();
+        // Gui.drawRect closes blending after drawing each button. Restore it here
+        // so transparent glyph texels do not become solid black rectangles.
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        GL11.glPushMatrix();
+        try {
+            GL11.glTranslatef(x, y, 0.0F);
+            GL11.glScalef(size, size, 1.0F);
+            int textX = centered ? -fontRendererObj.getStringWidth(text) / 2 : 0;
+            if (shadow) {
+                fontRendererObj.drawStringWithShadow(text, textX, 0, color);
+            } else {
+                fontRendererObj.drawString(text, textX, 0, color);
+            }
+        } finally {
+            GL11.glPopMatrix();
+            GlColor.restore();
+        }
+    }
+
+    private void drawPlayerPreview() {
+        TextureManager textures = mc.getTextureManager();
+        if (textures == null) {
             return;
         }
-        int[] actions = activeDropdown == DROPDOWN_HAMBURGER
-                ? HAMBURGER_ACTIONS : ACCOUNT_ACTIONS;
-        String[] labels = activeDropdown == DROPDOWN_HAMBURGER
-                ? HAMBURGER_LABELS : ACCOUNT_LABELS;
+        BufferedImage image = skinImage;
+        if (skinTexture == null && image != null) {
+            ResourceLocation location = new ResourceLocation("openmaver", "skin/menu_player");
+            if (textures.loadTexture(location, new DynamicTexture(image))) {
+                skinTexture = location;
+            }
+        }
+        // 没取到官方皮肤时展示 Steve，联网失败不影响菜单使用。
+        ResourceLocation skin = skinTexture != null ? skinTexture
+                : DefaultPlayerSkin.getDefaultSkin(new UUID(0L, 0L));
         float ui = uiScale();
-        int rowH = clampInt(Math.round(27.0F * ui), 22, 38);
-        int pad = Math.round(5.0F * ui);
-        int width = activeDropdown == DROPDOWN_HAMBURGER
-                ? clampInt(Math.round(172.0F * ui), 136, 230) : accountW;
-        int x = activeDropdown == DROPDOWN_HAMBURGER ? hamburgerX : accountX;
-        int y = (activeDropdown == DROPDOWN_HAMBURGER
-                ? hamburgerY + hamburgerH : accountY + accountH) + pad;
-        int h = pad * 2 + rowH * actions.length;
-
-        roundRect(x, y + 2, width, h, 5, 0x40000000);
-        roundRect(x, y, width, h, 5, 0xD8FFFFFF);
-        roundRect(x + 1, y + 1, width - 2, h - 2, 4, PANEL);
-        Gui.drawRect(x + 6, y + 1, x + width - 6, y + 2,
-                withAlpha(0xFFFFFF, 0x30));
-
-        for (int i = 0; i < actions.length; i++) {
-            int rowY = y + pad + i * rowH;
-            boolean hovered = inside(mouseX, mouseY, x + 4, rowY, width - 8, rowH - 1);
-            if (hovered) {
-                roundRect(x + 4, rowY, width - 8, rowH - 1, 3,
-                        withAlpha(0xFFFFFF, 0x1A));
-                Gui.drawRect(x + 4, rowY + 5, x + 5, rowY + rowH - 6,
-                        withAlpha(0xFFFFFF, 0xA0));
-            }
-            int color = hovered ? TEXT : TEXT_DIM;
-            int textY = rowY + (rowH - Math.round(10.0F * ui)) / 2;
-            drawTrackedLeft(fontRendererObj, labels[i], x + Math.round(13.0F * ui),
-                    textY, color, 1.08F * ui, 0.2F * ui, false);
-        }
+        float centerX = width * 0.83F;
+        float feetY = height * 0.68F;
+        MenuSkinPreview.draw(textures, skin, centerX, feetY, 2.6F * ui);
+        float nameSize = Math.min(ui, 96.0F * ui
+                / Math.max(1, fontRendererObj.getStringWidth(username)));
+        drawPixelText(username, centerX, feetY + 10.0F * ui, nameSize, 0xFFFFFFFF, true);
     }
-
-    private void drawFallback(int mouseX, int mouseY) {
-        Gui.drawRect(0, 0, width, height, 0xFF0A0E14);
-        if (fontRendererObj != null) {
-            String title = TITLE;
-            fontRendererObj.drawStringWithShadow(title,
-                    width / 2 - fontRendererObj.getStringWidth(title) / 2, 30, 0xFFFFFFFF);
-            for (int i = 0; i < buttons.size(); i++) {
-                MenuButton button = buttons.get(i);
-                boolean hovered = inside(mouseX, mouseY, button.x, button.y,
-                        button.w, button.h);
-                Gui.drawRect(button.x, button.y, button.x + button.w,
-                        button.y + button.h, hovered ? 0xFF2D3948 : 0xFF1A222D);
-                fontRendererObj.drawStringWithShadow(button.label,
-                        button.x + (button.w - fontRendererObj.getStringWidth(button.label)) / 2,
-                        button.y + (button.h - 8) / 2, 0xFFFFFFFF);
-            }
-        }
-    }
-
-    // ==================================================================
-    // 交互
-    // ==================================================================
 
     private void perform(int action) {
-        activeDropdown = DROPDOWN_NONE;
-        // 开始 / 退出这类确认型按钮用原版按钮音；退出用低音，和开启类动作区分开。
         OpenMaverFeatures.playUiClick(action == ACTION_QUIT ? 0.85F : 1.0F);
         try {
             if (action == ACTION_SINGLEPLAYER) {
@@ -1215,16 +852,13 @@ public final class GuiMaverMainMenu extends GuiScreen {
                 openClientGui(null);
             } else if (action == ACTION_WALLPAPER) {
                 openClientGui("wallpaper");
-            } else if (action == ACTION_CONFIGS) {
-                openClientGui("configs");
             } else if (action == ACTION_OPTIONS) {
                 mc.displayGuiScreen(new GuiOptions(this, mc.gameSettings));
             } else if (action == ACTION_QUIT) {
                 mc.shutdown();
             }
         } catch (Throwable t) {
-            System.err.println("[OpenMaver] 主菜单动作失败: " + action + " -> " + t);
-            t.printStackTrace();
+            System.err.println("[OpenMaver] Main menu action failed: " + action + " -> " + t);
         }
     }
 
@@ -1234,417 +868,18 @@ public final class GuiMaverMainMenu extends GuiScreen {
                 OpenMaver.start();
             }
         } catch (Throwable t) {
-            System.err.println("[OpenMaver] 启动核心失败，仍尝试打开 ClickGUI: " + t);
+            System.err.println("[OpenMaver] Core startup failed: " + t);
         }
         mc.displayGuiScreen(new GuiOpenMaverClickGui(this, initialPage));
     }
 
-    private int dropdownActionAt(int mouseX, int mouseY) {
-        int[] actions = activeDropdown == DROPDOWN_HAMBURGER
-                ? HAMBURGER_ACTIONS : ACCOUNT_ACTIONS;
-        float ui = uiScale();
-        int rowH = clampInt(Math.round(27.0F * ui), 22, 38);
-        int pad = Math.round(5.0F * ui);
-        int width = activeDropdown == DROPDOWN_HAMBURGER
-                ? clampInt(Math.round(172.0F * ui), 136, 230) : accountW;
-        int x = activeDropdown == DROPDOWN_HAMBURGER ? hamburgerX : accountX;
-        int y = (activeDropdown == DROPDOWN_HAMBURGER
-                ? hamburgerY + hamburgerH : accountY + accountH) + pad;
-        for (int i = 0; i < actions.length; i++) {
-            if (inside(mouseX, mouseY, x + 4, y + pad + i * rowH, width - 8, rowH - 1)) {
-                return actions[i];
-            }
-        }
-        return ACTION_NONE;
-    }
-
-    private boolean insideDropdown(int mouseX, int mouseY) {
-        float ui = uiScale();
-        int rowH = clampInt(Math.round(27.0F * ui), 22, 38);
-        int pad = Math.round(5.0F * ui);
-        int width = activeDropdown == DROPDOWN_HAMBURGER
-                ? clampInt(Math.round(172.0F * ui), 136, 230) : accountW;
-        int x = activeDropdown == DROPDOWN_HAMBURGER ? hamburgerX : accountX;
-        int y = (activeDropdown == DROPDOWN_HAMBURGER
-                ? hamburgerY + hamburgerH : accountY + accountH) + pad;
-        int count = activeDropdown == DROPDOWN_HAMBURGER
-                ? HAMBURGER_ACTIONS.length : ACCOUNT_ACTIONS.length;
-        return inside(mouseX, mouseY, x, y, width, pad * 2 + rowH * count);
-    }
-
-    // ==================================================================
-    // 文本
-    // ==================================================================
-
-    private static int textWidth(FontRenderer font, String text, float size) {
-        if (text == null || text.length() == 0) {
-            return 0;
-        }
-        return Math.max(0, Math.round(HudFont.getStringWidth(font, text, size)));
-    }
-
-    private static void drawTrackedCentered(FontRenderer font, String text, int centerX,
-            int y, int color, float size, float tracking, boolean bold, boolean shadow) {
-        float width = trackedWidth(font, text, size, tracking, bold);
-        drawTrackedLeft(font, text, centerX - width / 2.0F, y, color, size,
-                tracking, bold, shadow);
-    }
-
-    private static void drawTrackedLeft(FontRenderer font, String text, float x, int y,
-            int color, float size, float tracking, boolean bold) {
-        drawTrackedLeft(font, text, x, y, color, size, tracking, bold, false);
-    }
-
-    private static void drawTrackedLeft(FontRenderer font, String text, float x, int y,
-            int color, float size, float tracking, boolean bold, boolean shadow) {
-        if (font == null || text == null || text.length() == 0 || (color >>> 24) == 0) {
-            return;
-        }
-        String prefix = bold ? "\u00a7l" : "";
-        float cursor = x;
-        for (int i = 0; i < text.length(); i++) {
-            String glyph = prefix + text.charAt(i);
-            int drawX = Math.round(cursor);
-            if (shadow) {
-                HudFont.drawStringWithShadow(font, glyph, drawX, y, color, size);
-            } else {
-                HudFont.drawString(font, glyph, drawX, y, color, size);
-            }
-            cursor += HudFont.getStringWidth(font, glyph, size) + tracking;
-        }
-    }
-
-    private static float trackedWidth(FontRenderer font, String text, float size,
-            float tracking, boolean bold) {
-        if (font == null || text == null || text.length() == 0) {
-            return 0.0F;
-        }
-        String prefix = bold ? "\u00a7l" : "";
-        float width = 0.0F;
-        for (int i = 0; i < text.length(); i++) {
-            width += HudFont.getStringWidth(font, prefix + text.charAt(i), size) + tracking;
-        }
-        return Math.max(0.0F, width - tracking);
-    }
-
-    // ==================================================================
-    // 基础几何
-    // ==================================================================
-
-    private static void roundRect(int x, int y, int w, int h, int radius, int color) {
-        if (w <= 0 || h <= 0 || (color >>> 24) == 0) {
-            return;
-        }
-        int r = Math.min(radius, Math.min(w / 2, h / 2));
-        if (r <= 1) {
-            Gui.drawRect(x, y, x + w, y + h, color);
-            return;
-        }
-        float maxRadius = Math.min(w / 2.0F, h / 2.0F);
-        float inner = Math.min(r, maxRadius);
-        float ox = x - AA_FEATHER;
-        float oy = y - AA_FEATHER;
-        float ow = w + AA_FEATHER * 2.0F;
-        float oh = h + AA_FEATHER * 2.0F;
-        float outer = Math.min(inner + AA_FEATHER, Math.min(ow / 2.0F, oh / 2.0F));
-
-        appendRoundedRect(AA_INNER_X, AA_INNER_Y, x, y, w, h, inner);
-        appendRoundedRect(AA_OUTER_X, AA_OUTER_Y, ox, oy, ow, oh, outer);
-
-        aaBegin();
-        GL11.glBegin(GL11.GL_TRIANGLE_FAN);
-        setVertexColor(color, 1.0F);
-        GL11.glVertex2f(x + w / 2.0F, y + h / 2.0F);
-        for (int i = 0; i < AA_POINT_COUNT; i++) {
-            setVertexColor(color, 1.0F);
-            GL11.glVertex2f(AA_INNER_X[i], AA_INNER_Y[i]);
-        }
-        GL11.glVertex2f(AA_INNER_X[0], AA_INNER_Y[0]);
-        GL11.glEnd();
-
-        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
-        for (int i = 0; i <= AA_POINT_COUNT; i++) {
-            int index = i == AA_POINT_COUNT ? 0 : i;
-            setVertexColor(color, 1.0F);
-            GL11.glVertex2f(AA_INNER_X[index], AA_INNER_Y[index]);
-            setVertexColor(color, 0.0F);
-            GL11.glVertex2f(AA_OUTER_X[index], AA_OUTER_Y[index]);
-        }
-        GL11.glEnd();
-        aaEnd();
-    }
-
-    private static void appendRoundedRect(float[] xs, float[] ys,
-            float x, float y, float w, float h, float radius) {
-        int index = 0;
-        index = appendCorner(xs, ys, index, x + radius, y + radius, radius, 180.0F);
-        index = appendCorner(xs, ys, index, x + w - radius, y + radius, radius, 270.0F);
-        index = appendCorner(xs, ys, index, x + w - radius, y + h - radius, radius, 0.0F);
-        appendCorner(xs, ys, index, x + radius, y + h - radius, radius, 90.0F);
-    }
-
-    private static int appendCorner(float[] xs, float[] ys, int index,
-            float cx, float cy, float radius, float startAngle) {
-        for (int i = 0; i <= AA_ARC_SEGMENTS; i++) {
-            double angle = Math.toRadians(startAngle + i * (90.0F / AA_ARC_SEGMENTS));
-            xs[index] = cx + (float) Math.cos(angle) * radius;
-            ys[index] = cy + (float) Math.sin(angle) * radius;
-            index++;
-        }
-        return index;
-    }
-
-    private static void drawLine(float x1, float y1, float x2, float y2, int color) {
-        if ((color >>> 24) == 0) {
-            return;
-        }
-        float dx = x2 - x1;
-        float dy = y2 - y1;
-        float length = (float) Math.sqrt(dx * dx + dy * dy);
-        if (length < 0.0001F) {
-            return;
-        }
-        float nx = -dy / length;
-        float ny = dx / length;
-        float half = 0.6F;
-        float feather = Math.max(0.75F, AA_FEATHER * 0.5F);
-        aaBegin();
-        // Crisp core.
-        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
-        for (int end = 0; end < 2; end++) {
-            float px = end == 0 ? x1 : x2;
-            float py = end == 0 ? y1 : y2;
-            setVertexColor(color, 1.0F);
-            GL11.glVertex2f(px + nx * half, py + ny * half);
-            setVertexColor(color, 1.0F);
-            GL11.glVertex2f(px - nx * half, py - ny * half);
-        }
-        GL11.glEnd();
-        // Feather both sides of the line instead of leaving hard pixel edges.
-        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
-        for (int end = 0; end < 2; end++) {
-            float px = end == 0 ? x1 : x2;
-            float py = end == 0 ? y1 : y2;
-            setVertexColor(color, 0.0F);
-            GL11.glVertex2f(px + nx * (half + feather), py + ny * (half + feather));
-            setVertexColor(color, 1.0F);
-            GL11.glVertex2f(px + nx * half, py + ny * half);
-        }
-        GL11.glEnd();
-        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
-        for (int end = 0; end < 2; end++) {
-            float px = end == 0 ? x1 : x2;
-            float py = end == 0 ? y1 : y2;
-            setVertexColor(color, 1.0F);
-            GL11.glVertex2f(px - nx * half, py - ny * half);
-            setVertexColor(color, 0.0F);
-            GL11.glVertex2f(px - nx * (half + feather), py - ny * (half + feather));
-        }
-        GL11.glEnd();
-        aaEnd();
-    }
-
-    private static void drawVerticalGradient(int x, int y, int w, int h,
-            int topColor, int bottomColor) {
-        if (w <= 0 || h <= 0) {
-            return;
-        }
-        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
-                | GL11.GL_TEXTURE_BIT);
-        GL11.glDisable(GL11.GL_TEXTURE_2D);
-        GL11.glDisable(GL11.GL_DEPTH_TEST);
-        GL11.glDisable(GL11.GL_ALPHA_TEST);
-        GL11.glDisable(GL11.GL_CULL_FACE);
-        GL11.glDisable(GL11.GL_SCISSOR_TEST);
-        GL11.glShadeModel(GL11.GL_SMOOTH);
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        GL11.glBegin(GL11.GL_QUADS);
-        setVertexColor(topColor, 1.0F);
-        GL11.glVertex2f(x, y);
-        GL11.glVertex2f(x + w, y);
-        setVertexColor(bottomColor, 1.0F);
-        GL11.glVertex2f(x + w, y + h);
-        GL11.glVertex2f(x, y + h);
-        GL11.glEnd();
-        GL11.glPopAttrib();
-        GlColor.restore();
-    }
-
-    private static void fillHexagon(float cx, float cy, float radius, int color) {
-        if (radius <= 0.0F || (color >>> 24) == 0) {
-            return;
-        }
-        float core = Math.max(0.0F, radius - AA_FEATHER * 0.5F);
-        float edge = radius + AA_FEATHER * 0.5F;
-        aaBegin();
-        GL11.glBegin(GL11.GL_TRIANGLE_FAN);
-        setVertexColor(color, 1.0F);
-        GL11.glVertex2f(cx, cy);
-        for (int i = 0; i <= 6; i++) {
-            double angle = Math.toRadians(-90.0D + i * 60.0D);
-            GL11.glVertex2f(cx + (float) Math.cos(angle) * core,
-                    cy + (float) Math.sin(angle) * core);
-        }
-        GL11.glEnd();
-        // Feather the polygon edge: opaque core fading to transparent at the outer radius.
-        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
-        for (int i = 0; i <= 6; i++) {
-            double angle = Math.toRadians(-90.0D + i * 60.0D);
-            float cos = (float) Math.cos(angle);
-            float sin = (float) Math.sin(angle);
-            setVertexColor(color, 1.0F);
-            GL11.glVertex2f(cx + cos * core, cy + sin * core);
-            setVertexColor(color, 0.0F);
-            GL11.glVertex2f(cx + cos * edge, cy + sin * edge);
-        }
-        GL11.glEnd();
-        aaEnd();
-    }
-
-    private static void fillHexagonGradient(float cx, float cy, float radius,
-            int topColor, int bottomColor) {
-        if (radius <= 0.0F) {
-            return;
-        }
-        float core = Math.max(0.0F, radius - AA_FEATHER * 0.5F);
-        float edge = radius + AA_FEATHER * 0.5F;
-        aaBegin();
-        GL11.glBegin(GL11.GL_TRIANGLE_FAN);
-        setVertexColor(blendColor(topColor, bottomColor, 0.5F), 1.0F);
-        GL11.glVertex2f(cx, cy);
-        for (int i = 0; i <= 6; i++) {
-            double angle = Math.toRadians(-90.0D + i * 60.0D);
-            float y = (float) Math.sin(angle);
-            int color = blendColor(topColor, bottomColor, (y + 1.0F) * 0.5F);
-            setVertexColor(color, 1.0F);
-            GL11.glVertex2f(cx + (float) Math.cos(angle) * core, cy + y * core);
-        }
-        GL11.glEnd();
-        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
-        for (int i = 0; i <= 6; i++) {
-            double angle = Math.toRadians(-90.0D + i * 60.0D);
-            float cos = (float) Math.cos(angle);
-            float sin = (float) Math.sin(angle);
-            int color = blendColor(topColor, bottomColor, (sin + 1.0F) * 0.5F);
-            setVertexColor(color, 1.0F);
-            GL11.glVertex2f(cx + cos * core, cy + sin * core);
-            setVertexColor(color, 0.0F);
-            GL11.glVertex2f(cx + cos * edge, cy + sin * edge);
-        }
-        GL11.glEnd();
-        aaEnd();
-    }
-
-    private static void drawHexagonRing(float cx, float cy, float radius,
-            float thickness, int color) {
-        if (radius <= 0.0F || thickness <= 0.0F || (color >>> 24) == 0) {
-            return;
-        }
-        float inner = Math.max(0.0F, radius - thickness);
-        float outerEdge = radius + AA_FEATHER * 0.5F;
-        float innerEdge = Math.max(0.0F, inner - AA_FEATHER * 0.5F);
-        aaBegin();
-        // Solid ring.
-        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
-        for (int i = 0; i <= 6; i++) {
-            double angle = Math.toRadians(-90.0D + i * 60.0D);
-            float cos = (float) Math.cos(angle);
-            float sin = (float) Math.sin(angle);
-            setVertexColor(color, 1.0F);
-            GL11.glVertex2f(cx + cos * radius, cy + sin * radius);
-            GL11.glVertex2f(cx + cos * inner, cy + sin * inner);
-        }
-        GL11.glEnd();
-        // Feather both edges of the ring.
-        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
-        for (int i = 0; i <= 6; i++) {
-            double angle = Math.toRadians(-90.0D + i * 60.0D);
-            float cos = (float) Math.cos(angle);
-            float sin = (float) Math.sin(angle);
-            setVertexColor(color, 1.0F);
-            GL11.glVertex2f(cx + cos * radius, cy + sin * radius);
-            setVertexColor(color, 0.0F);
-            GL11.glVertex2f(cx + cos * outerEdge, cy + sin * outerEdge);
-        }
-        GL11.glEnd();
-        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
-        for (int i = 0; i <= 6; i++) {
-            double angle = Math.toRadians(-90.0D + i * 60.0D);
-            float cos = (float) Math.cos(angle);
-            float sin = (float) Math.sin(angle);
-            setVertexColor(color, 1.0F);
-            GL11.glVertex2f(cx + cos * inner, cy + sin * inner);
-            setVertexColor(color, 0.0F);
-            GL11.glVertex2f(cx + cos * innerEdge, cy + sin * innerEdge);
-        }
-        GL11.glEnd();
-        aaEnd();
-    }
-
-    private static void aaBegin() {
-        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
-                | GL11.GL_TEXTURE_BIT);
-        GL11.glDisable(GL11.GL_TEXTURE_2D);
-        GL11.glDisable(GL11.GL_DEPTH_TEST);
-        GL11.glDisable(GL11.GL_CULL_FACE);
-        GL11.glDisable(GL11.GL_ALPHA_TEST);
-        GL11.glDisable(GL11.GL_SCISSOR_TEST);
-        GL11.glDisable(GL11.GL_POLYGON_SMOOTH);
-        GL11.glDisable(GL11.GL_LINE_SMOOTH);
-        GL11.glDisable(GL11.GL_COLOR_LOGIC_OP);
-        GL11.glShadeModel(GL11.GL_SMOOTH);
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-    }
-
-    private static void aaEnd() {
-        GL11.glPopAttrib();
-        GlColor.restore();
+    private static boolean inside(int mouseX, int mouseY, MenuButton button) {
+        return mouseX >= button.x && mouseX < button.x + button.w
+                && mouseY >= button.y && mouseY < button.y + button.h;
     }
 
     private static void setVertexColor(int argb, float alphaScale) {
-        float alpha = ((argb >>> 24) / 255.0F) * alphaScale;
-        GL11.glColor4f((argb >> 16 & 0xFF) / 255.0F,
-                (argb >> 8 & 0xFF) / 255.0F,
-                (argb & 0xFF) / 255.0F, alpha);
-    }
-
-    // ==================================================================
-    // 小工具
-    // ==================================================================
-
-    private static boolean inside(int mouseX, int mouseY, int x, int y, int w, int h) {
-        return mouseX >= x && mouseX < x + w && mouseY >= y && mouseY < y + h;
-    }
-
-    private static int withAlpha(int color, int alpha) {
-        return (alpha & 0xFF) << 24 | (color & 0xFFFFFF);
-    }
-
-    private static int scaleAlpha(int argb, float factor) {
-        int alpha = Math.round((argb >>> 24) * Math.max(0.0F, Math.min(1.0F, factor)));
-        return withAlpha(argb, alpha);
-    }
-
-    private static int blendColor(int from, int to, float amount) {
-        float t = Math.max(0.0F, Math.min(1.0F, amount));
-        int alpha = Math.round((from >>> 24) + ((to >>> 24) - (from >>> 24)) * t);
-        int red = Math.round((from >> 16 & 0xFF) + ((to >> 16 & 0xFF) - (from >> 16 & 0xFF)) * t);
-        int green = Math.round((from >> 8 & 0xFF) + ((to >> 8 & 0xFF) - (from >> 8 & 0xFF)) * t);
-        int blue = Math.round((from & 0xFF) + ((to & 0xFF) - (from & 0xFF)) * t);
-        return alpha << 24 | red << 16 | green << 8 | blue;
-    }
-
-    private static float approach(float value, float target, float deltaMs, float durationMs) {
-        if (deltaMs <= 0.0F || durationMs <= 0.0F) {
-            return value;
-        }
-        float amount = Math.min(1.0F, deltaMs / durationMs);
-        return value + (target - value) * amount;
-    }
-
-    private static int clampInt(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
+        GlColor.set((argb >> 16 & 0xFF) / 255.0F, (argb >> 8 & 0xFF) / 255.0F,
+                (argb & 0xFF) / 255.0F, (argb >>> 24) / 255.0F * alphaScale);
     }
 }
