@@ -20,7 +20,13 @@ Grim `combat/Reach` 对 1.8 客户端：
   3.0”。折算回真实命中箱约 **3.13 格**。
 - `Hitboxes` 在射线完全没命中 AABB 时由 Reach 触发。
 
-因此旧实现的 5.9 格上限必然被 flag/取消。安全实现应使用 **3.0 扩张箱度量**。
+因此旧实现的 5.9 格上限必然被 flag/取消。安全实现应使用 **0.1 扩张箱（1.8 原版
+hitbox margin）度量并把眼距压在 3.0 以下**：我方射线就是服务端已收到的 rotation，
+Grim 只会取当前/上一 tick look 的最小值，所以 ≤3.0 即必然不超线。当前实现
+`balanced=2.97 / aggressive=2.99`（换算真实命中箱约 3.07~3.09 格）。
+
+> Round 2 修正：`aggressive=3.30` 实测在 3.12~3.17 的命中就是“真实 3.02~3.07 格”，
+> 一旦 `PacketOrderB` 不再取消攻击，`Reach` 会立刻接手 flag。
 
 ### 1.2 Aim
 
@@ -39,7 +45,12 @@ Grim `combat/Reach` 对 1.8 客户端：
 
 ### 1.3 PacketOrder / MultiActions / Sprint / NoSlow
 
-- `PacketOrderB`：1.8 必须 `ANIMATION -> INTERACT_ENTITY`。
+- `PacketOrderB`：1.8 必须 `ANIMATION -> INTERACT_ENTITY`。**关键细节**：Grim 在每条
+  tick 包（C03/C04/C05/C06）到达时把 `sentAnimation` 清空，所以 C02 前面必须有一条
+  **同一 tick、且在该 tick 包之后**的 C0A。挥击动画有 6 tick，`isSwingInProgress`
+  在高 CPS 下恒为 true，不能用它判断“动画已经发过”；1.8.9 的
+  `EntityPlayerSP.swingItem()` 无条件发 `C0APacketAnimation`，每次补刀都应调用。
+  另外攻击必须早于本 tick 的 C03，否则 `Post` 会把 C02 当成“移动包之后的攻击”。
 - `PacketOrderC/I/N`：交互/攻击/使用/放置/挖掘同 tick 顺序敏感。
 - `MultiActionsA/E`：使用物品时攻击/挥击会 flag。
 - `MultiActionsC/D`：移动中开/关背包会 flag。
@@ -87,7 +98,7 @@ debug.enabled=false
 
 | 项目 | legit | balanced（默认） | aggressive |
 |---|---|---|---|
-| Reach 扩张箱上限 | 3.00 | 3.00 | 3.30 |
+| Reach 扩张箱上限 | 2.97 | 2.97 | 2.99 |
 | Aim yaw/pitch 单 tick 上限 | 18°/12° | 35°/20° | 配置值/≥60° |
 | AutoClicker 上限 | 8 CPS | 12 CPS | 20 CPS |
 | 最小点击间隔 | 115ms | 75ms | 45ms |

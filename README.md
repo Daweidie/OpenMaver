@@ -940,23 +940,52 @@ IO 失败只记录一次并自动停用 debug。
   `PlayerControllerMP.attackEntity` 发送 `C02PacketUseEntity`；
   未命中几率时，本次挥击完全使用原版距离。
 - 设置项（ClickGUI 中展开 Reach）：
-  - `EXTRA`：`reach.extra`，0.0~0.5 格，默认 `0.0`。它是“在 3.0 基础上的额外量”，
-    但会被 profile 硬上限截断；`legit/balanced` 下最终都是 3.00。
+  - `DISTANCE`：`reach.distance`，0.00~3.00 米，默认 `3.00`。**这就是攻击距离本身**，
+    不再有“3.0 + EXTRA”这一层；数值会被 profile 上限再压一次（`balanced` 2.97 /
+    `aggressive` 2.99）。调到 0 等于关闭补刀距离。旧配置的 `reach.extra` 会自动
+    迁移成 `3.0 + extra`（并按 3.0 截断）。
   - `CHANCE`：`reach.chance`，1~100 %，默认 `100`。
-- 距离上限（Grim 扩张箱度量）：
-  - `legit/balanced`：**3.00**。Grim `Reach` 对 1.8 客户端使用
-    `maxReach=3.0`，并把目标 AABB 扩张 `0.0005 + 0.1 [+ 0.03]`；因此
-    眼睛到扩张箱 ≤ 3.0 时不会 flag，折算回真实命中箱约 3.13 格。
-  - `aggressive`：最高 3.30，会主动越过 Grim 阈值，仅用于记录 flag 差异。
+  - `DEBUG CHAT`：`reach.debug`，默认 `false`。开启后每次挥击的决策链直接写聊天框：
+    - `SWING p=0 chance=100% dist=3.00 cap=2.97 BALANCED`：识别到一次新挥击，
+      带本次的 CHANCE / DISTANCE / 实际上限 / profile；
+    - `SKIP chance 42% >= 55%`：概率未命中，本次保持原版距离；
+    - `SKIP vanilla-hit ENTITY`：原版射线已命中实体/方块，Reach 不补刀；
+    - `SKIP hurt Steve`：目标还在受击无敌帧，服务端会丢弃这次 C02；
+    - `SKIP attack slot used`：本 tick 已经有 Aura / AutoClicker 的实体攻击，让位；
+    - `SKIP no target scan=37 cap=2.97`：扫描完实体表没有满足距离/可见性的目标；
+    - `HIT Steve dist=2.87/2.97 border=0.10 yaw=12.5 pitch=-4.2 anim=c0a swing=1`：
+      真正发给服务端的 C02，`dist` 是眼睛到扩张箱的射线距离；每次补刀都先发
+      `C0A`（`anim=c0a`），`swing=1` 表示原版挥击动画本来就在进行；
+    - `1s swing=4 hit=3 skip=1`：每秒一行汇总。
+    聊天框每秒最多 10 行（`HIT` 与关键跳过不受限），全部事件仍写入
+    `logs/openmaver.log`（`util.Logger.debug`，模块名 `Reach`）。
+    回归测试：`bash tools/reach-test/run.sh`（29 项：行格式、限流、聊天历史、
+    包序结构、ClickGUI 结构、配置持久化与热重载）。
+- 距离上限（`0.1` 扩张箱度量，与 1.8 原版 hitbox 语义一致）：
+  - `legit/balanced`：**2.97**，`aggressive`：**2.99**。Grim `Reach` 对 1.8 客户端
+    使用 `maxReach=3.0`，把目标 AABB 扩张 `0.0005 + 0.1 [+ 0.03]`，并取
+    “当前 look / 上一 tick look”两条射线的最小值；我方射线就是服务端已收到的
+    rotation，所以只要这里的眼距 ≤ 3.0，Grim 测出来必然 ≤ 3.0。
+    折算回真实命中箱约 3.07~3.09 格（旧版 3.30 上限实际是 3.20 格，必吃 `Reach`）。
   - `bypass.enabled=false`：保留旧的 5.9 上限，仅作历史对比。
-- 实现说明（已核对实际 1.8.9 字节码与 Grim 2.0）：
+- 实现说明（已核对实际 1.8.9 字节码与 Grim 2.0 `combat/Reach`、`packetorder/PacketOrderB`、`misc/Post`）：
   - `EntityRenderer.getMouseOver` 在生存模式会把 `getBlockReachDistance()`（4.5）
     用作射线长度，但只要实体距离超过 3 格就会丢弃目标；这是原版实体瞄准的硬限制。
   - `PlayerControllerMP.getBlockReachDistance()` 在 1.8.9 是根据 GameType
     **动态返回** 4.5 / 5.0 的方法，并不存在可反射修改的 `blockReachDistance` 字段。
-  - Reach 使用精确 eye position + 目标 AABB + `canEntityBeSeen`，只在真实挥击时
-    触发；若检测不到 animation，会先补 `swingItem()`，保证 1.8 的
-    `PacketOrderB`（ANIMATION → INTERACT_ENTITY）顺序。
+  - **包序**：Grim 1.8 的 `PacketOrderB` 在每条 tick 包（C03/C04/C05/C06）到达时
+    清空 `sentAnimation`，因此 `C02` 前面必须有一条**同一 tick、且在 tick 包之后**
+    的 `C0A`，否则报 `pre-attack` 并取消这条攻击。挥击动画有 6 tick，
+    `isSwingInProgress` 在高 CPS 下恒为 true，旧实现“已经在挥就不补动画”正是
+    `failed PacketOrderB (pre-attack)` 的来源。现在每次补刀都会调用
+    `EntityPlayerSP.swingItem()`（该方法无条件发 `C0A`），顺序固定为
+    `C0A -> C02 -> 本 tick C03`。
+  - **阶段**：Reach 从 tick END 移到 `ClientTickEvent.START`（vanilla 发出 C03 之前）。
+    既满足 `PacketOrderB`，也避开 Grim `Post`（移动包之后再发攻击/交互会被判
+    `failed Post`）；同时射线使用的 rotation 就是服务端已经收到的那一帧，
+    不会因为本 tick 的 Aim 改写而与服务端视角不一致（否则会变成 `Hitboxes`）。
+  - 每个 tick 共享一个实体攻击名额：Aura / AutoClicker / Velocity 已经攻击时
+    Reach 直接让位，避免同 tick 两条 `C02`。
   - 使用物品或本 tick 已有右键动作时不做自定义攻击，避免 `MultiActionsA/F`。
   - 方块交互距离保持原版（生存 4.5 格），**本模块只扩展实体攻击/挥击距离**。
 
@@ -1083,8 +1112,9 @@ IO 失败只记录一次并自动停用 debug。
   20 TPS 下 14~17 CPS 的间隔是 59~71ms，旧实现会把每次点击推到下一个 tick，
   实际只剩 6~9 CPS；现在会保留 tick 余量，1 秒窗口内可达到设置的 CPS。
 - AutoClicker 不再被 `legit/balanced` 的 8/12 CPS 上限静默截断，使用 ClickGUI 中
-  设置的 `CPS MIN ~ CPS MAX`（上限 20）。`HUMANIZE` 的 2% 长停顿仍可能让个别
-  1 秒窗口略低于设置值，需要稳定数值时关闭 `HUMANIZE`。
+  的 `CPS` **双滑块区间**（左柄 = MIN，右柄 = MAX，1~20；右上角按
+  `MIN ↔ MAX` 显示，和区间的两个三角手柄一一对应）。`HUMANIZE` 的 2% 长停顿
+  仍可能让个别 1 秒窗口略低于设置值，需要稳定数值时关闭 `HUMANIZE`。
 - 同一 tick 左右键互斥；使用物品时完全停止；仅 `legit` 档连续 MISS 空挥超过
   6 次会暂停 250~500ms。打开 GUI/背包/聊天或死亡时重置计时器，不补发点击。
 

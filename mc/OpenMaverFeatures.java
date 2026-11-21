@@ -19,6 +19,7 @@ import org.lwjgl.opengl.GL11;
 
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
@@ -60,15 +61,22 @@ public final class OpenMaverFeatures {
     private static boolean tickStartFailed;
 
     /**
-     * Grim 对 1.8 客户端的 Reach 语义：目标 AABB 先扩张
-     * {@code Reach.threshold(0.0005) + 1.8 hitbox(0.1) + movementThreshold(0.03)}，
-     * 然后要求眼睛到扩张后 AABB 的距离不超过 3.0。
+     * Grim 对 1.8 客户端的 Reach 语义（2.0 分支 {@code combat/Reach.java}）：
+     * 目标 AABB 先扩张 {@code Reach.threshold(0.0005) + 1.8 hitbox(0.1)}，
+     * 有位置移动包时再加 {@code movementThreshold(0.03)}，然后要求
+     * {@code minDistance <= ENTITY_INTERACTION_RANGE(3.0)}；
+     * {@code minDistance} 取「当前 look」与「上一 tick look」两条射线的较小值。
+     *
+     * <p>我方射线只用 0.1（1.8 原版 hitbox margin）扩张箱，且方向就是服务端
+     * 已收到的 rotation，因此<b>只要我方测得的距离 ≤ 3.0，Grim 的 minDistance
+     * 必然 ≤ 3.0</b>；多出来的 0.03 只可能让 Grim 更宽松。所以这里把上限压在
+     * 3.0 以下，留 0.01~0.03 给服务端目标位置延迟。
      */
-    private static final double REACH_GRIM_BOX_MARGIN = 0.1305D;
+    private static final double REACH_GRIM_BOX_MARGIN = 0.1D;
     private static final double REACH_VANILLA_BOX_MARGIN = 0.1D;
-    /** profile 允许的 Grim 扩张箱距离上限；aggressive 仅用于对比。 */
-    private static final double REACH_SAFE_CAP = 3.0D;
-    private static final double REACH_AGGRESSIVE_CAP = 3.30D;
+    /** profile 允许的扩张箱距离上限（Grim 的 maxReach 是 3.0）。 */
+    private static final double REACH_SAFE_CAP = 2.97D;
+    private static final double REACH_AGGRESSIVE_CAP = 2.99D;
 
     // Aim Assist（数值范围与 GUI 滑块一致）
     private static float aimSpeed = 0.35F;
@@ -251,8 +259,11 @@ public final class OpenMaverFeatures {
     private static final Random AUTOCLICKER_RANDOM = new Random();
 
     // Reach（攻击距离）
-    private static float reachExtra = 0.0F;
+    /** Reach 的实际攻击距离（0 ~ 3.0 米）；profile 上限在运行期再截断。 */
+    private static float reachDistance = 3.0F;
     private static float reachChance = 100.0F;
+    /** ClickGUI 的 CHAT DEBUG：把 Reach 的每次挥击/跳过/命中写进聊天框。 */
+    private static boolean reachDebugChat;
     /** 上一次 tick 是否处于挥击动画中，用于识别“新的一次挥击”。 */
     private static boolean reachWasSwinging;
     private static int reachLastSwingProgress = Integer.MIN_VALUE;
@@ -449,6 +460,7 @@ public final class OpenMaverFeatures {
             processPendingCriticalJump(mc);
             updateAutoClicker(mc);
             suppressVanillaDuplicateAttack(mc);
+            updateReach(mc);
             return;
         }
         try {
@@ -470,6 +482,11 @@ public final class OpenMaverFeatures {
             updateKillAura(mc);
             updateAutoClicker(mc);
             suppressVanillaDuplicateAttack(mc);
+            // Reach 必须和 AutoClicker 一样在 vanilla C03 之前发包：
+            // Grim 1.8 的 PacketOrderB 只认「上一条 tick 包之后」的 C0A，
+            // 且 Post 会拒绝出现在移动包之后的 C02。放在这里还能保证射线用的
+            // rotation 就是服务端已经收到的那一帧（updateAimTarget 尚未改写）。
+            updateReach(mc);
             boolean screenOpen = read(mc, "currentScreen", "field_71462_r", null) != null;
             if (screenOpen) {
                 clearAimLock();
@@ -509,11 +526,11 @@ public final class OpenMaverFeatures {
         GodBridgeFeature.onTickEnd(mc);
         updateFakePlayers(mc);
         updateFullBright(mc);
-        // AutoSprint / Aim / AutoClicker 已在 onTickStart 处理。
+        // AutoSprint / Aim / AutoClicker / Reach 已在 onTickStart 处理。
         updateFastPlace(mc);
         // Scaffold 已在 onTickStart 中完成放置。
-        // Reach 放在最后：AutoClicker 可能在本 tick 内产生新的挥击，需要立即识别。
-        updateReach(mc);
+        // Reach 的调试行在本 tick 入队（START 阶段已产生），这里回到主线程写聊天框。
+        ReachDebug.flush(mc);
         OpenMaverDebug.tickSummary();
     }
 
@@ -1157,9 +1174,17 @@ public final class OpenMaverFeatures {
             return;
         }
 
-        if (reachChance < 100.0F
-                && REACH_RANDOM.nextFloat() * 100.0F >= reachChance) {
-            return; // 本次挥击未命中几率：保持原版距离
+        ReachDebug.swing(swingProgress, getEffectiveReachDistance(),
+                bypassEnabled ? profileName() : "OFF");
+
+        if (reachChance < 100.0F) {
+            float roll = REACH_RANDOM.nextFloat() * 100.0F;
+            if (roll >= reachChance) {
+                // 本次挥击未命中几率：保持原版距离
+                ReachDebug.skip("chance " + Math.round(roll) + "% >= "
+                        + Math.round(reachChance) + "%");
+                return;
+            }
         }
         attackNearestEntityInReach(mc, player, world);
     }
@@ -1168,39 +1193,59 @@ public final class OpenMaverFeatures {
      * 在 profile 允许的距离内寻找最近的可见生物并攻击一次。
      *
      * <p>距离按 Grim 的 1.8 Reach 语义计算：把目标 AABB 按
-     * {@link #REACH_GRIM_BOX_MARGIN} 扩张后，眼睛到扩张箱的距离不得超过
-     * {@link #REACH_SAFE_CAP}(3.0)。折算回真实命中箱约 3.13 格。
+     * {@link #REACH_GRIM_BOX_MARGIN}（1.8 原版 hitbox margin）扩张后，
+     * 眼睛到扩张箱的距离不得超过 {@link #REACH_SAFE_CAP}，这个值已经压在
+     * Grim 的 {@code maxReach=3.0} 以下，折算回真实命中箱约 3.07~3.09 格。
      */
     private static void attackNearestEntityInReach(Minecraft mc, Object player, Object world) {
+        // 本 tick 已经有实体攻击（Aura / AutoClicker / Velocity）时不再补刀：
+        // 同 tick 两条 C02 会额外触发 PacketOrder/MultiActions 一类的顺序检查。
+        if (entityAttackUsedThisTick) {
+            ReachDebug.skip("attack slot used");
+            return;
+        }
+        // 同 tick 已经放过方块时不再做实体交互：Grim 的 MultiActionsF 按
+        // 「C08 + INTERACT_ENTITY 同 tick」判定（Scaffold 在 START 更早执行）。
+        if (placementsThisTick > 0) {
+            ReachDebug.skip("place this tick");
+            return;
+        }
         Object hit = read(mc, "objectMouseOver", "field_71476_x", null);
         Object hitType = hit == null ? null : read(hit, "typeOfHit", "field_72313_a", null);
         // 原版已经命中实体或方块时不再补刀：避免同一次挥击打两次，也避免隔墙攻击。
         if (hitType != null && !"MISS".equals(String.valueOf(hitType))) {
+            ReachDebug.skip("vanilla-hit " + hitType);
             return;
         }
 
         boolean safe = safeProfile();
         double maxDistance;
         double borderValue;
+        // DISTANCE 直接就是攻击距离本身（0 ~ 3.0 米），不再有“3.0 + extra”这一层；
+        // profile 只负责最后再压一次上限。
+        double configured = Math.max(0.0D, Math.min(REACH_BASE_DISTANCE, reachDistance));
         if (!bypassEnabled) {
-            // 关闭 bypass：保留旧的对比行为。
-            if (reachExtra <= 0.0F) {
+            // 关闭 bypass：保留旧的对比行为（允许配置值直接生效）。
+            if (configured <= 0.0D) {
+                ReachDebug.skip("distance=0 (bypass off)");
                 return;
             }
-            maxDistance = Math.min(REACH_MAX_DISTANCE, REACH_BASE_DISTANCE + reachExtra);
+            maxDistance = Math.min(REACH_MAX_DISTANCE, configured);
             borderValue = REACH_VANILLA_BOX_MARGIN;
         } else if (bypassProfile == PROFILE_AGGRESSIVE) {
-            maxDistance = Math.min(REACH_AGGRESSIVE_CAP, REACH_BASE_DISTANCE + reachExtra);
+            maxDistance = Math.min(REACH_AGGRESSIVE_CAP, configured);
             borderValue = REACH_VANILLA_BOX_MARGIN;
         } else {
-            maxDistance = Math.min(REACH_SAFE_CAP, REACH_BASE_DISTANCE + reachExtra);
+            maxDistance = Math.min(REACH_SAFE_CAP, configured);
             borderValue = REACH_GRIM_BOX_MARGIN;
         }
         if (maxDistance <= 0.0D) {
+            ReachDebug.skip("cap<=0");
             return;
         }
         List<?> entities = (List<?>) read(world, "loadedEntityList", "field_72996_f", List.class);
         if (entities == null) {
+            ReachDebug.skip("no entity list");
             return;
         }
 
@@ -1268,49 +1313,66 @@ public final class OpenMaverFeatures {
             bestTarget = living;
         }
         if (bestTarget == null) {
+            ReachDebug.skip("no target scan=" + entities.size()
+                    + " cap=" + f2(maxDistance));
             return;
         }
+        Object nameObject = call(bestTarget, "getName", "func_70005_c_", null);
+        String targetName = nameObject == null
+                ? String.valueOf(bestTarget) : String.valueOf(nameObject);
 
         // 目标还在受击无敌帧里时，服务端会丢弃这次 C02；Reach 在每次挥击都
         // 尝试补刀，如果不判断就会把大量无效攻击发给服务端，导致测试假人
         // 的预期伤害/实际伤害不一致。
         if (!entityReadyForDamage(bestTarget)) {
+            ReachDebug.skipImportant("hurt " + targetName);
             OpenMaverDebug.noticeOnce("reach.hurtWait",
                     "reach attack waits for target hurtResistantTime");
             return;
         }
 
-        // 1.8 PacketOrderB 要求 ANIMATION 在 INTERACT_ENTITY 之前。正常由
-        // clickMouse/swingItem 已经发过 C0A；极端情况下这里补一次 swing。
+        // 1.8 的 Grim PacketOrderB 只在「上一条 tick 包（C03）之后」记录挥击：
+        // 攻击包到达时如果 sentAnimation=false，就直接 pre-attack 并取消这条 C02。
+        // 高 CPS 时 isSwingInProgress 恒为 true（挥击动画有 6 tick），旧的
+        // “已经在挥就不补动画”会把整条 C02 裸发出去 —— 这就是日志里的
+        // `failed PacketOrderB (pre-attack)`。
+        // 1.8.9 的 EntityPlayerSP.swingItem() 除了维护动画状态，还会无条件
+        // addToSendQueue(new C0APacketAnimation())，所以这里每次补刀都必须调用，
+        // 顺序固定为 本 tick C0A -> C02 -> 本 tick C03（Reach 因此在 START 阶段执行）。
         boolean alreadySwinging = Boolean.TRUE.equals(
                 read(player, "isSwingInProgress", "field_82175_bq", Boolean.class));
-        boolean animation = alreadySwinging;
-        if (!animation) {
-            animation = callVoid(player, "swingItem", "func_71038_i", null);
-        }
-        if (!animation) {
+        if (!callVoid(player, "swingItem", "func_71038_i", null)) {
+            ReachDebug.skipImportant("no animation " + targetName);
             OpenMaverDebug.suppressed("reach attack skipped: no animation packet");
             return;
         }
 
         Object controller = read(mc, "playerController", "field_71442_b", null);
         if (controller == null) {
+            ReachDebug.skip("no player controller");
             return;
         }
         // Reach 的补刀同样需要先伪造下落，再发送 C02；攻击后恢复冲刺。
         boolean criticalsStopSprintSent = applyCriticals(mc, player, bestTarget,
                 CRITICALS_ATTACK_REACH);
         if (criticalsAttackDeferred) {
+            ReachDebug.skip("criticals deferred " + targetName);
             return;
         }
-        callVoid(controller, "attackEntity", "func_78764_a", "a", player, bestTarget);
+        if (callVoid(controller, "attackEntity", "func_78764_a", "a", player, bestTarget)) {
+            entityAttackUsedThisTick = true;
+        }
         restoreCriticalsSprint(player, criticalsStopSprintSent);
-        Object name = call(bestTarget, "getName", "func_70005_c_", null);
-        OpenMaverDebug.attack(name == null ? String.valueOf(bestTarget) : String.valueOf(name),
-                bestDistance, maxDistance,
-                (float) number(player, "rotationYaw", "field_70177_z"),
-                (float) number(player, "rotationPitch", "field_70125_A"),
+        float hitYaw = (float) number(player, "rotationYaw", "field_70177_z");
+        float hitPitch = (float) number(player, "rotationPitch", "field_70125_A");
+        OpenMaverDebug.attack(targetName, bestDistance, maxDistance, hitYaw, hitPitch,
                 alreadySwinging);
+        ReachDebug.hit(targetName, bestDistance, maxDistance, borderValue,
+                hitYaw, hitPitch, alreadySwinging);
+    }
+
+    private static String f2(double value) {
+        return String.format(Locale.ROOT, "%.2f", value);
     }
 
     /** 射线与实体碰撞箱（向外扩张 border）的最近交点距离；未命中返回 -1。 */
@@ -2762,8 +2824,13 @@ public final class OpenMaverFeatures {
             settingsDirty = true;
         }
         autoclickerHumanize = readBoolean(values, "autoclicker.humanize", true);
-        reachExtra = clamp(readFloat(values, "reach.extra", 0.0F), 0.0F, 0.5F);
+        // 旧配置只有 reach.extra（3.0 基础上的额外量），迁移成绝对距离。
+        float storedExtra = readFloat(values, "reach.extra", 0.0F);
+        reachDistance = clamp(readFloat(values, "reach.distance",
+                (float) REACH_BASE_DISTANCE + storedExtra), 0.0F, (float) REACH_BASE_DISTANCE);
         reachChance = clamp(readFloat(values, "reach.chance", 100.0F), 1.0F, 100.0F);
+        reachDebugChat = readBoolean(values, "reach.debug", false);
+        ReachDebug.setEnabled(reachDebugChat);
         criticalsMode = readCriticalsMode(values, "criticals.mode", CRITICALS_JUMP);
         criticalsStopSprint = readBoolean(values, "criticals.stopSprint", true);
         fastPlaceDelayTicks = clamp(readInt(values, "fastplace.delayTicks", 1, 4), 0, 4);
@@ -3006,13 +3073,14 @@ public final class OpenMaverFeatures {
 
     /** 当前实际生效的实体攻击距离（Grim 扩张箱度量）。 */
     public static float getEffectiveReachDistance() {
+        double configured = Math.max(0.0D, Math.min(REACH_BASE_DISTANCE, reachDistance));
         if (!bypassEnabled) {
-            return (float) Math.min(REACH_MAX_DISTANCE, REACH_BASE_DISTANCE + reachExtra);
+            return (float) Math.min(REACH_MAX_DISTANCE, configured);
         }
         if (bypassProfile == PROFILE_AGGRESSIVE) {
-            return (float) Math.min(REACH_AGGRESSIVE_CAP, REACH_BASE_DISTANCE + reachExtra);
+            return (float) Math.min(REACH_AGGRESSIVE_CAP, configured);
         }
-        return (float) Math.min(REACH_SAFE_CAP, REACH_BASE_DISTANCE + reachExtra);
+        return (float) Math.min(REACH_SAFE_CAP, configured);
     }
 
     public static boolean isDebugEnabled() {
@@ -3212,15 +3280,22 @@ public final class OpenMaverFeatures {
         markDirty();
     }
 
-    public static float getReachExtra() { return reachExtra; }
-    public static void setReachExtra(float value) {
-        reachExtra = clamp(value, 0.0F, 0.5F);
+    public static float getReachDistance() { return reachDistance; }
+    public static void setReachDistance(float value) {
+        reachDistance = clamp(value, 0.0F, (float) REACH_BASE_DISTANCE);
         markDirty();
     }
 
     public static float getReachChance() { return reachChance; }
     public static void setReachChance(float value) {
         reachChance = clamp(value, 1.0F, 100.0F);
+        markDirty();
+    }
+
+    public static boolean isReachDebugChat() { return reachDebugChat; }
+    public static void setReachDebugChat(boolean value) {
+        reachDebugChat = value;
+        ReachDebug.setEnabled(value);
         markDirty();
     }
 
@@ -3585,8 +3660,9 @@ public final class OpenMaverFeatures {
                     + ATTACK_MODE_KEYS[clamp(autoclickerAttackMode,
                             ATTACK_MODE_FULL_CHARGE, ATTACK_MODE_VANILLA)]
                     + "\nautoclicker.humanize=" + autoclickerHumanize
-                    + "\nreach.extra=" + reachExtra
+                    + "\nreach.distance=" + reachDistance
                     + "\nreach.chance=" + Math.round(reachChance)
+                    + "\nreach.debug=" + reachDebugChat
                     + "\ncriticals.mode=" + CRITICALS_MODE_KEYS[
                             clamp(criticalsMode, CRITICALS_PACKET, CRITICALS_LAST)]
                     + "\ncriticals.stopSprint=" + criticalsStopSprint

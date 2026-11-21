@@ -215,6 +215,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private Setting dragSetting;
     private int dragX;
     private int dragW;
+    /** RANGE 正在拖动的是上限手柄。 */
+    private boolean dragHigh;
     private boolean panelDragging;
     private boolean logoSizeDragging;
     private float logoScale = 1.00F;
@@ -777,11 +779,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private void addAutoClickerSettings(Entry entry) {
-        entry.settings.add(Setting.slider("CPS MIN", 1.0F, 20.0F, 1.0F, 0, "", new Binding() {
+        // 一个双滑块同时给出 CPS 下限和上限（左侧手柄 = MIN，右侧 = MAX）。
+        entry.settings.add(Setting.range("CPS", 1.0F, 20.0F, 1.0F, 0, "", new Binding() {
             public double get() { return OpenMaverFeatures.getAutoClickerCpsMin(); }
             public void set(double value) { OpenMaverFeatures.setAutoClickerCpsMin((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.slider("CPS MAX", 1.0F, 20.0F, 1.0F, 0, "", new Binding() {
+        }, new Binding() {
             public double get() { return OpenMaverFeatures.getAutoClickerCpsMax(); }
             public void set(double value) { OpenMaverFeatures.setAutoClickerCpsMax((int) Math.round(value)); }
         }));
@@ -816,13 +818,19 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private void addReachSettings(Entry entry) {
-        entry.settings.add(Setting.slider("EXTRA", 0.0F, 0.5F, 0.05F, 2, " m", new Binding() {
-            public double get() { return OpenMaverFeatures.getReachExtra(); }
-            public void set(double value) { OpenMaverFeatures.setReachExtra((float) value); }
+        // 距离直接是攻击距离本身（0 ~ 3.0 米），不再有“3.0 + EXTRA”；
+        // profile 的 2.97 / 2.99 上限在运行期再压一次。
+        entry.settings.add(Setting.slider("DISTANCE", 0.0F, 3.0F, 0.05F, 2, " m", new Binding() {
+            public double get() { return OpenMaverFeatures.getReachDistance(); }
+            public void set(double value) { OpenMaverFeatures.setReachDistance((float) value); }
         }));
         entry.settings.add(Setting.slider("CHANCE", 1.0F, 100.0F, 1.0F, 0, " %", new Binding() {
             public double get() { return OpenMaverFeatures.getReachChance(); }
             public void set(double value) { OpenMaverFeatures.setReachChance((float) value); }
+        }));
+        entry.settings.add(Setting.check("DEBUG CHAT", new Binding() {
+            public double get() { return OpenMaverFeatures.isReachDebugChat() ? 1 : 0; }
+            public void set(double value) { OpenMaverFeatures.setReachDebugChat(value > 0.5D); }
         }));
     }
 
@@ -1249,7 +1257,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private static int columnSettingHeight(Setting setting) {
-        return setting.kind == Setting.SLIDER ? SET_SLIDER_H : SET_LINE_H;
+        return setting.kind == Setting.SLIDER || setting.kind == Setting.RANGE
+                ? SET_SLIDER_H : SET_LINE_H;
     }
 
     private static int columnSettingsHeight(Entry entry) {
@@ -1489,6 +1498,24 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 int thumbX = cx + fillW;
                 fillCircle(thumbX, trackY + 1, 3 + Math.round(hi), fade(0xFFFFFFFF, alpha));
                 addSettingHit(column, entry, setting, x, cy, sh, cx, cw);
+            } else if (setting.kind == Setting.RANGE) {
+                micro(font, ellipsizeMicro(font, setting.label, cw - 56), cx, cy + 3, labelColor);
+                String text = ellipsizeMicro(font,
+                        setting.lowDisplay() + "-" + setting.highDisplay(), 50);
+                micro(font, text, cx + cw - microWidth(font, text), cy + 3,
+                        fade(0xFFFFFFFF, alpha));
+                int trackY = cy + 13;
+                roundRect(cx, trackY, cw, 3, 1, fade(0x26FFFFFF, alpha));
+                int lowX = cx + Math.round(cw * clamp01((float) setting.lowPercent()));
+                int highX = cx + Math.round(cw * clamp01((float) setting.highPercent()));
+                if (highX > lowX) {
+                    roundRect(lowX, trackY, highX - lowX, 3, 1, fade(COL_ON_FILL, alpha));
+                }
+                fillTriangle(lowX + 4, trackY + 1, lowX, trackY - 2, lowX, trackY + 4,
+                        fade(0xFFFFFFFF, alpha));
+                fillTriangle(highX - 4, trackY + 1, highX, trackY - 2, highX, trackY + 4,
+                        fade(0xFFFFFFFF, alpha));
+                addSettingHit(column, entry, setting, x, cy, sh, cx, cw);
             } else if (setting.kind == Setting.SELECT) {
                 micro(font, ellipsizeMicro(font, setting.label, cw / 2), cx, cy + 4, labelColor);
                 String value = ellipsizeMicro(font, setting.display(), cw / 2);
@@ -1632,6 +1659,15 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 dragSetting = setting;
                 dragX = hit.controlX;
                 dragW = hit.controlW;
+                updateDrag(mx);
+            }
+        } else if (setting.kind == Setting.RANGE) {
+            if (button == 0) {
+                dragEntry = hit.entry;
+                dragSetting = setting;
+                dragX = hit.controlX;
+                dragW = hit.controlW;
+                beginRangeDrag(setting, mx, hit.controlX, hit.controlW);
                 updateDrag(mx);
             }
         } else if (setting.kind == Setting.SELECT) {
@@ -2695,6 +2731,39 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             fillCircle(thumbX, trackY + 2, 5,
                     withAlpha(accent, Math.round(0x40 + 0x28 * hi)));
             fillCircle(thumbX, trackY + 2, 3, 0xFFFFFFFF);
+        } else if (setting.kind == Setting.RANGE) {
+            boolean hovered = isHovered(lastMouseX, lastMouseY, x, y + 7, w, 16);
+            boolean dragging = dragSetting == setting;
+            ControlAnim anim = control("range:" + key, hovered, dragging, now);
+            float hi = Math.max(anim.hover, anim.active);
+
+            String highText = setting.highDisplay();
+            String lowText = setting.lowDisplay();
+            int highW = microWidth(font, highText);
+            int lowW = microWidth(font, lowText);
+            int labelRoom = Math.max(18, w - highW - lowW - 26);
+            micro(font, ellipsizeMicro(font, setting.label, labelRoom), x, y,
+                    blendColor(0xFF73808F, 0xFFA9B5C6, hi * 0.75F));
+
+            // 右上角两段数值 + 中间的双向箭头，和区间滑块一一对应。
+            int highX = x + w - highW;
+            micro(font, highText, highX, y, blendColor(SLIDER_VALUE, 0xFFFFFFFF, hi * 0.55F));
+            int arrowCx = highX - 8;
+            drawRangeArrow(arrowCx, y + 4, blendColor(0xFF8C98A8, 0xFFC8D3E2, hi));
+            micro(font, lowText, arrowCx - 7 - lowW, y,
+                    blendColor(0xFF8C98A8, 0xFFBFCBDC, hi * 0.5F));
+
+            int trackY = y + 15;
+            roundRect(x, trackY, w, 5, 3,
+                    blendColor(withAlpha(0xFFFFFF, 0x12), withAlpha(0xFFFFFF, 0x26), hi));
+            int lowX = x + clampInt((int) Math.round((w - 1) * setting.lowPercent()), 0, w - 1);
+            int highX2 = x + clampInt((int) Math.round((w - 1) * setting.highPercent()), 0, w - 1);
+            if (highX2 > lowX + 1) {
+                roundRect(lowX, trackY, highX2 - lowX, 5, 2,
+                        withAlpha(accent, Math.round(0xE2 + 0x1D * hi)));
+            }
+            drawRangeHandle(lowX, trackY + 2, true, accent, hi);
+            drawRangeHandle(highX2, trackY + 2, false, accent, hi);
         } else if (setting.kind == Setting.SELECT) {
             int fieldY = y + 9;
             boolean hovered = isHovered(lastMouseX, lastMouseY, x, fieldY, w, 16);
@@ -3186,13 +3255,18 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             int cy = innerY + row * (CONTROL_H + CONTROL_ROW_GAP);
             Setting setting = entry.settings.get(i);
 
-            if (setting.kind == Setting.SLIDER) {
+            if (setting.kind == Setting.SLIDER || setting.kind == Setting.RANGE) {
                 if (isHovered(mouseX, mouseY, cx, cy + 7, cellW, 16)) {
                     dragEntry = entry;
                     dragSetting = setting;
                     dragX = cx;
                     dragW = cellW;
-                    press("slider:" + settingKey(entry, setting));
+                    if (setting.kind == Setting.RANGE) {
+                        beginRangeDrag(setting, mouseX, cx, cellW);
+                        press("range:" + settingKey(entry, setting));
+                    } else {
+                        press("slider:" + settingKey(entry, setting));
+                    }
                     updateDrag(mouseX);
                     return true;
                 }
@@ -3220,7 +3294,22 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
         double pct = (mouseX - dragX) / (double) dragW;
         pct = Math.max(0.0D, Math.min(1.0D, pct));
+        if (dragSetting.kind == Setting.RANGE) {
+            if (dragHigh) {
+                dragSetting.setHighPercent(pct);
+            } else {
+                dragSetting.setLowPercent(pct);
+            }
+            return;
+        }
         dragSetting.setPercent(pct);
+    }
+
+    /** 双滑块：按点击位置选择更近的手柄。 */
+    private void beginRangeDrag(Setting setting, int mouseX, int x, int w) {
+        double pct = w <= 1 ? 0.0D : (mouseX - x) / (double) (w - 1);
+        pct = Math.max(0.0D, Math.min(1.0D, pct));
+        dragHigh = Math.abs(pct - setting.highPercent()) < Math.abs(pct - setting.lowPercent());
     }
 
     private void updateLogoSize(int mouseX) {
@@ -3744,6 +3833,41 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         return withAlpha(argb, Math.min(255, alpha));
     }
 
+    /** 实心三角形：区间滑块的左右手柄与数值之间的双向箭头都用它。 */
+    private static void fillTriangle(int x1, int y1, int x2, int y2, int x3, int y3, int color) {
+        if ((color >>> 24) == 0) {
+            return;
+        }
+        aaBegin();
+        GL11.glBegin(GL11.GL_TRIANGLES);
+        setVertexColor(color, 1.0F);
+        GL11.glVertex2f(x1, y1);
+        GL11.glVertex2f(x2, y2);
+        GL11.glVertex2f(x3, y3);
+        GL11.glEnd();
+        aaEnd();
+    }
+
+    /** 区间手柄：左端是向右的三角，右端是向左的三角。 */
+    private static void drawRangeHandle(int x, int cy, boolean lowSide, int accent, float hi) {
+        int glow = 7 + Math.round(hi * 2.0F);
+        fillCircle(x, cy, glow, withAlpha(accent, Math.round(0x18 + 0x12 * hi)));
+        if (lowSide) {
+            fillTriangle(x - 1, cy - 5, x - 1, cy + 5, x + 5, cy, 0xFFD5DCE6);
+            fillTriangle(x - 1, cy - 4, x - 1, cy + 4, x + 4, cy, 0xFFFFFFFF);
+        } else {
+            fillTriangle(x + 1, cy - 5, x + 1, cy + 5, x - 5, cy, 0xFFD5DCE6);
+            fillTriangle(x + 1, cy - 4, x + 1, cy + 4, x - 4, cy, 0xFFFFFFFF);
+        }
+    }
+
+    /** 两个数值之间的双向箭头。 */
+    private static void drawRangeArrow(int cx, int cy, int color) {
+        fillTriangle(cx - 5, cy, cx - 1, cy - 3, cx - 1, cy + 3, color);
+        fillTriangle(cx + 5, cy, cx + 1, cy - 3, cx + 1, cy + 3, color);
+        Gui.drawRect(cx - 1, cy, cx + 2, cy + 1, color);
+    }
+
     private static void fillCircle(int cx, int cy, int radius, int color) {
         if (radius <= 0 || (color >>> 24) == 0) {
             return;
@@ -4124,6 +4248,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         static final int SLIDER = 0;
         static final int SELECT = 1;
         static final int CHECK = 2;
+        /** 双滑块区间：两个手柄分别绑定 low / high。 */
+        static final int RANGE = 3;
 
         final String label;
         final int kind;
@@ -4134,9 +4260,17 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         final String suffix;
         final String[] options;
         final Binding binding;
+        /** RANGE 的上限手柄；其它类型为 null。 */
+        final Binding bindingHigh;
 
         private Setting(String label, int kind, float min, float max, float step,
                 int decimals, String suffix, String[] options, Binding binding) {
+            this(label, kind, min, max, step, decimals, suffix, options, binding, null);
+        }
+
+        private Setting(String label, int kind, float min, float max, float step,
+                int decimals, String suffix, String[] options, Binding binding,
+                Binding bindingHigh) {
             this.label = sentenceCase(label);
             this.kind = kind;
             this.min = min;
@@ -4151,6 +4285,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 }
             }
             this.binding = binding;
+            this.bindingHigh = bindingHigh;
         }
 
         /** 展开配置的名称与选项统一为句首大写，不改动模块共享的名称数组。 */
@@ -4163,6 +4298,13 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         static Setting slider(String label, float min, float max, float step,
                 int decimals, String suffix, Binding binding) {
             return new Setting(label, SLIDER, min, max, step, decimals, suffix, null, binding);
+        }
+
+        /** 双滑块区间：low / high 各自绑定一个配置项。 */
+        static Setting range(String label, float min, float max, float step,
+                int decimals, String suffix, Binding low, Binding high) {
+            return new Setting(label, RANGE, min, max, step, decimals, suffix,
+                    null, low, high);
         }
 
         static Setting select(String label, String[] options, Binding binding) {
@@ -4199,9 +4341,64 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
 
         void setPercent(double percent) {
+            if (kind == RANGE) {
+                setLowPercent(percent);
+                return;
+            }
+            binding.set(stepped(percent, 0.0D));
+        }
+
+        double lowPercent() {
+            return percentOf(binding.get());
+        }
+
+        double highPercent() {
+            return bindingHigh == null ? 1.0D : percentOf(bindingHigh.get());
+        }
+
+        void setLowPercent(double percent) {
+            if (bindingHigh == null) {
+                binding.set(stepped(percent, 0.0D));
+                return;
+            }
+            // 下限不允许越过上限（拖到另一端就停住，不做“推着走”）。
+            binding.set(Math.min(stepped(percent, 0.0D), bindingHigh.get()));
+        }
+
+        void setHighPercent(double percent) {
+            if (bindingHigh == null) {
+                return;
+            }
+            bindingHigh.set(Math.max(stepped(percent, 0.0D), binding.get()));
+        }
+
+        private double percentOf(double value) {
+            if (max - min <= 0.0F) {
+                return 0.0D;
+            }
+            return Math.max(0.0D, Math.min(1.0D, (value - min) / (double) (max - min)));
+        }
+
+        /** 把百分比换算成步进后的数值（不做区间方向约束）。 */
+        private double stepped(double percent, double ignored) {
             double raw = min + (max - min) * percent;
-            double stepped = Math.round(raw / step) * (double) step;
-            binding.set(Math.max(min, Math.min(max, stepped)));
+            double quantized = Math.round(raw / step) * (double) step;
+            return Math.max(min, Math.min(max, quantized));
+        }
+
+        String lowDisplay() {
+            return formatValue(binding.get());
+        }
+
+        String highDisplay() {
+            return formatValue(bindingHigh == null ? binding.get() : bindingHigh.get());
+        }
+
+        private String formatValue(double value) {
+            if (decimals <= 0) {
+                return String.valueOf((int) Math.round(value)) + suffix;
+            }
+            return String.format(Locale.ROOT, "%." + decimals + "f", value) + suffix;
         }
 
         String display() {
@@ -4211,11 +4408,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 index = Math.max(0, Math.min(size - 1, index));
                 return options[index];
             }
-            double value = binding.get();
-            if (decimals <= 0) {
-                return String.valueOf((int) Math.round(value)) + suffix;
+            if (kind == RANGE) {
+                return lowDisplay() + " - " + highDisplay();
             }
-            return String.format(Locale.ROOT, "%." + decimals + "f", value) + suffix;
+            return formatValue(binding.get());
         }
     }
 
