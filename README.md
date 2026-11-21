@@ -517,12 +517,14 @@ IO 失败只记录一次并自动停用 debug。
 
 ### Velocity 防击退
 
-- 基于 `../OpenZen` 适配 AntiKB 三模式：`NoXZ`（默认）、`Jump Reset`、`Mix`；旧 `SPRINT HIT / SIMPLE / SLAP ATTACK` 实现及控件已移除。ClickGUI/HUD 仍显示 `Velocity`，开关与热键保留 `movement.attackreduce`。
+- Velocity 提供四模式：`Sprint Reset`（新配置默认）、`Jump Reset`、`NoXZ`、`Mix`；NoXZ / Mix 基于 `../OpenZen` 适配。旧 `SPRINT HIT / SIMPLE / SLAP ATTACK` 实现及控件已移除。ClickGUI/HUD 仍显示 `Velocity`，开关与热键保留 `movement.attackreduce`。
 - `NoXZ`：所有 S12 在主线程收到后立即应用，不额外延迟，也不缩放速度或缓存其他入站/出站包。本地正 Y 击退触发受击跳跃；地面有目标且疾跑时安排原版攻击，空中只保留最多 12 tick 的落地补刀意图。落地补刀使用当时速度，不重新施加旧 S12；无目标、超时、新击退、校正或退出环境会清理旧意图。Aura 目标优先，否则取准星生物，眼睛到可见目标 AABB 距离上限为 3.0，减速由原版伤害结果决定。
-- `Jump Reset`：地面 10 tick / 空中 20 tick 倒计时结束后的下一 tick 释放；空中落地提前释放。地面分支随后跳跃一次，可按击退方向静默转向或接管前进输入。
+- `Sprint Reset`：参考 `~/Downloads/script.lua` 的短按跳跃与 GUI 暂停思路；自己的地面正 Y 且带水平分量的 S12 立即应用，下一次有效输入短暂向前疾跑 2 tick，同时只触发一次跳跃。随后归还输入和模块开启的疾跑；不缓存入站/出站包，不改写速度、相机或 Timer。
+- `Jump Reset`：同样立即应用击退，只执行单次跳跃，不接管移动或疾跑；旧 10–20 tick 缓存、跟随击退方向和转向时长控件已移除。空中受击不留落地跳跃意图。
+- 两个 Reset 模式共用：`Chance=100%`（每次有效受击触发概率）、`Accuracy=100%`（下一次输入准时响应概率；失准时仅输入延后 1–2 tick）、`Only When Targeting=false`（开启后需要 Aura 或准星可见生物，距离 ≤ 3.0）、`Water Check=true`（开启后水中跳过；关闭仅放开水中检查）。执行前重查条件；离地、目标失效、GUI、潜行、使用物品、Scaffold/GodBridge、校正及退出会取消旧意图，缺少输入回调时最多 3–5 tick 过期。
 - `Mix`：选择性缓存速度、实体移动、事务和传送包，落地或连续空中 24 tick 释放；支持受伤跳跃、短时方向接管、静默转向及 Aura 双击。两次攻击分配到两个空闲 tick，按执行时的疾跑状态走原版物理；与 AutoClicker/Aura 共享每 tick 的实体攻击名额。
-- 参数默认与 Zen 对齐：`Attack Amount=5`、`Rotate Ticks=12`、`Sprint State Check=true`，其余开关为 false。`Instant Attack` 按等待落地时长增加最多 3 次补刀，与基础攻击一起分摊到正常 tick；始终保留原 Timer 倍率，并与其他模块共享每 tick 的实体攻击名额。
-- 配置版本 20，使用 `velocity.zen.*` 字符串模式配置；升级旧配置清除历史 Velocity 参数，默认 `NoXZ`，保留模块开关和键位。HUD 显示模式、管线状态、击退/攻击计数和状态。
+- NoXZ 参数默认：`Attack Amount=5`、`Sprint State Check=true`，`Instant Attack=false`；Mix 的开关默认 false。`Instant Attack` 按等待落地时长增加最多 3 次补刀，与基础攻击一起分摊到正常 tick；始终保留原 Timer 倍率，并与其他模块共享每 tick 的实体攻击名额。
+- 配置版本 20，使用 `velocity.zen.*` 字符串模式配置；升级旧配置清除历史 Velocity 参数，缺省/无效模式使用 `Sprint Reset`，显式保存的模式、模块开关和键位保留。HUD 显示模式、管线状态、击退/攻击计数和状态。
 - 1.8.9 适配包括主线程包回放、真实 Netty 出站队列、输入回调、相机/计时恢复、重连/重生与队列上限。构建：`cmake --build build -j2`；行为测试：`tools/attackreduce-test/run.sh`。来源、依赖映射、差异及验证范围见 `design/ATTACKREDUCE_HANDOFF.md`；游戏内及服务器端到端效果仍待实测。
 - 所有实体攻击统一为必要的 C0B 疾跑同步 → C0A 挥手 → C02 攻击。到期入站队列在模块动作前回放，Motion/禁用/切模式中产生的迟到回放推迟到下一次准备阶段，避免 S32 回执插在动作和移动之间。连续 S12 先释放旧队列再接收新击退，避免旧速度覆盖新速度。
 - 独立的声音兼容 hook 将旧协议未注册的 `damage.thorns` 映射到 1.8 原生 `game.player.hurt`，保留位置、音高和音量；Velocity 关闭时仍生效。

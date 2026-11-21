@@ -1,10 +1,10 @@
-# Velocity：OpenZen AntiKB 适配与 NoXZ 直通修复
+# Velocity：输入式 Sprint / Jump Reset 与 OpenZen AntiKB 适配
 
 ## 当前状态（2026-11-21，路线 A）
 
 NoXZ 已放弃地面与空中的击退挂起。收到 S12 的主线程任务立即应用原包，不取消入站、不暂停出站；仅保留受击跳跃与最多等待 12 tick 的落地补刀意图。落地使用当前运动速度，绝不重新施加收到时的 S12。新击退（包括非正 Y）、位置校正、忽略环境、禁用、切模式及换世界都会清理旧攻击意图。`Instant Attack` 只增加最多 3 次正常 tick 补刀，不改变 Timer。跳过无目标的落地机会也不再强制关闭疾跑。
 
-Jump Reset / Mix 仍保留原有延迟机制，不能据此视为 Grim 兼容替代。下方实测章节保留旧挂起实现的数据，供解释此次取舍；目前未取得新版本的服务器端到端测试回执。NoXZ 的正常调试行应为 `KB in PASS AIR / LANDING WAIT`、`PASS READY`、`PASS NOT SPRINTING`、`PASS NO TARGET`，不应再产生 `SUSPEND` / `OUT HOLD` / `FLUSH` / `KB release`。
+Sprint Reset 为新配置默认，Jump Reset 已移除 10–20 tick 入站挂起；两个模式只接管输入，Mix 仍保留选择性入站队列。下方实测章节保留旧挂起实现的数据，供解释此次取舍；目前未取得新版本的服务器端到端测试回执。NoXZ 的正常调试行应为 `KB in PASS AIR / LANDING WAIT`、`PASS READY`、`PASS NOT SPRINTING`、`PASS NO TARGET`，不应再产生 `SUSPEND` / `OUT HOLD` / `FLUSH` / `KB release`。
 
 ## 来源与范围
 
@@ -16,14 +16,15 @@ Jump Reset / Mix 仍保留原有延迟机制，不能据此视为 Grim 兼容替
 
 按用户要求，移除了 Maver 的 SPRINT HIT / SIMPLE / SLAP ATTACK 状态机、百分比缩放、动作闸门、冲刺同步窗口及对应测试。保留模块类 `module.movement.AttackReduce`、显示名 `Velocity` 和配置键 `movement.attackreduce`，避免破坏开关与热键。
 
-`mc/AttackReduceFeature.java` 是 Minecraft 1.8.9 适配层；`mc/antikb/` 中三个模式实现 Zen 状态机。项目使用默认 package，目录仅组织源码。Java 8 字节码由现有 CMake 构建流程生成，再经过 MCP → SRG 重映射。
+`mc/AttackReduceFeature.java` 是 Minecraft 1.8.9 适配层；`mc/antikb/` 中保留 NoXZ / Mix 状态机，并用 `JumpResetMode(boolean sprintReset)` 实现两个输入模式。项目使用默认 package，目录仅组织源码。Java 8 字节码由现有 CMake 构建流程生成，再经过 MCP → SRG 重映射。
 
-## 三模式
+## 四模式
 
 | 模式 | 触发与队列 | 释放与动作 |
 | --- | --- | --- |
-| NoXZ（默认） | 所有包立即直通；自己的正 Y S12 触发地面攻击或空中落地补刀意图 | 落地用当前速度攻击，最多等 12 tick 后放弃意图；每 tick 最多一次实体攻击；位置校正后冷却 2 tick |
-| Jump Reset | 自己的 S12；除聊天/时间包外的入站暂存 | 地面 10 tick / 空中 20 tick 倒计时结束后的下一 tick 释放；空中落地提前释放；地面分支跳一次，可转向/跟随方向 |
+| Sprint Reset（新配置默认） | 自己的地面正 Y、非零水平 S12；所有包立即直通 | 下一次有效输入向前疾跑 2 tick，单次跳跃；按 Chance/Accuracy 决定是否触发及 0–2 tick 输入延迟 |
+| NoXZ | 所有包立即直通；自己的正 Y S12 触发地面攻击或空中落地补刀意图 | 落地用当前速度攻击，最多等 12 tick 后放弃意图；每 tick 最多一次实体攻击；位置校正后冷却 2 tick |
+| Jump Reset | 同 Sprint Reset；所有包立即直通 | 仅单次跳跃，不接管前进或疾跑 |
 | Mix | 正 Y S12 及实体移动、事务、实体传送包 | 落地或连续空中 24 tick 释放；受伤跳跃、前 3 tick 方向接管、可选 Aura 双击 |
 
 NoXZ 的目标顺序为 Aura 已选目标 → 准星存活生物，眼睛到可见目标 AABB 距离 ≤ 3.0。攻击前同步客户端当前疾跑状态与 serverSprintState，然后先挥手、再调用原版 controller。仅由原版攻击结果决定减速，适配层不手动写 XZ，也不提前退出疾跑。
@@ -51,7 +52,7 @@ Mix 的可选双击保留两个攻击意图，分配到两个空闲 tick，复�
 
 NoXZ 原源码把 ServerboundMovePlayerPacket 分支写在 ReceivePacketEvent 中；早期适配曾接到 Netty `write` 路径并缓存完整出站流。当前 NoXZ 已不调用 hold/flush；适配层仍保留 FIFO 与 ChannelPromise 清理接口，独立测试显式启用队列以覆盖断线、取消和上限行为。hold/flush 均在同一 eventLoop 上执行。
 
-Jump Reset 的 NoFall/Backtrack 联动检查对应活动状态（NoFall boost 字段，Backtrack isActive/isBacktracking），缺失模块时自然为 false。FireballBlink/HighJump/Stuck 等依赖通过模块名查询，不引入现代 Minecraft 类。
+两个 Reset 模式的 NoFall/Backtrack 联动检查对应活动状态（NoFall boost 字段，Backtrack isActive/isBacktracking），缺失模块时自然为 false。FireballBlink/HighJump/Stuck 等依赖通过模块名查询，不引入现代 Minecraft 类。
 
 ## 生命周期适配
 
@@ -59,9 +60,9 @@ Jump Reset 的 NoFall/Backtrack 联动检查对应活动状态（NoFall boost �
 - Packet 保存所属 player/world/handler。旧世界的挂起队列丢弃，同连接模式切换则回放一次。S07 重生显式识别同连接世界切换，保留紧随重生、已经排入主线程的新世界包。
 - 禁用、切模式、位置校正、重生会释放当前连接队列并恢复计时/相机。断线终止未完成的出站 promises。
 - 入站/出站队列各设 4096 包上限，达到时强制释放。安装失败每 20 tick 重试；外部移除 hook 时清队列并重装。
-- 死亡、观察者、飞行、水/熔岩、燃烧、梯子、睡眠和蛛网时释放并跳过模式处理。这一公共保护把 Zen NoXZ 的环境检查用于三模式，替换 Mix 的蛛网事件依赖。
+- 死亡、观察者、飞行、水/熔岩、燃烧、梯子、睡眠和蛛网时释放并跳过模式处理。Reset 模式的 Water Check=false 可单独放开水中检查，其余环境保护保持。这一公共保护把 Zen NoXZ 的环境检查用于所有模式，替换 Mix 的蛛网事件依赖。
 - 转向让位于 Scaffold/GodBridge/Aura；输入直接改 MovementInput，不持有 KeyBinding。潜行 MoveFix 保留原版 0.3 输入幅度。
-- Jump Reset / Mix 的 Motion/GUI 禁用/切模式等较晚路径将入站回放转交到下一次准备阶段；新的入站任务也先排空旧回放。此处使用显式队列，因为 Minecraft.addScheduledTask 在主线程会立即执行。旧连接/世界校验同时覆盖该队列。NoXZ 超时只丢弃攻击意图，不涉及包回放。
+- Mix 的 Motion/GUI 禁用/切模式等较晚路径将入站回放转交到下一次准备阶段；新的入站任务也先排空旧回放。此处使用显式队列，因为 Minecraft.addScheduledTask 在主线程会立即执行。旧连接/世界校验同时覆盖该队列。NoXZ 超时只丢弃攻击意图，不涉及包回放。
 - 新的本地 S12 到达时，先释放旧挂起队列，再重置该次模式状态并处理新 S12，避免旧击退最后覆盖新击退。
 
 这些是协议、线程和事件系统适配；游戏物理与服务器行为仍需端到端验证。
@@ -109,16 +110,18 @@ ClickGUI 的 Velocity 展开项新增 `DEBUG CHAT`（配置键 `velocity.zen.deb
 
 | velocity.zen. 后缀 | 默认值 | 范围 / 生效模式 |
 | --- | --- | --- |
-| mode | NoXZ | NoXZ / Jump Reset / Mix |
+| mode | Sprint Reset | Sprint Reset / Jump Reset / NoXZ / Mix；保留显式保存模式 |
+| chance | 100 | 0–100%，两个 Reset 模式，每次有效受击的触发概率 |
+| accuracy | 100 | 0–100%，两个 Reset 模式，准时响应概率；失准只延后输入 1–2 tick |
+| onlyWhenTargeting | false | 两个 Reset 模式；执行时仍须有存活、可见、3.0 格内的 Aura/准星目标 |
+| waterCheck | true | 两个 Reset 模式；关闭只放开水中检查 |
 | attackAmount | 5 | 1–20，NoXZ |
 | instantAttack | false | NoXZ：等待落地每 2 tick 累积 +1 次，最多 +3；正常 tick 执行，不改 Timer |
 | sprintStateCheck | true | NoXZ |
-| rotate | false | Jump Reset / Mix |
-| followDirection | false | Jump Reset |
-| rotateTicks | 12 | 3–20，Jump Reset |
+| rotate | false | Mix；旧 followDirection / rotateTicks 不再加载或保存 |
 | tryAttack | false | Mix |
 | movementOverride | false | Mix |
-| debug | false | 所有模式的出站观测与 NoXZ 的入站事件 |
+| debug | false | 所有模式的出站观测与 NoXZ / Reset 的入站事件 |
 
 ## 验证和产物
 
@@ -133,7 +136,7 @@ tools/scaffold-test/run.sh
 git diff --check
 ```
 
-行为测试使用真实 Netty 4.0.23.Final EmbeddedChannel 与 Minecraft 主线程队列替身。当前覆盖 NoXZ 地面/空中 S12 立即应用、全部入站直通、逐 tick 移动即时发送、落地不重放旧速度、攻击意图过期/覆盖/生命周期清理、Instant Attack 正常 tick 上限与原 Timer 保留；保留 Jump Reset / Mix 回放以及适配层 FIFO/promises、攻击入口、事务边界、声音、自愈与队列上限回归。VERIFIED：`ZenAntiKBTest: 4385 passed, 0 failed`，命令 exit 0；两份 SRG jar 的 11 处 MovementInput 字段引用均通过真实 Minecraft 1.8.9 + Forge 对照。回执：`/tmp/openmaver-noxz-immediate-tests.log`。这些替身测试证明模块没有额外挂起/回放，不证明实际服务器零告警或实际移动间隔稳定在 40–60ms。
+行为测试使用真实 Netty 4.0.23.Final EmbeddedChannel 与 Minecraft 主线程队列替身。此前 NoXZ 修复覆盖 NoXZ 地面/空中 S12 立即应用、全部入站直通、逐 tick 移动即时发送、落地不重放旧速度、攻击意图过期/覆盖/生命周期清理、Instant Attack 正常 tick 上限与原 Timer 保留；当时保留 Jump Reset / Mix 回放以及适配层 FIFO/promises、攻击入口、事务边界、声音、自愈与队列上限回归。VERIFIED：`ZenAntiKBTest: 4385 passed, 0 failed`，命令 exit 0；两份 SRG jar 的 11 处 MovementInput 字段引用均通过真实 Minecraft 1.8.9 + Forge 对照。回执：`/tmp/openmaver-noxz-immediate-tests.log`。这些替身测试证明模块没有额外挂起/回放，不证明实际服务器零告警或实际移动间隔稳定在 40–60ms。
 
 历史相邻回归（本次仅改 NoXZ，未重跑）：`tools/chest-test/run.sh` 输出 `[chest-test] OK (100 项断言)`，exit 0；`tools/godbridge-test/run.sh` 输出 `checks: 73  passed: 73  failed: 0`，exit 0。回执分别为 `/tmp/openmaver-protocol18-chest.log`、`/tmp/openmaver-protocol18-godbridge.log`。
 
@@ -156,3 +159,23 @@ cp /tmp/openmaver-protocol18-backup/mc/AttackReduceFeature.java.bak mc/AttackRed
 ```
 
 ROLLBACK：`python3 /tmp/openmaver-protocol18-backup/rollback.py`，将备份的 `.bak` 恢复到对应源码、测试、文档和 jar 路径，并删除本次新增文件；回滚后需重新构建以更新编译目录。更早的三模式移植备份仍在 `/tmp/openmaver-zen-port-backup/`。备份位于临时目录，跨重启保留情况由本机管理。
+
+
+## 2026-11-21 Sprint / Jump Reset 输入式重写
+
+参考 `/home/zty/Downloads/script.lua` 的短按跳跃、GUI 暂停和随机反应思路；受击入口使用本地 S12，不移植脚本的左键循环、Sleep、右键格挡或系统按键注入。
+
+`JumpResetMode(false)` 只跳一次，`JumpResetMode(true)` 同时向前疾跑 2 tick。包、速度、相机、Timer 均不因重置而延迟或改写。Chance 每次有效 S12 只抽取一次；Accuracy 是零额外输入延迟的概率，失准从 1 / 2 tick 等概率选择。地面和有效目标等条件在执行时复查，若已离地则取消，不在落地后补跳；过期时也只丢弃输入意图。100% Accuracy 在下一次输入回调尝试，0% Accuracy 总有 1–2 tick 意图延迟；客户端物理实际已离地时该意图仍会取消。
+
+输入在原版 MovementInput 更新后写入，每次受击至多一个 jump 脉冲；重复输入回调不消耗额外冲刺 tick。自动开启的疾跑在脉冲结束后归还；原本已疾跑则保留。潜行、使用物品、GUI、Scaffold/GodBridge 和 NoFall/Backtrack 活动时跳过，禁用、切模式、断线、重生、换世界和位置校正清理输入及模块开启的疾跑。新 S12 替换旧意图，不保存旧击退。参数仍使用 `velocity.zen.*`，无需改变版本 20；缺省/无效模式回到 Sprint Reset，已有显式 NoXZ / Jump Reset / Mix 配置保留。
+
+VERIFIED：`cmake --build build -j2` → `[100%] Built target openmaver_mod`（exit 0）；`tools/attackreduce-test/run.sh` → `ZenAntiKBTest: 4492 passed, 0 failed`（exit 0），并输出两份 jar 的 `12 field references match Minecraft 1.8.9 + Forge`。回执分别为 `/tmp/openmaver-sprint-reset-build.log` 和 `/tmp/openmaver-sprint-reset-tests.log`。新增覆盖单次跳跃、2 tick 冲刺、输入/疾跑归还、连续 S12、Chance/Accuracy 边界、目标/水中开关、GUI/潜行/物品保护、生命周期、空中意图取消及全部四模式的协议边界。适配层挂起队列测试仍保留，旧延迟协议场景转由 Mix 驱动。
+
+UNRESOLVED：游戏内真实移动、视觉和服务端效果尚无本轮实测回执。
+
+本轮修改前的源码、测试、文档和两份 jar 位于 `/tmp/openmaver-sprint-reset-wbu30fbv/`，保留相对路径并追加 `.bak`。ROLLBACK：`python3 /tmp/openmaver-sprint-reset-wbu30fbv/rollback.py` 恢复全部本轮修改前文件，再重新构建。单文件恢复例：
+
+```sh
+cp /tmp/openmaver-sprint-reset-wbu30fbv/mc/antikb/JumpResetMode.java.bak mc/antikb/JumpResetMode.java
+cmake --build build -j2
+```

@@ -891,7 +891,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }));
     }
 
-    /** OpenZen AntiKB 的三个模式及原始参数。 */
+    /** 输入式重置与 OpenZen NoXZ / Mix 参数。 */
     private void addAttackReduceSettings(Entry entry) {
         entry.settings.add(Setting.select("MODE", AttackReduceFeature.MODE_NAMES, new Binding() {
             public double get() { return AttackReduceFeature.getMode(); }
@@ -909,17 +909,25 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             public double get() { return AttackReduceFeature.getSprintStateCheck() ? 1 : 0; }
             public void set(double value) { AttackReduceFeature.setSprintStateCheck(value > 0.5D); }
         }));
-        entry.settings.add(Setting.check("ROTATE (JUMP RESET / MIX)", new Binding() {
+        entry.settings.add(Setting.check("ROTATE (MIX)", new Binding() {
             public double get() { return AttackReduceFeature.getRotate() ? 1 : 0; }
             public void set(double value) { AttackReduceFeature.setRotate(value > 0.5D); }
         }));
-        entry.settings.add(Setting.check("FOLLOW DIRECTION (JUMP RESET)", new Binding() {
-            public double get() { return AttackReduceFeature.getFollowDirection() ? 1 : 0; }
-            public void set(double value) { AttackReduceFeature.setFollowDirection(value > 0.5D); }
+        entry.settings.add(Setting.slider("CHANCE (RESETS)", 0, 100, 1, 0, "%", new Binding() {
+            public double get() { return AttackReduceFeature.getChance(); }
+            public void set(double value) { AttackReduceFeature.setChance((int) Math.round(value)); }
         }));
-        entry.settings.add(Setting.slider("ROTATE TICKS (JUMP RESET)", 3, 20, 1, 0, " ticks", new Binding() {
-            public double get() { return AttackReduceFeature.getRotateTicks(); }
-            public void set(double value) { AttackReduceFeature.setRotateTicks((int) Math.round(value)); }
+        entry.settings.add(Setting.slider("ACCURACY (RESETS)", 0, 100, 1, 0, "%", new Binding() {
+            public double get() { return AttackReduceFeature.getAccuracy(); }
+            public void set(double value) { AttackReduceFeature.setAccuracy((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("ONLY WHEN TARGETING (RESETS)", new Binding() {
+            public double get() { return AttackReduceFeature.getOnlyWhenTargeting() ? 1 : 0; }
+            public void set(double value) { AttackReduceFeature.setOnlyWhenTargeting(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("WATER CHECK (RESETS)", new Binding() {
+            public double get() { return AttackReduceFeature.getWaterCheck() ? 1 : 0; }
+            public void set(double value) { AttackReduceFeature.setWaterCheck(value > 0.5D); }
         }));
         entry.settings.add(Setting.check("TRY ATTACK (MIX)", new Binding() {
             public double get() { return AttackReduceFeature.getTryAttack() ? 1 : 0; }

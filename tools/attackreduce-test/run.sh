@@ -2,7 +2,7 @@
 # ---------------------------------------------------------------------------
 # AttackReduce 包层测试：用真实 netty-all 4.0.23.Final（MC 1.8.9 自带版本）的
 # EmbeddedChannel 驱动 AttackReducePacketHook，验证：
-#   - NoXZ 击退零额外延迟/落地补刀；Jump Reset / Mix 原始击退回放
+#   - NoXZ 击退零额外延迟/落地补刀；Sprint/Jump Reset 输入脉冲；Mix 原始击退回放
 #   - 输入/静默转向、时间倍率、包序、释放与断线清理
 #   - Zen 参数持久化与旧配置迁移
 #   - 真实 Netty pipeline 的安装位置、重连与自愈
@@ -50,7 +50,7 @@ echo "[attackreduce-test] netty: $netty_jar"
 javac -source 8 -target 8 -Xlint:-options -encoding UTF-8 -cp "$classpath" -d "$out_dir" \
     $(find "$test_src" -name '*.java')
 
-echo "[attackreduce-test] OpenZen NoXZ / Jump Reset / Mix"
+echo "[attackreduce-test] Sprint Reset / Jump Reset / NoXZ / Mix"
 java -cp "$out_dir:$classpath" ZenAntiKBTest
 
 python3 "$test_src/check_runtime_fields.py"

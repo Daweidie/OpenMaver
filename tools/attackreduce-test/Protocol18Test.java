@@ -97,24 +97,24 @@ final class Protocol18Test {
         }
     }
     static void replayBoundaries() {
-        for (int mode = 0; mode < 3; mode++) try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(mode)) {
+        for (int mode = 0; mode < AttackReduceFeature.MODE_NAMES.length; mode++) try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(mode)) {
             f.channel.writeOutbound(new C03PacketPlayer(0)); outbound(f);
             f.player.onGround = false;
             S12PacketEntityVelocity velocity = f.velocity(); f.receive(velocity);
             f.receive(new ZenAntiKBTest.S32PacketConfirmTransaction());
-            if (mode == 0) {
+            if (mode != AttackReduceFeature.MODE_MIX) {
                 List<Object> immediate = outbound(f);
-                check("NoXZ applies S12 and acknowledges S32 before actions", f.applied.size() == 2
+                check("immediate mode applies S12 and acknowledges S32 before actions: " + mode, f.applied.size() == 2
                         && f.applied.get(0) == velocity && immediate.size() == 1 && immediate.get(0) instanceof C0FPacketConfirmTransaction);
                 OpenMaverFeatures.attackEntity18(f.mc, f.player, f.target);
                 AttackReduceFeature.current().release();
                 f.channel.writeOutbound(new C03PacketPlayer(1));
                 List<Object> wire = outbound(f);
-                check("NoXZ release never injects a late transaction or movement burst", wire.size() == 3
+                check("immediate mode release never injects a late transaction or movement burst: " + mode, wire.size() == 3
                         && wire.get(0) instanceof C0APacketAnimation && wire.get(1) instanceof C02PacketUseEntity
                         && wire.get(2) instanceof C03PacketPlayer);
                 f.start();
-                check("NoXZ next tick never reapplies physics", f.applied.size() == 2 && near(f.player.motionX, .24));
+                check("immediate mode next tick never reapplies physics: " + mode, f.applied.size() == 2 && near(f.player.motionX, .24));
                 continue;
             }
             OpenMaverFeatures.attackEntity18(f.mc, f.player, f.target);
@@ -171,23 +171,23 @@ final class Protocol18Test {
         }
     }
     static void repeatedVelocity() {
-        for (int mode = 0; mode < 3; mode++) try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(mode)) {
+        for (int mode = 0; mode < AttackReduceFeature.MODE_NAMES.length; mode++) try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(mode)) {
             f.player.onGround = false;
             S12PacketEntityVelocity first = f.velocity(), second = new S12PacketEntityVelocity(7, .2, .3, .1);
             f.receive(first); f.receive(second);
-            if (mode == 0) {
+            if (mode != AttackReduceFeature.MODE_MIX) {
                 ChannelPromise sent = f.channel.newPromise(); C03PacketPlayer move = new C03PacketPlayer(2);
                 f.channel.pipeline().write(move, sent); f.channel.pipeline().flush();
                 List<Object> wire = outbound(f);
-                check("successive airborne NoXZ impulses apply immediately", f.applied.size() == 2 && near(f.player.motionX, .2));
-                check("second NoXZ impulse leaves movement unblocked", wire.size() == 1 && wire.get(0) == move && sent.isSuccess());
+                check("successive airborne impulses apply immediately: " + mode, f.applied.size() == 2 && near(f.player.motionX, .2));
+                check("second impulse leaves movement unblocked: " + mode, wire.size() == 1 && wire.get(0) == move && sent.isSuccess());
             }
             AttackReduceFeature.current().release(); AttackReduceFeature.current().onMotion(); f.start();
             check("successive S12 preserve arrival order and newest impulse: " + mode,
                     f.applied.size() == 2 && f.applied.get(0) == first && f.applied.get(1) == second
                             && near(f.player.motionX, .2) && near(f.player.motionY, .3) && near(f.player.motionZ, .1));
         }
-        try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(1)) {
+        try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(AttackReduceFeature.MODE_MIX)) {
             f.player.onGround = false; f.receive(f.velocity());
             AttackReduceFeature.current().release();
             S12PacketEntityVelocity newest = new S12PacketEntityVelocity(7, .1, .2, .3);
@@ -195,7 +195,7 @@ final class Protocol18Test {
             check("late replay stays before newly arriving S12", f.applied.size() == 2 && f.applied.get(1) == newest
                     && near(f.player.motionX, .1) && near(f.player.motionY, .2) && near(f.player.motionZ, .3));
         }
-        try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(1)) {
+        try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(AttackReduceFeature.MODE_MIX)) {
             f.player.onGround = false; f.receive(f.velocity());
             AttackReduceFeature.setMode(0); f.mc.theWorld = new Object(); f.start();
             check("deferred replay never applies old-world velocity", f.applied.isEmpty());

@@ -16,16 +16,18 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Properties;
 
-/** OpenZen AntiKB 的 1.8.9 适配层；状态机位于 antikb/。 */
+/** Velocity 的 1.8.9 适配层；输入式重置与 OpenZen 状态机位于 antikb/。 */
 public final class AttackReduceFeature {
-    public static final int MODE_NOXZ = 0, MODE_JUMP_RESET = 1, MODE_MIX = 2;
-    public static final String[] MODE_NAMES = {"NoXZ", "Jump Reset", "Mix"};
-    private static int mode = MODE_NOXZ;
-    private static boolean rotate, tryAttack, movementOverride, followDirection, instantAttack;
+    public static final int MODE_NOXZ = 0, MODE_JUMP_RESET = 1, MODE_MIX = 2, MODE_SPRINT_RESET = 3;
+    public static final String[] MODE_NAMES = {"NoXZ", "Jump Reset", "Mix", "Sprint Reset"};
+    private static int mode = MODE_SPRINT_RESET;
+    private static boolean rotate, tryAttack, movementOverride, instantAttack;
+    private static boolean onlyWhenTargeting, waterCheck = true;
+    private static int chance = 100, accuracy = 100;
     private static boolean sprintStateCheck = true;
     private static boolean debugChat;
-    private static int rotateTicks = 12, attackAmount = 5;
-    private static final AntiKBMode[] MODES = {new NoXZMode(), new JumpResetMode(), new MixMode()};
+    private static int attackAmount = 5;
+    private static final AntiKBMode[] MODES = {new NoXZMode(), new JumpResetMode(false), new MixMode(), new JumpResetMode(true)};
     private static volatile Session session;
     private static long knockbacks, attacks;
     private static int tick, nextHookAttempt;
@@ -136,7 +138,7 @@ public final class AttackReduceFeature {
                 session = s;
                 current().onEnable();
                 pipeline.addBefore("packet_handler", AttackReducePacketHook.NAME, hook);
-                Logger.info("Velocity", "OpenZen " + MODE_NAMES[mode] + " packet hook installed");
+                Logger.info("Velocity", MODE_NAMES[mode] + " packet hook installed");
             } catch (Exception error) {
                 stop(false); Logger.warn("Velocity", "Packet hook retry in 20 ticks: " + error); return;
             }
@@ -277,7 +279,7 @@ public final class AttackReduceFeature {
             cameraYaw = (float) number(s.player, "rotationYaw", "field_70177_z");
             cameraPitch = (float) number(s.player, "rotationPitch", "field_70125_A");
             writtenYaw = cameraYaw + OpenMaverFeatures.wrapDegrees(rotationYaw - cameraYaw); writtenPitch = rotationPitch;
-            if (!(mode == MODE_JUMP_RESET && followDirection)) moveFix(input, cameraYaw, writtenYaw);
+            moveFix(input, cameraYaw, writtenYaw);
             set(s.player, "rotationYaw", "field_70177_z", writtenYaw);
             set(s.player, "rotationPitch", "field_70125_A", writtenPitch); cameraChanged = true;
         }
@@ -324,7 +326,8 @@ public final class AttackReduceFeature {
     static boolean ignored() {
         Object p = player(), abilities = read(p, "capabilities", "field_71075_bZ");
         return p == null || !OpenMaverFeatures.alive(p) || truth(p, "isSpectator", "func_175149_v")
-                || flag(abilities, "isFlying", "field_75100_b") || truth(p, "isInWater", "func_70090_H")
+                || flag(abilities, "isFlying", "field_75100_b")
+                || (truth(p, "isInWater", "func_70090_H") && (!isResetMode() || waterCheck))
                 || truth(p, "isInLava", "func_180799_ab") || truth(p, "isBurning", "func_70027_ad")
                 || truth(p, "isOnLadder", "func_70617_f_") || truth(p, "isPlayerSleeping", "func_70608_bn")
                 || flag(p, "isInWeb", "field_70134_J") || moduleEnabled("Stuck") || moduleEnabled("FireballBlink") || moduleEnabled("HighJump");
@@ -374,6 +377,8 @@ public final class AttackReduceFeature {
     }
     static boolean onGround() { return flag(player(), "onGround", "field_70122_E"); }
     static boolean sprinting() { return truth(player(), "isSprinting", "func_70051_ag"); }
+    static int tickId() { return tick; }
+    private static boolean isResetMode() { return mode == MODE_JUMP_RESET || mode == MODE_SPRINT_RESET; }
     static boolean ownVelocity(Packet p) { return p.is("S12PacketEntityVelocity") && session != null && p.id() == session.entityId; }
     static void status(String v) { status = v; }
     static boolean moduleEnabled(String name) { Module m = ModuleManager.getModule(name); return m != null && m.isEnabled(); }
@@ -407,13 +412,15 @@ public final class AttackReduceFeature {
 
     public static void load(Properties p) {
         stop(true);
-        String value = p.getProperty("velocity.zen.mode", "NoXZ");
-        mode = MODE_NOXZ;
+        String value = p.getProperty("velocity.zen.mode", "Sprint Reset");
+        mode = MODE_SPRINT_RESET;
         for (int i = 0; i < MODE_NAMES.length; i++) if (MODE_NAMES[i].equalsIgnoreCase(value)) mode = i;
         rotate = bool(p, "rotate", false); tryAttack = bool(p, "tryAttack", false);
-        movementOverride = bool(p, "movementOverride", false); followDirection = bool(p, "followDirection", false);
+        movementOverride = bool(p, "movementOverride", false);
+        onlyWhenTargeting = bool(p, "onlyWhenTargeting", false); waterCheck = bool(p, "waterCheck", true);
+        chance = bounded(p, "chance", 100, 0, 100); accuracy = bounded(p, "accuracy", 100, 0, 100);
         instantAttack = bool(p, "instantAttack", false); sprintStateCheck = bool(p, "sprintStateCheck", true);
-        rotateTicks = bounded(p, "rotateTicks", 12, 3, 20); attackAmount = bounded(p, "attackAmount", 5, 1, 20);
+        attackAmount = bounded(p, "attackAmount", 5, 1, 20);
         debugChat = bool(p, "debug", false);
         VelocityDebug.setEnabled(debugChat);
         nextHookAttempt = tick;
@@ -424,13 +431,14 @@ public final class AttackReduceFeature {
     }
     public static String save() {
         return "velocity.zen.mode=" + MODE_NAMES[mode] + "\nvelocity.zen.rotate=" + rotate + "\nvelocity.zen.tryAttack=" + tryAttack
-                + "\nvelocity.zen.movementOverride=" + movementOverride + "\nvelocity.zen.followDirection=" + followDirection
-                + "\nvelocity.zen.rotateTicks=" + rotateTicks + "\nvelocity.zen.attackAmount=" + attackAmount
+                + "\nvelocity.zen.movementOverride=" + movementOverride + "\nvelocity.zen.attackAmount=" + attackAmount
+                + "\nvelocity.zen.chance=" + chance + "\nvelocity.zen.accuracy=" + accuracy
+                + "\nvelocity.zen.onlyWhenTargeting=" + onlyWhenTargeting + "\nvelocity.zen.waterCheck=" + waterCheck
                 + "\nvelocity.zen.instantAttack=" + instantAttack + "\nvelocity.zen.sprintStateCheck=" + sprintStateCheck + "\n"
                 + "velocity.zen.debug=" + debugChat + "\n";
     }
     public static int getMode() { return mode; }
-    public static void setMode(int v) { stop(true); mode = v >= 0 && v < MODES.length ? v : MODE_NOXZ; nextHookAttempt = tick; OpenMaverFeatures.markDirty(); }
+    public static void setMode(int v) { stop(true); mode = v >= 0 && v < MODES.length ? v : MODE_SPRINT_RESET; nextHookAttempt = tick; OpenMaverFeatures.markDirty(); }
     public static String getSummary() { return MODE_NAMES[mode]; }
     public static String getStatus() { return status; }
     public static long getSprintHits() { return attacks; }
@@ -442,10 +450,14 @@ public final class AttackReduceFeature {
     public static void setTryAttack(boolean v) { tryAttack = v; OpenMaverFeatures.markDirty(); }
     public static boolean getMovementOverride() { return movementOverride; }
     public static void setMovementOverride(boolean v) { movementOverride = v; OpenMaverFeatures.markDirty(); }
-    public static boolean getFollowDirection() { return followDirection; }
-    public static void setFollowDirection(boolean v) { followDirection = v; OpenMaverFeatures.markDirty(); }
-    public static int getRotateTicks() { return rotateTicks; }
-    public static void setRotateTicks(int v) { rotateTicks = Math.max(3, Math.min(20, v)); OpenMaverFeatures.markDirty(); }
+    public static int getChance() { return chance; }
+    public static void setChance(int v) { chance = Math.max(0, Math.min(100, v)); OpenMaverFeatures.markDirty(); }
+    public static int getAccuracy() { return accuracy; }
+    public static void setAccuracy(int v) { accuracy = Math.max(0, Math.min(100, v)); OpenMaverFeatures.markDirty(); }
+    public static boolean getOnlyWhenTargeting() { return onlyWhenTargeting; }
+    public static void setOnlyWhenTargeting(boolean v) { onlyWhenTargeting = v; OpenMaverFeatures.markDirty(); }
+    public static boolean getWaterCheck() { return waterCheck; }
+    public static void setWaterCheck(boolean v) { waterCheck = v; OpenMaverFeatures.markDirty(); }
     public static int getAttackAmount() { return attackAmount; }
     public static void setAttackAmount(int v) { attackAmount = Math.max(1, Math.min(20, v)); OpenMaverFeatures.markDirty(); }
     public static boolean getInstantAttack() { return instantAttack; }
