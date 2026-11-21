@@ -26,14 +26,17 @@ import javax.imageio.stream.ImageInputStream;
 import org.w3c.dom.NodeList;
 
 /**
- * 主菜单壁纸：原版全景图、静态图片与动态 GIF。
+ * 主菜单壁纸：原版全景图、静态图片、动态 GIF 与视频（MP4 / MOV / WebM / MKV）。
  *
- * <p>壁纸文件统一放在 {@code config/openmaver/wallpapers/}，支持 PNG / JPG / BMP / GIF。
- * 静态模式只显示第一帧；动态模式下 GIF 会循环播放，普通图片则使用缓慢的
+ * <p>壁纸文件统一放在 {@code config/openmaver/wallpapers/}，支持
+ * PNG / JPG / BMP / GIF / MP4 / M4V / MOV / WEBM / MKV。
+ * 静态模式只显示第一帧（视频也一样，只解首帧）；动态模式下 GIF 会循环播放，
+ * 视频走 {@link MaverVideo} 的 ffmpeg 流式解码循环播放，普通图片则使用缓慢的
  * Ken Burns 平移 / 缩放，没有选择文件时始终使用原版全景图。
  *
  * <p>图片解码与缩放全部在后台 daemon 线程完成，渲染线程只负责上传纹理和绘制，
- * 避免在主菜单里读大图造成卡顿。配置与 {@link OpenMaverFeatures} 共用
+ * 避免在主菜单里读大图造成卡顿。视频每帧只上传一帧到双缓冲纹理，解码跟不上时
+ * 继续画上一帧，主菜单帧率不会跟着视频抖动。配置与 {@link OpenMaverFeatures} 共用
  * {@code config/openmaver.properties}，ClickGUI 修改后由统一的保存流程落盘。
  */
 public final class MaverWallpaper {
@@ -56,8 +59,9 @@ public final class MaverWallpaper {
     public static final String[] FIT_NAMES = {"COVER", "CONTAIN", "STRETCH"};
     private static final String[] FIT_KEYS = {"cover", "contain", "stretch"};
 
-    private static final String[] IMAGE_EXTENSIONS = {
-        "png", "jpg", "jpeg", "bmp", "gif"
+    private static final String[] MEDIA_EXTENSIONS = {
+        "png", "jpg", "jpeg", "bmp", "gif", "webp", "avif",
+        "mp4", "m4v", "mov", "webm", "mkv"
     };
 
     /** GIF 最大纹理边长与帧数，避免高分辨率长 GIF 吃掉过多显存。 */
@@ -103,6 +107,26 @@ public final class MaverWallpaper {
     private static volatile String failedKey;
     private static boolean cleanupRequested;
     private static volatile PendingData pending;
+
+    // ---- 视频（MP4 / MOV / WebM）流式播放状态（只在渲染线程读写） ----
+    private static final int[] videoTextures = new int[2];
+    private static int videoActive = -1;
+    private static int videoWidth;
+    private static int videoHeight;
+    private static ByteBuffer videoBuffer;
+    private static int videoBufferBytes;
+    private static String videoKey;
+    private static volatile boolean videoStarting;
+    /** 图片/首帧解码失败后的重试时间（WebP 等格式可能等 ffmpeg 装好就能读）。 */
+    private static volatile long decodeRetryAt;
+    private static volatile int decodeFailures;
+    /** 已经提示过解码失败的那个 key，避免每帧刷日志。 */
+    private static volatile String warnedKey;
+    /** 当前壁纸解码失败时的 key，供 ClickGUI 直接显示原因。 */
+    private static volatile String decodeFailureKey;
+    /** 启动失败后的退避：连续失败越多等得越久，成功一帧就清零。 */
+    private static volatile int videoStartFailures;
+    private static volatile long videoNextRetryAt;
 
     private MaverWallpaper() {
     }
@@ -355,9 +379,33 @@ public final class MaverWallpaper {
         }
     }
 
-    /** 文件名是否代表动态 GIF（用于选中文件时自动切到 DYNAMIC）。 */
+    /** 文件名是否代表可循环播放的动态素材（GIF 或视频，用于选中文件时自动切到 DYNAMIC）。 */
     public static boolean isAnimatedFile(String name) {
-        return name != null && name.toLowerCase(Locale.ROOT).endsWith(".gif");
+        if (name == null) {
+            return false;
+        }
+        return name.toLowerCase(Locale.ROOT).endsWith(".gif") || MaverVideo.isVideoFile(name);
+    }
+
+    /**
+     * 当前壁纸解码失败时的简短原因（正常/加载中返回 null），供 ClickGUI 直接提示用户。
+     * 典型场景：`.png` 其实是 WebP、视频缺 ffmpeg。
+     */
+    public static String getStatusHint() {
+        ensureConfigLoaded();
+        String failed = decodeFailureKey;
+        if (failed == null || !failed.equals(currentKey())) {
+            return null;
+        }
+        if (MaverVideo.isVideoFile(new File(path).getName())) {
+            return "VIDEO NEEDS FFMPEG";
+        }
+        return "CAN'T DECODE · NEEDS FFMPEG";
+    }
+
+    /** 文件名是否是视频（MP4 / M4V / MOV / WEBM / MKV）。 */
+    public static boolean isVideoFile(String name) {
+        return MaverVideo.isVideoFile(name);
     }
 
     /** 当前选中的文件是否就是目录中的这一项。 */
@@ -378,12 +426,17 @@ public final class MaverWallpaper {
 
     private static boolean isSupported(File file) {
         String name = file.getName().toLowerCase(Locale.ROOT);
-        for (int i = 0; i < IMAGE_EXTENSIONS.length; i++) {
-            if (name.endsWith("." + IMAGE_EXTENSIONS[i])) {
+        for (int i = 0; i < MEDIA_EXTENSIONS.length; i++) {
+            if (name.endsWith("." + MEDIA_EXTENSIONS[i])) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** 当前路径指向视频文件（视频由 ffmpeg 流式解码，不参与图片预解码队列）。 */
+    private static boolean isVideoPath() {
+        return !path.isEmpty() && MaverVideo.isVideoFile(new File(path).getName());
     }
 
     // ==================================================================
@@ -400,11 +453,15 @@ public final class MaverWallpaper {
         ensureConfigLoaded();
         if (width <= 0 || height <= 0 || mode == MODE_PANORAMA || path.isEmpty()) {
             // 切回原版全景图时释放自定义壁纸纹理；每帧只在确实有纹理时删一次。
-            if (frameTextures.length > 0) {
+            if (frameTextures.length > 0 || videoActive >= 0 || MaverVideo.isRunning()) {
                 cleanupRequested = true;
             }
             releaseIfRequested();
             return false;
+        }
+
+        if (mode == MODE_DYNAMIC && isVideoPath()) {
+            return drawVideo(width, height);
         }
 
         releaseIfRequested();
@@ -446,6 +503,213 @@ public final class MaverWallpaper {
         return true;
     }
 
+    // ------------------------------------------------------------------
+    // 视频壁纸（ffmpeg 流式解码）
+    // ------------------------------------------------------------------
+
+    /**
+     * 视频背景：每帧从 {@link MaverVideo} 取一帧上传到双缓冲纹理。
+     *
+     * <p>解码跟不上（或视频刚启动、还没出帧）时继续画上一帧纹理，主菜单不会因为
+     * 视频编码复杂而掉帧。视频播完/文件被删/没有 ffmpeg 时返回 false，回退到原版全景图。
+     */
+    private static boolean drawVideo(int width, int height) {
+        releaseIfRequested();
+        String key = currentKey();
+        if (!key.equals(videoKey)) {
+            // 换文件 / 换模式 / 配置热重载：重建解码会话。
+            stopVideoSession();
+            videoKey = key;
+            videoStartFailures = 0;
+            videoNextRetryAt = 0L;
+        }
+        if (frameTextures.length > 0 || pending != null) {
+            // 从图片切到视频时清掉图片纹理，避免占着显存。
+            releaseTextures();
+            pending = null;
+        }
+        File selected = resolveFile(path);
+        if (MaverVideo.isRunning() && !MaverVideo.isPlaying(selected)) {
+            // 异步启动线程还没结束就换了文件：这里把起错的会话收掉。
+            stopVideoSession();
+        }
+        if (!MaverVideo.isRunning() && !videoStarting
+                && System.currentTimeMillis() >= videoNextRetryAt) {
+            startVideoSession(selected, key);
+        }
+
+        MaverVideo.touch();
+        MaverVideo.Frame frame = MaverVideo.take();
+        if (frame != null) {
+            try {
+                uploadVideoFrame(frame);
+            } finally {
+                MaverVideo.release(frame);
+            }
+        }
+        if (videoActive < 0 || videoTextures[videoActive] == 0) {
+            // 首帧还没解出来，这一帧先回退到原版全景图。
+            return false;
+        }
+        drawTexture(videoTextures[videoActive], videoWidth, videoHeight,
+                width, height, fit, 1.0F, 0.0F, 0.0F);
+        return true;
+    }
+
+    /**
+     * 在后台线程拉起解码会话：ffprobe 读分辨率 + 启动 ffmpeg 大约要 100ms 以上，
+     * 放在渲染线程里会让主菜单卡一下，所以这里只起线程，这一帧先画旧纹理/全景图。
+     */
+    private static void startVideoSession(final File selected, final String startKey) {
+        if (selected == null) {
+            noteVideoStartFailure();
+            return;
+        }
+        final int maxWidth = videoMaxWidth();
+        final int maxHeight = videoMaxHeight();
+        final int fps = videoFps();
+        videoStarting = true;
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (!MaverVideo.start(selected, maxWidth, maxHeight, fps)
+                            && startKey.equals(currentKey())) {
+                        // 只有用户还停在同一个壁纸上时才记失败；启动期间换了文件就不打扰新会话。
+                        noteVideoStartFailure();
+                    }
+                } finally {
+                    videoStarting = false;
+                }
+            }
+        }, "OpenMaver-VideoStart");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /**
+     * 记录一次启动失败并安排退避重试：前几次 1s / 2s / 3s，之后固定 20s，
+     * 这样 ffmpeg 后装、文件刚下载完、临时读不到盘这些情况都能自己恢复。
+     */
+    private static void noteVideoStartFailure() {
+        int failures = videoStartFailures + 1;
+        videoStartFailures = failures;
+        long delay = failures <= 3 ? 1000L * failures : 20000L;
+        videoNextRetryAt = System.currentTimeMillis() + delay;
+    }
+
+    private static void uploadVideoFrame(MaverVideo.Frame frame) {
+        if (frame.width <= 0 || frame.height <= 0) {
+            return;
+        }
+        if (videoWidth != frame.width || videoHeight != frame.height || videoActive < 0) {
+            releaseVideoTextures();
+            videoWidth = frame.width;
+            videoHeight = frame.height;
+            videoTextures[0] = createVideoTexture();
+            videoTextures[1] = createVideoTexture();
+            if (videoTextures[0] == 0 || videoTextures[1] == 0) {
+                releaseVideoTextures();
+                // GL 纹理创建失败：先停一会儿，避免每帧都去申请纹理。
+                videoNextRetryAt = System.currentTimeMillis() + 3000L;
+                return;
+            }
+            videoActive = 0;
+        }
+        int back = 1 - videoActive;
+        if (videoTextures[back] == 0) {
+            videoTextures[back] = createVideoTexture();
+            if (videoTextures[back] == 0) {
+                return;
+            }
+        }
+        int bytes = frame.width * frame.height * 4;
+        if (videoBuffer == null || videoBufferBytes < bytes) {
+            videoBuffer = ByteBuffer.allocateDirect(bytes);
+            videoBufferBytes = bytes;
+        }
+        videoBuffer.clear();
+        int[] pixels = frame.pixels;
+        for (int i = 0; i < pixels.length; i++) {
+            int argb = pixels[i];
+            videoBuffer.put((byte) (argb >> 16 & 0xFF));
+            videoBuffer.put((byte) (argb >> 8 & 0xFF));
+            videoBuffer.put((byte) (argb & 0xFF));
+            videoBuffer.put((byte) (argb >>> 24));
+        }
+        videoBuffer.flip();
+        GlStateManager.bindTexture(videoTextures[back]);
+        GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
+                frame.width, frame.height, 0, GL11.GL_RGBA,
+                GL11.GL_UNSIGNED_BYTE, videoBuffer);
+        GlStateManager.bindTexture(0);
+        videoActive = back;
+        videoStartFailures = 0;
+        videoNextRetryAt = 0L;
+    }
+
+    /** 视频帧用线性过滤，缩到窗口大小时比像素图的 NEAREST 更平滑。 */
+    private static int createVideoTexture() {
+        int texture = GL11.glGenTextures();
+        if (texture == 0) {
+            return 0;
+        }
+        GlStateManager.bindTexture(texture);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER,
+                GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER,
+                GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S,
+                GL11.GL_CLAMP_TO_EDGE);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T,
+                GL11.GL_CLAMP_TO_EDGE);
+        GlStateManager.bindTexture(0);
+        return texture;
+    }
+
+    private static void releaseVideoTextures() {
+        for (int i = 0; i < videoTextures.length; i++) {
+            if (videoTextures[i] != 0) {
+                GL11.glDeleteTextures(videoTextures[i]);
+                videoTextures[i] = 0;
+            }
+        }
+        videoActive = -1;
+        videoWidth = 0;
+        videoHeight = 0;
+        GlStateManager.bindTexture(0);
+    }
+
+    /** 停止解码进程 + 释放视频纹理 + 复位会话键。 */
+    private static void stopVideoSession() {
+        MaverVideo.stop();
+        releaseVideoTextures();
+    }
+
+    private static int videoMaxWidth() {
+        return intProperty("openmaver.wallpaper.videoWidth", 1280, 160, 3840);
+    }
+
+    private static int videoMaxHeight() {
+        return intProperty("openmaver.wallpaper.videoHeight", 720, 120, 2160);
+    }
+
+    private static int videoFps() {
+        return intProperty("openmaver.wallpaper.videoFps", 24, 5, 60);
+    }
+
+    private static int intProperty(String key, int fallback, int min, int max) {
+        try {
+            String raw = System.getProperty(key);
+            if (raw == null || raw.trim().isEmpty()) {
+                return fallback;
+            }
+            return clamp(Integer.parseInt(raw.trim()), min, max);
+        } catch (Throwable ignored) {
+            return fallback;
+        }
+    }
+
     private static void advanceGifFrame(long now) {
         long total = 0L;
         for (int i = 0; i < frameDelays.length; i++) {
@@ -475,8 +739,15 @@ public final class MaverWallpaper {
     // ------------------------------------------------------------------
 
     private static void ensureLoaded() {
+        if (mode == MODE_DYNAMIC && isVideoPath()) {
+            // 视频是流式播放，不需要（也不能）把整段预解码进内存。
+            return;
+        }
         String key = currentKey();
         if (key.equals(loadedKey) || key.equals(loadingKey) || key.equals(failedKey)) {
+            return;
+        }
+        if (System.currentTimeMillis() < decodeRetryAt) {
             return;
         }
         loadingKey = key;
@@ -496,8 +767,22 @@ public final class MaverWallpaper {
                     return;
                 }
                 if (data == null) {
-                    failedKey = key;
+                    // 不再把 failedKey 钉死：WebP/AVIF 要等 ffmpeg 就位、文件也可能还在写，
+                    // 所以按退避重试，用户重新选文件（revision 变化）时会立刻再试。
+                    int failures = decodeFailures + 1;
+                    decodeFailures = failures;
+                    decodeRetryAt = System.currentTimeMillis()
+                            + (failures <= 3 ? 3000L : 30000L);
+                    decodeFailureKey = key;
+                    if (!key.equals(warnedKey)) {
+                        warnedKey = key;
+                        System.err.println("[OpenMaver] 壁纸无法解码: " + requestedPath
+                                + "（ImageIO 不支持或文件损坏；WebP / AVIF 需要安装 ffmpeg）");
+                    }
                 } else {
+                    decodeFailures = 0;
+                    decodeRetryAt = 0L;
+                    decodeFailureKey = null;
                     data.key = key;
                     pending = data;
                 }
@@ -518,6 +803,18 @@ public final class MaverWallpaper {
             return null;
         }
         String name = file.getName().toLowerCase(Locale.ROOT);
+        if (MaverVideo.isVideoFile(name)) {
+            // 视频走 ffmpeg：STATIC 只解首帧，DYNAMIC 由 drawVideo 的流式会话接管
+            // （ensureLoaded 不会为动态视频起线程）。
+            MaverVideo.Still still = MaverVideo.firstFrame(file,
+                    videoMaxWidth(), videoMaxHeight());
+            if (still == null) {
+                return null;
+            }
+            List<Frame> videoFrames = new ArrayList<Frame>();
+            videoFrames.add(new Frame(still.pixels, still.width, still.height, 100));
+            return new PendingData(videoFrames);
+        }
         if (requestedMode == MODE_DYNAMIC && name.endsWith(".gif")) {
             try {
                 List<Frame> frames = decodeGif(file);
@@ -528,12 +825,25 @@ public final class MaverWallpaper {
                 // 动画解码失败时退回第一帧静态图。
             }
         }
-        BufferedImage image = ImageIO.read(file);
-        if (image == null) {
+        BufferedImage image = null;
+        try {
+            image = ImageIO.read(file);
+        } catch (Throwable ignored) {
+            // 损坏 / 不支持的编码：交给下面的 ffmpeg 兜底。
+        }
+        if (image != null) {
+            List<Frame> frames = new ArrayList<Frame>();
+            frames.add(toFrame(image, MAX_STATIC_SIZE, 100));
+            return new PendingData(frames);
+        }
+        // ImageIO 不支持 WebP / AVIF，扩展名和真实格式不符时也会走到这里；
+        // ffmpeg 能读的格式就直接解一帧当静态壁纸。
+        MaverVideo.Still still = MaverVideo.firstFrame(file, MAX_STATIC_SIZE, MAX_STATIC_SIZE);
+        if (still == null) {
             return null;
         }
         List<Frame> frames = new ArrayList<Frame>();
-        frames.add(toFrame(image, MAX_STATIC_SIZE, 100));
+        frames.add(new Frame(still.pixels, still.width, still.height, 100));
         return new PendingData(frames);
     }
 
@@ -726,6 +1036,8 @@ public final class MaverWallpaper {
         if (cleanupRequested) {
             cleanupRequested = false;
             releaseTextures();
+            stopVideoSession();
+            videoKey = null;
         }
     }
 
@@ -748,6 +1060,9 @@ public final class MaverWallpaper {
 
     private static void invalidate() {
         revision++;
+        decodeRetryAt = 0L;
+        decodeFailures = 0;
+        decodeFailureKey = null;
         pending = null;
         loadingKey = null;
         failedKey = null;

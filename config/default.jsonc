@@ -24,6 +24,10 @@
       "enabled": false,        // Scaffold 搭桥（OpenZen 移植）：默认关闭
       "key": ""                // 不绑定默认热键
     },
+    "telly": {
+      "enabled": false,        // Telly 跑跳搭路（OpenZen Telly Bridge / Old Telly）
+      "key": ""                // 在 ClickGUI 中开启或自行绑定热键
+    },
     "safewalk": {
       "enabled": false,        // SafeWalk 方块边缘潜行（从 Scaffold 的 eagle 拆出）：默认关闭
       "key": ""                // 不绑定默认热键

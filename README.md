@@ -3,7 +3,7 @@
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
 > 说明：本仓库包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接）
-> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Scaffold2 教材搭路辅助、GodBridge 神桥、SafeWalk 方块边缘潜行、AttackReduce、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、Inventory Manager 自动整理背包 / 自动穿甲、FPS / CPS 统计）
+> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Telly 跑跳搭路、Scaffold2 教材搭路辅助、GodBridge 神桥、SafeWalk 方块边缘潜行、AttackReduce、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、Inventory Manager 自动整理背包 / 自动穿甲、FPS / CPS 统计）
 > 以及 `legit / balanced / aggressive` 三档 Grim 对测 profile。
 > 请仅在你拥有或获得明确授权的服务器上进行测试。
 
@@ -64,7 +64,8 @@ OpenMaver/
 │   ├── GuiOpenMaverClickGui.java  # 游戏内 ClickGUI（分类 / 搜索 / 展开设置）
 │   ├── GuiMaverMainMenu.java      # 开始主菜单（透明按钮 / 原版清晰全景 / 账号头像）
 │   ├── MenuSkinPreview.java       # 无需世界实体的完整皮肤模型展示
-│   ├── MaverWallpaper.java        # 主菜单壁纸（原版全景 / 静态图片 / GIF）
+│   ├── MaverWallpaper.java        # 主菜单壁纸（原版全景 / 图片 / GIF / MP4 视频）
+│   ├── MaverVideo.java            # 视频壁纸解码：ffmpeg 流式 RGBA 帧 → 环形缓冲
 │   ├── MaverLogo.java             # 打包的 Maver Logo 纹理绘制
 │   ├── BundledResourcePack.java   # 首次启动安装自带的 2pimp v2 [16x] 材质包
 │   └── resources/openmaver/resourcepack/2pimp-v2-16x.zip  # 自带材质包本体
@@ -292,7 +293,7 @@ java -Djava.library.path=build/lib \
   左上角展示当前账号头像与用户名，旁边的 **+** 打开 Client Settings；
   右上角依次为 **Fullscreen / Wallpaper / Quit Game**，悬停显示入口名称。
   头像从微软 / Mojang 官方服务异步获取，支持旧版 64×32 皮肤，失败时展示 Steve。
-  背景可以替换成静态图片或动态 GIF，详见下面「主菜单壁纸」。
+  背景可以替换成静态图片、动态 GIF 或 MP4 等视频，详见下面「主菜单壁纸」。
 - **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关。
   列布局和客户端设置页均只使用半透明背景遮罩，不对主菜单或游戏画面做整屏模糊。
   纯灰色面板 + 中性灰描边，全部强调色统一为白色；左侧 Combat / Movement / Render /
@@ -311,15 +312,44 @@ java -Djava.library.path=build/lib \
   | 模式 | 效果 |
   |---|---|
   | `PANORAMA` | 清晰的原版旋转全景图（默认，无模糊） |
-  | `STATIC` | 静态 PNG / JPG / BMP 图片；GIF 只显示第一帧 |
-  | `DYNAMIC` | 动态 GIF 循环播放；普通图片做缓慢平移 / 缩放；未选文件时使用原版全景 |
+  | `STATIC` | 静态 PNG / JPG / BMP / WebP / AVIF 图片；GIF / 视频只显示第一帧 |
+  | `DYNAMIC` | 动态 GIF 循环播放；MP4 / MOV / WebM / MKV 循环播放视频；普通图片做缓慢平移 / 缩放；未选文件时使用原版全景 |
 
-  把图片放到 `config/openmaver/wallpapers/`（支持 `.png` / `.jpg` / `.jpeg` / `.bmp` / `.gif`），
-  然后在 Wallpaper 页选择文件即可；从主菜单打开时，选中的壁纸加载后会立即显示在设置页背景中。
+  把素材放到 `config/openmaver/wallpapers/`（支持 `.png` / `.jpg` / `.jpeg` / `.bmp` /
+  `.gif` / `.webp` / `.avif` / `.mp4` / `.m4v` / `.mov` / `.webm` / `.mkv`），
+  然后在 Wallpaper 页选择文件即可；
+  从主菜单打开时，选中的壁纸加载后会立即显示在设置页背景中。
   `FIT` 可设为 `COVER`（裁切铺满）、`CONTAIN`（完整显示、留黑边）
   或 `STRETCH`（拉伸铺满）。GIF 会在后台线程解码并限制到 720px 边长 / 64 帧，避免大文件拖慢主菜单。
   主菜单始终保持清晰，背景纹理使用逐像素采样，旧配置中的 `menu.wallpaper.blur` 已忽略。
   旧版 `dynamic` / `static` 模式未选文件时自动恢复原版全景，不再显示柔和的渐变背景。
+
+  Java 8 的 ImageIO 只认 PNG / JPG / BMP / GIF：`.webp`、`.avif`，以及**扩展名和内容不符**
+  的图片（例如把 WebP 改名成 `.png`）会由 ffmpeg 解一帧后当作静态壁纸显示，
+  所以装了 ffmpeg 的机器上这些格式一样能直接用。解不出来时不会静默失败：
+  Wallpaper 页顶部会显示红色的 `CAN'T DECODE · NEEDS FFMPEG` / `VIDEO NEEDS FFMPEG`，
+  控制台也会打印一次原因，并且会自动重试（装好 ffmpeg 后无需重启）。
+
+  视频走 `mc/MaverVideo.java`：后台线程启动
+  `ffmpeg -stream_loop -1 -re -i <file> -f rawvideo -pix_fmt rgba pipe:1`，
+  解码线程把 RGBA 帧转成 ARGB 写进 3 槽环形缓冲，渲染线程每帧只上传最新一帧到双缓冲纹理
+  （`GL_LINEAR`），解不过来时继续画上一帧，主菜单帧率不会被视频拖慢。
+  帧尺寸按视频原始比例缩到 `1280×720` 以内，`ffprobe` 读不到分辨率时退回 1280×720；
+  `STATIC` 模式只解首帧（一个 ffmpeg 进程、一帧纹理）。
+  视频壁纸需要本机有 **ffmpeg**（`ffprobe` 用于读分辨率，缺失时只是尺寸退化）：
+  解析顺序为 `-Dopenmaver.ffmpeg=<path>` → 环境变量 `OPENMAVER_FFMPEG` →
+  `config/openmaver/bin/ffmpeg[.exe]` → `PATH`。找不到 ffmpeg 时视频壁纸自动回退到原版全景图，
+  控制台会给出一行提示，图片 / GIF 壁纸不受影响。
+  主菜单停止绘制（例如进入世界）超过 6 秒会自动停掉 ffmpeg 进程，回到主菜单再自动拉起。
+  软件解码有 CPU 成本：1080p H.264 缩到 1280×720 @24fps 约占用单核 70–80%，
+  觉得重就用下面的参数降帧率或缩小尺寸（4K 源同理按比例缩放）。
+  视频解码参数可以用 JVM 参数覆盖：
+
+  ```text
+  -Dopenmaver.wallpaper.videoWidth=1280    # 帧最大宽度
+  -Dopenmaver.wallpaper.videoHeight=720    # 帧最大高度
+  -Dopenmaver.wallpaper.videoFps=24        # 输出帧率（5–60）
+  ```
   配置写入 `config/openmaver.properties`：
 
   ```properties
@@ -422,7 +452,7 @@ IO 失败只记录一次并自动停用 debug。
 
 ### Scaffold 自动搭路 / 搭桥（OpenZen 移植）
 
-- 配置路径：`movement.scaffold`，默认关闭，默认键位 **B**。
+- 配置路径：`movement.scaffold`，默认关闭，不绑定默认热键。
 - **实现来源**：完全按 `../OpenZen` 的 `shit.zen.modules.impl.movement.Scaffold`
   重写（不再是 Myau 的移植）。旧的 `rotations/moveFix/sprint/tower/keepY/...`
   设置与 `OpenMaverFeatures` 里那条旧放置路径已删除。
@@ -434,7 +464,7 @@ IO 失败只记录一次并自动停用 debug。
   - `OLD TELLY`：单 tick 180° 直接转向，起步时用相机 yaw。
   - `KEEP Y`：移动时按住空格，保持桥面高度。
 - 目标高度：`targetYLevel = floor(y) - 1`，只在“落地 / 停下 / 按住空格 /
-  `NORMAL`”时刷新；其余时间锁住，这是 telly 能连续向上铺的前提。
+  `NORMAL`”时刷新；其余时间锁住。这里的空格指物理输入，自动跳跃不会抬高桥面。
 - 目标格搜索：从 `targetYLevel` 开始，半径 1..6 的菱形向下扩；目标格必须是空气，
   六个邻居里要有实心支撑面，且面中心到眼睛 ≤ 4.5 格、法线朝向眼睛（`dot >= 0`）。
   放置点记成“支撑方块 + 指向目标格的那一面”。
@@ -490,6 +520,20 @@ IO 失败只记录一次并自动停用 debug。
 - 实现说明：`design/SCAFFOLD_HANDOFF.md` 记录状态机、包序与反射/SRG 名称；
   `design/SCAFFOLD_ROTATIONPLACE_HANDOFF.md` 保留 Grim `RotationPlace` 的判定链与
   对测记录（新实现仍然遵守它）。
+
+### Telly 跑跳搭路（OpenZen）
+
+- 在 ClickGUI 的 Movement 分类开启 `Telly`；默认关闭、没有默认热键，可自行绑定。
+  快捷栏准备整块方块，按移动键自动起跳搭路；停下会释放自动跳跃，物理按住空格可抬高桥面。
+- 支持 `TELLY BRIDGE` 和 `OLD TELLY`，沿用 OpenZen 的目标高度锁定、地面起跳与空中转向。
+  地面阶段不放块，空中按已发送的视角校验支撑面后放置，客户端相机保持原视角。
+- 右键展开可调 `MODE`、`SNEAK`、`CLUTCH`、`ROTATION TICK`、`SLOT`、`ITEM SPOOF`、`BLOCK HUD`。
+  `SLOT` 默认 `HOTBAR`；`ITEM SPOOF` 只在 `SILENT` 下生效。
+- 模块开关配置为 `movement.telly`，参数单独保存为 `config/openmaver.properties` 中的 `telly.*`，
+  与 Scaffold 参数独立。Telly 和 Scaffold / GodBridge / Scaffold2 互斥，后开启的模块接管。
+- 打开界面、死亡、断线、切换世界或关闭模块时释放自动按键并取消待放置目标；恢复后重新捕获桥面高度。
+- 复用 `mc/ScaffoldFeature.java` 的放置和静默转向引擎，参数在 `mc/TellyFeature.java`；
+  测试：`bash tools/telly-test/run.sh`（先完成 CMake 构建），实现说明见 `design/TELLY_HANDOFF.md`。
 
 ### GodBridge 神桥 / 蹲起搭路（教材重写版）
 

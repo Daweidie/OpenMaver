@@ -422,6 +422,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 addFastPlaceSettings(entry);
             } else if ("Scaffold".equals(module.getName())) {
                 addScaffoldSettings(entry);
+            } else if ("Telly".equals(module.getName())) {
+                addTellySettings(entry);
             } else if ("GodBridge".equals(module.getName())) {
                 addGodBridgeSettings(entry);
             } else if ("Scaffold2".equals(module.getName())) {
@@ -989,6 +991,38 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         entry.settings.add(Setting.check("BLOCK HUD", new Binding() {
             public double get() { return ScaffoldFeature.isHud() ? 1.0D : 0.0D; }
             public void set(double value) { ScaffoldFeature.setHud(value > 0.5D); }
+        }));
+    }
+
+    /** OpenZen Telly 两种模式及其独立参数。 */
+    private void addTellySettings(Entry entry) {
+        entry.settings.add(Setting.select("MODE", TellyFeature.MODE_NAMES, new Binding() {
+            public double get() { return TellyFeature.getMode(); }
+            public void set(double value) { TellyFeature.setMode((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("SNEAK", new Binding() {
+            public double get() { return TellyFeature.isSneak() ? 1.0D : 0.0D; }
+            public void set(double value) { TellyFeature.setSneak(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("CLUTCH", new Binding() {
+            public double get() { return TellyFeature.isClutch() ? 1.0D : 0.0D; }
+            public void set(double value) { TellyFeature.setClutch(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("ROTATION TICK", 1.0F, 6.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return TellyFeature.getRotationTick(); }
+            public void set(double value) { TellyFeature.setRotationTick((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.select("SLOT", SCAFFOLD_SLOT_MODES, new Binding() {
+            public double get() { return TellyFeature.getSlotMode(); }
+            public void set(double value) { TellyFeature.setSlotMode((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("ITEM SPOOF", new Binding() {
+            public double get() { return TellyFeature.isItemSpoof() ? 1.0D : 0.0D; }
+            public void set(double value) { TellyFeature.setItemSpoof(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("BLOCK HUD", new Binding() {
+            public double get() { return TellyFeature.isHud() ? 1.0D : 0.0D; }
+            public void set(double value) { TellyFeature.setHud(value > 0.5D); }
         }));
     }
 
@@ -2260,8 +2294,16 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         roundRect(x, listTop, w, listHeight, 8, withAlpha(0xFFFFFF, 0x08));
         roundRect(x, listTop + 2, 2, listHeight - 4, 1, withAlpha(ACCENT, 0x55));
         micro(font, "WALLPAPERS", x + 12, listTop + 5, FAINT);
-        String hint = "PNG / JPG / GIF";
-        micro(font, hint, x + w - 12 - microWidth(font, hint), listTop + 5, 0xFF596272);
+        String hint = "PNG / JPG / GIF / WEBP / MP4";
+        int hintColor = 0xFF596272;
+        String issue = MaverWallpaper.getStatusHint();
+        if (issue != null) {
+            // 当前壁纸解不出来时直接说明原因（例如 .png 其实是 WebP、或没装 ffmpeg）。
+            hint = issue;
+            hintColor = 0xFFE5826E;
+        }
+        hint = ellipsizeMicro(font, hint, Math.max(40, w - 120));
+        micro(font, hint, x + w - 12 - microWidth(font, hint), listTop + 5, hintColor);
 
         List<File> files = MaverWallpaper.listWallpapers();
         clampWallpaperScroll(files.size());
@@ -2277,7 +2319,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         popScissor();
 
         if (files.isEmpty()) {
-            String empty = "Drop images into " + MaverWallpaper.getWallpaperFolderDisplay();
+            String empty = "Drop images or clips into " + MaverWallpaper.getWallpaperFolderDisplay();
             micro(font, ellipsizeMicro(font, empty, w - 28), x + 14, listTop + 26,
                     0xFF7C8798);
             micro(font, "Then reopen this page / restart the client.", x + 14,
@@ -2345,8 +2387,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int badgeW = Math.max(26, microWidth(font, extension) + 12);
         int badgeX = x + w - 12 - badgeW;
         int badgeY = rowY + (rowHeight - 13) / 2;
+        // GIF / MP4 这类“会动”的素材用冷色调角标，跟静态图片区分开。
+        boolean animated = "GIF".equals(extension)
+                || MaverWallpaper.isVideoFile("x." + extension);
         roundRect(badgeX, badgeY, badgeW, 13, 5,
-                withAlpha("GIF".equals(extension) ? 0xBFE9FF : 0xFFFFFF,
+                withAlpha(animated ? 0xBFE9FF : 0xFFFFFF,
                         selected ? 0x28 : 0x12));
         micro(font, extension, badgeX + (badgeW - microWidth(font, extension)) / 2,
                 badgeY + 3, selected ? withAlpha(ACCENT, 0xF0) : 0xFF8B96A6);

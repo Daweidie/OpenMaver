@@ -10,6 +10,7 @@ import module.movement.GodBridge;
 import module.movement.SafeWalk;
 import module.movement.Scaffold;
 import module.movement.Scaffold2;
+import module.movement.Telly;
 import module.movement.AttackReduce;
 import module.misc.FakePlayer;
 import module.misc.MoveDisabler;
@@ -317,6 +318,9 @@ public final class OpenMaver {
 
         // 移动模块：GodBridge 神桥 / 蹲起搭路（配置路径 movement.godbridge；MC 侧逻辑在 mc/GodBridgeFeature）
         ModuleManager.register(new GodBridge());
+
+        // 独立 Telly 搭路，使用单独的 telly.* 参数，共用 Scaffold 的 MC 引擎。
+        ModuleManager.register(new Telly());
 
         // 移动模块：SafeWalk 方块边缘潜行（配置路径 movement.safewalk；
         // MC 侧逻辑在 mc/SafeWalkFeature，原本是 Scaffold 的 eagle）

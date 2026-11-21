@@ -33,6 +33,8 @@ public final class GodBridge extends Module {
 
     @Override
     public void onEnable() {
+        Module telly = ModuleManager.getModule("Telly");
+        if (telly != null) telly.setEnabled(false);
         // 两套搭桥同时开会让两条状态机抢同一个 C08 名额与 Shift 键。
         // 神桥优先：开启时把旧的 Scaffold 关掉（配置里仍可单独再开回来）。
         Module scaffold = ModuleManager.getModule("Scaffold");

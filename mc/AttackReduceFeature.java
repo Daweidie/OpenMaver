@@ -303,7 +303,7 @@ public final class AttackReduceFeature {
         set(cameraPlayer, "rotationPitch", "field_70125_A", cameraPitch + number(cameraPlayer, "rotationPitch", "field_70125_A") - writtenPitch);
         cameraChanged = false; cameraPlayer = null;
     }
-    private static boolean rotationBusy() { return moduleEnabled("Scaffold") || moduleEnabled("GodBridge") || OpenMaverFeatures.velocityAuraTarget() != null; }
+    private static boolean rotationBusy() { return moduleEnabled("Scaffold") || moduleEnabled("Telly") || moduleEnabled("GodBridge") || OpenMaverFeatures.velocityAuraTarget() != null; }
     private static void ensureMovementHook(Session s) {
         Object input = read(s.player, "movementInput", "field_71158_b");
         if (input instanceof ScaffoldMovementInput) return;

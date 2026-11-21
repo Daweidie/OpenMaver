@@ -1,6 +1,7 @@
 package module.movement;
 
 import module.Module;
+import module.ModuleManager;
 import util.Logger;
 
 /**
@@ -30,6 +31,8 @@ public final class Scaffold extends Module {
 
     @Override
     public void onEnable() {
+        Module telly = ModuleManager.getModule("Telly");
+        if (telly != null) telly.setEnabled(false);
         Logger.info(getName(), "自动搭路已启用");
     }
 

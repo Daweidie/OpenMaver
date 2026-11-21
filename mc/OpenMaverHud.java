@@ -480,7 +480,7 @@ public final class OpenMaverHud {
         if ("FastPlace".equals(name)) {
             return OpenMaverFeatures.getFastPlaceStatus();
         }
-        if ("Scaffold".equals(name)) {
+        if ("Scaffold".equals(name) || "Telly".equals(name)) {
             int blocks = ScaffoldFeature.getBlockCount();
             return Math.max(0, blocks) + "b";
         }

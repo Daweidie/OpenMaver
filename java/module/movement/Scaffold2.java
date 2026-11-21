@@ -1,6 +1,7 @@
 package module.movement;
 
 import module.Module;
+import module.ModuleManager;
 import util.Logger;
 
 /** 教材式手动搭路辅助开关。 */
@@ -12,6 +13,8 @@ public final class Scaffold2 extends Module {
 
     @Override
     public void onEnable() {
+        Module telly = ModuleManager.getModule("Telly");
+        if (telly != null) telly.setEnabled(false);
         Logger.info(getName(), "教材式搭路辅助已启用");
     }
 

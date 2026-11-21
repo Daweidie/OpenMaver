@@ -288,7 +288,7 @@ public final class ScaffoldPlaceOrderTest {
         check("a non-block held item never fakes a C08",
                 feature.contains("return isPlaceableBlock(held) ? held : null;"));
         check("item spoof is gated to the SILENT slot mode",
-                feature.contains("slotMode == SLOT_SILENT && itemSpoof"));
+                feature.contains("bridgeSettings.slotMode == SLOT_SILENT && bridgeSettings.itemSpoof"));
         check("C09 and C08 are separated by one tick",
                 feature.contains("slotSwitchTick == currentTick"));
         check("slot mode is persisted",

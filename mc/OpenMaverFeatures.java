@@ -468,7 +468,7 @@ public final class OpenMaverFeatures {
             clientTick++;
             ScaffoldFeature.tickCounter(clientTick);
             processPendingCriticalJump(mc);
-            // Scaffold 需要在本 tick 的 C03 之前完成旋转、Tower 与放置。
+            // Scaffold / Telly 共用引擎，在本 tick 的 C03 之前规划旋转与放置。
             ScaffoldFeature.onTickStart(mc);
             // GodBridge（神桥 / 蹲起搭路）晚一步跑：Scaffold 若被它顶掉，
             // 这里已经完成按键还原，神桥可以重新接管 Shift。
@@ -2046,10 +2046,11 @@ public final class OpenMaverFeatures {
         fastPlaceLastLoggedState = enabled ? state : "";
     }
 
-    /** Scaffold 是否启用；balanced 下 FastPlace 需要让位。 */
+    /** Scaffold / Telly 是否启用；balanced 下 FastPlace 需要让位。 */
     private static boolean placementModuleEnabled() {
         Module scaffold = ModuleManager.getModule("Scaffold");
-        return scaffold != null && scaffold.isEnabled();
+        Module telly = ModuleManager.getModule("Telly");
+        return (scaffold != null && scaffold.isEnabled()) || (telly != null && telly.isEnabled());
     }
 
     private static Integer readIntField(Object target, String mcp, String srg) {        Field field = findField(target, runtimeCandidates(mcp, srg));
@@ -2991,6 +2992,7 @@ public final class OpenMaverFeatures {
         fastPlaceJitter = readBoolean(values, "fastplace.jitter", true);
         fastPlaceOnlyBlocks = readBoolean(values, "fastplace.onlyBlocks", true);
         ScaffoldFeature.load(values);
+        TellyFeature.load(values);
         GodBridgeFeature.load(values);
         Scaffold2Feature.load(values);
         SafeWalkFeature.load(values);
@@ -3684,6 +3686,7 @@ public final class OpenMaverFeatures {
                     + "\nkillaura.smoothing=" + killAuraSmoothing
                     + "\nkillaura.requirePress=" + killAuraRequirePress
                     + "\n" + ScaffoldFeature.save()
+                    + "\n" + TellyFeature.save()
                     + "\n" + GodBridgeFeature.save()
                     + "\n" + Scaffold2Feature.save()
                     + "\n" + SafeWalkFeature.save()

@@ -103,7 +103,7 @@ public final class ScaffoldHud {
         if (visible > 0.01F) {
             return true;
         }
-        return moduleEnabled() && ScaffoldFeature.isHud();
+        return moduleEnabled();
     }
 
     public static void render(FontRenderer font, ScaledResolution resolution, long now) {
@@ -121,7 +121,7 @@ public final class ScaffoldHud {
 
     private static void draw(FontRenderer font, ScaledResolution resolution, long now) {
         Minecraft mc = Minecraft.getMinecraft();
-        boolean active = mc != null && moduleEnabled() && ScaffoldFeature.isHud();
+        boolean active = mc != null && moduleEnabled();
         Object world = mc == null ? null
                 : OpenMaverFeatures.read(mc, "theWorld", "field_71441_e", null);
         Object player = mc == null ? null
@@ -451,8 +451,10 @@ public final class ScaffoldHud {
     // ==================================================================
 
     private static boolean moduleEnabled() {
+        Module telly = ModuleManager.getModule("Telly");
+        if (telly != null && telly.isEnabled()) return TellyFeature.isHud();
         Module module = ModuleManager.getModule("Scaffold");
-        return module != null && module.isEnabled();
+        return module != null && module.isEnabled() && ScaffoldFeature.isHud();
     }
 
     private static int color(int rgb, float alpha) {
