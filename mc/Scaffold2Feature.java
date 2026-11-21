@@ -113,7 +113,11 @@ public final class Scaffold2Feature {
     }
 
     public static String save() {
-        return "scaffold2.mode=" + mode + "\nscaffold2.releaseTicks=" + releaseTicks;
+        // ★ 结尾必须有换行：saveSettings 是直接字符串拼接的，少了这一个 "\n"
+        // 下一段（AttackReduce 的 save()，以 "attackreduce.mode=" 开头）会被粘成
+        // `scaffold2.releaseTicks=2attackreduce.mode=9` —— 整行报废，
+        // attackreduce.mode 永远读不到、每次启动都掉回默认值。
+        return "scaffold2.mode=" + mode + "\nscaffold2.releaseTicks=" + releaseTicks + "\n";
     }
 
     private static int readInt(Properties values, String key, int fallback) {

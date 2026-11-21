@@ -14,7 +14,7 @@ import io.netty.channel.ChannelHandlerContext;
  * 「服务端还认为这个窗口开着」，而不是靠 {@code Thread.sleep} 式的估算。
  *
  * <p><b>不改包、不拦截</b>：入站原样 {@code fireChannelRead}，出站完全不碰
- * （出站由 {@code VelocityPacketHook} 负责，两者互不干扰）。
+ * （出站由 {@code AttackReducePacketHook} 负责，两者互不干扰）。
  *
  * <p><b>线程</b>：回调运行在 Netty 的 I/O 线程，因此这里绝不读世界 / 实体 / 容器，
  * 只把包对象交给 {@link ChestFeature#noteInboundPacket(Object)} 写两个 volatile 字段。

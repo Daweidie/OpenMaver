@@ -17,7 +17,7 @@
 | `mc/ScaffoldHud.java` | OpenZen 的方块计数卡（图标 + 进度条 + `N blocks` / `b/s`） |
 | `mc/GuiOpenMaverClickGui.java` | 展开 Scaffold 的 8 个设置 |
 | `mc/OpenMaverFeatures.java` | 每 tick 驱动 `onTickStart` / `onTickEnd`，以及 S12 观察入口 |
-| `mc/VelocityPacketHook.java` + `VelocityFeature` | 入站 S12 转发给 `ScaffoldFeature.noteInboundPacket` |
+| `mc/AttackReducePacketHook.java` + `AttackReduceFeature` | 入站 S12 转发给 `ScaffoldFeature.noteInboundPacket` |
 | `tools/scaffold-test/` | 70 项回归（决策表 / 旋转数学 / 源码结构） |
 
 配置写在 `config/openmaver.properties`：
@@ -208,7 +208,7 @@ tick N+1 : flushPending()
 
 - `pendingDecision(sent, rayHit, retries)` 是决策表本体，测试直接调它。
 - `place()` 只由 `flushPending()` 调用；内部 `OpenMaverFeatures.claimPlacement()`
-  保证**一 tick 一条 C08**（与 Velocity 的 farm 共用名额，避免 `MultiPlace`）。
+  保证**一 tick 一条 C08**（与 AttackReduce 的 farm 共用名额，避免 `MultiPlace`）。
 - 命中判定用 `mopMatches()`：`typeOfHit == BLOCK`、`blockPos` 等于支撑方块、
   `sideHit` 等于要点击的面。
 - `shouldBuild()`：脚下方块（`floor(y - 0.5)`）必须是空气 —— OpenZen 的
@@ -326,6 +326,6 @@ tools/scaffold-test/run.sh    # 70 项
 
 - 没有 `mixin`，所以 `Render Item Spoof` 是“槽位翻转”而不是渲染事件替换；
   某些整合包若也在 `movementInput` 上做文章，hook 会主动放弃（有 `noticeOnce` 提示）。
-- `S12` 观察依赖 Netty handler 已安装（与 Velocity 共用，`VelocityPacketHook` 无条件转发）。
+- `S12` 观察依赖 Netty handler 已安装（与 AttackReduce 共用，`AttackReducePacketHook` 无条件转发）。
 - 1.8.9 服务端对 C08 的校验只看距离/槽位，不看 rotation；`RotationPlace` 是 Grim 的
   客户端行为检查，所以 `holdPlaceAim` 只在 Grim 上有意义，在 vanilla 服务器上无副作用。

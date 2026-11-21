@@ -21,6 +21,7 @@ public class Minecraft {
 
     public static Minecraft getMinecraft() { return null; }
     public void displayGuiScreen(GuiScreen s) { this.currentScreen = s; }
+    public void toggleFullscreen() {}
     public RenderManager getRenderManager() { return renderManager; }
     public TextureManager getTextureManager() { return null; }
     public Session getSession() { return null; }

@@ -104,7 +104,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final int GLASS_EDGE = 0xFFBFBFBF;
     private static final int GLASS_EDGE_BRIGHT = 0xFFEDEDED;
 
-    /** 纯灰色面板 / 分类栏 / 卡片。面板与分类栏略带透明，让底层模糊透出来。 */
+    /** 纯灰色面板 / 分类栏 / 卡片，半透明区域直接透出清晰背景。 */
     private static final int PANEL_SOLID = 0xC82E2E2E;
     private static final int RAIL_SOLID = 0xD0272727;
     private static final int CARD_FILL = 0xE6383838;
@@ -217,8 +217,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private int dragW;
     private boolean panelDragging;
     private boolean logoSizeDragging;
-    /** 壁纸页的背景模糊进度条是否正在拖动。 */
-    private boolean wallpaperBlurDragging;
     private float logoScale = 1.00F;
     private int panelDragOffsetX;
     private int panelDragOffsetY;
@@ -358,14 +356,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     logoSizeDragging = false;
                 }
             }
-            if (wallpaperBlurDragging) {
-                if (Mouse.isButtonDown(0)) {
-                    updateWallpaperBlur(mouseX);
-                } else {
-                    wallpaperBlurDragging = false;
-                    OpenMaverFeatures.flushSettings();
-                }
-            }
             if (systemPage == null) {
                 updateColumnPress(mouseX, mouseY);
                 drawColumns();
@@ -435,7 +425,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             } else if ("Scaffold2".equals(module.getName())) {
                 addScaffold2Settings(entry);
             } else if ("Velocity".equals(module.getName())) {
-                addVelocitySettings(entry);
+                addAttackReduceSettings(entry);
             } else if ("FakePlayer".equals(module.getName())) {
                 addFakePlayerSettings(entry);
             } else if ("Target HUD".equals(module.getName())) {
@@ -901,97 +891,31 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }));
     }
 
-    /**
-     * Velocity 设置。
-     *
-     * <p>前两项（MODE / SERVER）决定策略，其余滑块是对该策略的参数微调；
-     * 与 LiquidBounce 的 Velocity 一致：MODIFY 看水平/垂直比例，REVERSAL 看延迟，
-     * STRAFE 看侧移倍率，JUMP RESET 看起跳延迟，BLINK 看憋包 tick 与 burst 攻击数。
-     */
-    private void addVelocitySettings(Entry entry) {
-        entry.settings.add(Setting.select("MODE", VelocityFeature.MODE_NAMES, new Binding() {
-            public double get() { return VelocityFeature.getMode(); }
-            public void set(double value) { VelocityFeature.setMode((int) Math.round(value)); }
+    /** Myau/Zen 参考模式、原版攻击模式、SIMPLE 百分比模式。 */
+    private void addAttackReduceSettings(Entry entry) {
+        entry.settings.add(Setting.select("MODE", AttackReduceFeature.MODE_NAMES, new Binding() {
+            public double get() { return AttackReduceFeature.getMode(); }
+            public void set(double value) { AttackReduceFeature.setMode((int) Math.round(value)); }
         }));
-        entry.settings.add(Setting.select("SERVER", VelocityFeature.SERVER_NAMES, new Binding() {
-            public double get() { return VelocityFeature.getServer(); }
-            public void set(double value) { VelocityFeature.setServer((int) Math.round(value)); }
+        entry.settings.add(Setting.check("CHAT DEBUG", new Binding() {
+            public double get() { return AttackReduceFeature.getChatDebug() ? 1.0D : 0.0D; }
+            public void set(double value) { AttackReduceFeature.setChatDebug(value > 0.5D); }
         }));
-        entry.settings.add(Setting.slider("NOXZ ATTACKS", 1.0F, 8.0F, 1.0F, 0, "x", new Binding() {
-            public double get() { return VelocityFeature.getNoXzAttacks(); }
-            public void set(double value) { VelocityFeature.setNoXzAttacks((int) Math.round(value)); }
+        entry.settings.add(Setting.check("SLAP EXACT", new Binding() {
+            public double get() { return AttackReduceFeature.getSlapExact() ? 1.0D : 0.0D; }
+            public void set(double value) { AttackReduceFeature.setSlapExact(value > 0.5D); }
         }));
-        entry.settings.add(Setting.check("SLAP AUTO-AIM", new Binding() {
-            public double get() { return VelocityFeature.isSlapAim() ? 1.0D : 0.0D; }
-            public void set(double value) { VelocityFeature.setSlapAim(value > 0.5D); }
+        entry.settings.add(Setting.check("SLAP CROSSHAIR", new Binding() {
+            public double get() { return AttackReduceFeature.getSlapCrosshair() ? 1.0D : 0.0D; }
+            public void set(double value) { AttackReduceFeature.setSlapCrosshair(value > 0.5D); }
         }));
-        entry.settings.add(Setting.slider("SLAP TICKS", 1.0F, 10.0F, 1.0F, 0, "t", new Binding() {
-            public double get() { return VelocityFeature.getSlapMaxTicks(); }
-            public void set(double value) { VelocityFeature.setSlapMaxTicks((int) Math.round(value)); }
+        entry.settings.add(Setting.slider("SIMPLE H", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
+            public double get() { return AttackReduceFeature.getHorizontal(); }
+            public void set(double value) { AttackReduceFeature.setHorizontal(value); }
         }));
-        entry.settings.add(Setting.slider("UNCERTAIN TICKS", 1.0F, 3.0F, 1.0F, 0, "t", new Binding() {
-            public double get() { return VelocityFeature.getUncertaintyTicks(); }
-            public void set(double value) { VelocityFeature.setUncertaintyTicks((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.check("UNCERTAIN FARM", new Binding() {
-            public double get() { return VelocityFeature.isUncertaintyFarm() ? 1.0D : 0.0D; }
-            public void set(double value) { VelocityFeature.setUncertaintyFarm(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("GRIM GUARD", new Binding() {
-            public double get() { return VelocityFeature.isGrimGuard() ? 1.0D : 0.0D; }
-            public void set(double value) { VelocityFeature.setGrimGuard(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.slider("HORIZONTAL", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
-            public double get() { return VelocityFeature.getHorizontal() * 100.0F; }
-            public void set(double value) { VelocityFeature.setHorizontal((float) (value / 100.0D)); }
-        }));
-        entry.settings.add(Setting.slider("VERTICAL", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
-            public double get() { return VelocityFeature.getVertical() * 100.0F; }
-            public void set(double value) { VelocityFeature.setVertical((float) (value / 100.0D)); }
-        }));
-        entry.settings.add(Setting.slider("REVERSAL DELAY", 0.0F, 600.0F, 10.0F, 0, " ms", new Binding() {
-            public double get() { return VelocityFeature.getReversalDelay(); }
-            public void set(double value) { VelocityFeature.setReversalDelay((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.slider("REVERSAL POWER", 0.2F, 1.5F, 0.05F, 2, "x", new Binding() {
-            public double get() { return VelocityFeature.getReversalStrength(); }
-            public void set(double value) { VelocityFeature.setReversalStrength((float) value); }
-        }));
-        entry.settings.add(Setting.slider("STRAFE FACTOR", 0.2F, 1.6F, 0.05F, 2, "x", new Binding() {
-            public double get() { return VelocityFeature.getStrafeFactor(); }
-            public void set(double value) { VelocityFeature.setStrafeFactor((float) value); }
-        }));
-        entry.settings.add(Setting.slider("JUMP DELAY", 0.0F, 3.0F, 1.0F, 0, "t", new Binding() {
-            public double get() { return VelocityFeature.getJumpDelay(); }
-            public void set(double value) { VelocityFeature.setJumpDelay((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.slider("BLINK TICKS", 1.0F, 20.0F, 1.0F, 0, "t", new Binding() {
-            public double get() { return VelocityFeature.getBlinkTicks(); }
-            public void set(double value) { VelocityFeature.setBlinkTicks((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.slider("BURST ATTACKS", 1.0F, 8.0F, 1.0F, 0, "x", new Binding() {
-            public double get() { return VelocityFeature.getBurstAttacks(); }
-            public void set(double value) { VelocityFeature.setBurstAttacks((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.slider("BURST RANGE", 2.0F, 6.0F, 0.1F, 1, " m", new Binding() {
-            public double get() { return VelocityFeature.getBurstRange(); }
-            public void set(double value) { VelocityFeature.setBurstRange((float) value); }
-        }));
-        entry.settings.add(Setting.check("FLUSH POSITION", new Binding() {
-            public double get() { return VelocityFeature.isBlinkFlush() ? 1.0D : 0.0D; }
-            public void set(double value) { VelocityFeature.setBlinkFlush(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.slider("BLINK MOTION", 0.0F, 100.0F, 5.0F, 0, "%", new Binding() {
-            public double get() { return VelocityFeature.getBlinkKeep() * 100.0F; }
-            public void set(double value) { VelocityFeature.setBlinkKeep((float) (value / 100.0D)); }
-        }));
-        entry.settings.add(Setting.check("BURST ROTATE", new Binding() {
-            public double get() { return VelocityFeature.isBurstRotate() ? 1.0D : 0.0D; }
-            public void set(double value) { VelocityFeature.setBurstRotate(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("BLINK REWIND", new Binding() {
-            public double get() { return VelocityFeature.isBlinkRewind() ? 1.0D : 0.0D; }
-            public void set(double value) { VelocityFeature.setBlinkRewind(value > 0.5D); }
+        entry.settings.add(Setting.slider("SIMPLE V", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
+            public double get() { return AttackReduceFeature.getVertical(); }
+            public void set(double value) { AttackReduceFeature.setVertical(value); }
         }));
     }
 
@@ -1077,12 +1001,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         float reveal = viewReveal();
         GlColor.restore();
 
-        // 背景：模糊强度和透明度同时随动画变化，形成平滑的焦点过渡，
-        // 关闭到最后一帧时会自然回到清晰画面，而不是突然切换。
-        ScaledResolution resolution = new ScaledResolution(this.mc);
-        GuiBlur.beginFrame(this.width, this.height, resolution.getScaleFactor());
-        GuiBlur.draw(0, 0, this.width, this.height, 0.0F, 0x0C0F15,
-                0.34F * openProgress, openProgress, openProgress);
+        drawBackgroundOverlay(0.34F);
 
         GL11.glPushMatrix();
         // 打开时从面板中心向外放大，关闭时沿同一路径缩回。
@@ -1110,6 +1029,16 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         drawFooter(font);
         drawSelectPopup(font);
         GL11.glPopMatrix();
+    }
+
+    private void drawBackgroundOverlay(float opacity) {
+        if (returnScreen instanceof GuiMaverMainMenu) {
+            // 主菜单不再是当前 screen，需要主动重绘背景才能加载并预览新壁纸。
+            ((GuiMaverMainMenu) returnScreen).drawBackground(this.width, this.height);
+        }
+        // 只绘制透明遮罩，不抓屏、不降采样，背景始终保持原始清晰度。
+        Gui.drawRect(0, 0, this.width, this.height,
+                fade(0xFF0C0F15, opacity * openProgress * openProgress));
     }
 
     // ==================================================================
@@ -1226,10 +1155,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     private void drawColumns() {
         GlColor.restore();
-        ScaledResolution resolution = new ScaledResolution(this.mc);
-        GuiBlur.beginFrame(this.width, this.height, resolution.getScaleFactor());
-        GuiBlur.draw(0, 0, this.width, this.height, 0.0F, 0x0C0F15,
-                0.30F * openProgress, openProgress, openProgress);
+        drawBackgroundOverlay(0.30F);
 
         FontRenderer font = this.mc.fontRendererObj;
         Column top = topColumnAt(lastMouseX, lastMouseY);
@@ -2133,37 +2059,22 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     private int wallpaperRowH() {
         int h = panelH - HEADER_H - FOOTER_H - 16;
-        return clampInt((h - 96) / 7, 24, 42);
+        // 小窗口也要为文件列表保留空间，不能让四个设置行占满面板。
+        return clampInt((h - 96) / 7, 16, 42);
     }
 
     private int wallpaperRowGap() {
-        return 6;
+        return panelH < 280 ? 2 : 6;
     }
 
     private int wallpaperListTop() {
         int y = panelY + HEADER_H + 8;
-        return y + 5 * (wallpaperRowH() + wallpaperRowGap()) + 10;
+        return y + 4 * (wallpaperRowH() + wallpaperRowGap())
+                + (panelH < 280 ? 4 : 10);
     }
 
     private int wallpaperListBottom() {
         return panelY + panelH - FOOTER_H - 8;
-    }
-
-    private int wallpaperBlurRowY() {
-        int y = panelY + HEADER_H + 8;
-        return y + 4 * (wallpaperRowH() + wallpaperRowGap());
-    }
-
-    private int wallpaperBlurBarX() {
-        return listX + Math.round(listW * 0.40F);
-    }
-
-    private int wallpaperBlurBarW() {
-        return Math.max(56, listX + listW - 52 - wallpaperBlurBarX());
-    }
-
-    private int wallpaperBlurBarY() {
-        return wallpaperBlurRowY() + wallpaperRowH() / 2 - 2;
     }
 
     private int wallpaperFileRowH() {
@@ -2189,7 +2100,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 MaverWallpaper.getDisplayName(), MaverWallpaper.isBuiltIn());
         drawWallpaperRow(font, x, y + (rowH + gap) * 3, w, rowH, 3, "FOLDER",
                 "OPEN", false);
-        drawWallpaperBlurRow(font, x, wallpaperBlurRowY(), w, rowH);
 
         int listTop = wallpaperListTop();
         int listBottom = wallpaperListBottom();
@@ -2252,59 +2162,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         micro(font, shown, right - pillW + 8, controlY + 4,
                 active ? withAlpha(ACCENT, 0xF0)
                         : blendColor(TEXT_2, TEXT, hover * 0.65F));
-    }
-
-    /** 壁纸页底部的背景模糊进度条。 */
-    private void drawWallpaperBlurRow(FontRenderer font, int x, int y, int w, int rowH) {
-        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
-        int barX = wallpaperBlurBarX();
-        int barY = wallpaperBlurBarY();
-        int barW = wallpaperBlurBarW();
-        boolean hovered = isHovered(lastMouseX, lastMouseY, x, y, w, rowH);
-        ControlAnim anim = control("wallrow:4", hovered || wallpaperBlurDragging,
-                wallpaperBlurDragging, now);
-        float hover = Math.max(anim.hover, wallpaperBlurDragging ? 1.0F : 0.0F);
-
-        roundRect(x, y, w, rowH, 8,
-                withAlpha(0xFFFFFF, Math.round(0x08 + 0x07 * hover)));
-        roundRect(x, y + 2, 2, rowH - 4, 1,
-                withAlpha(ACCENT, Math.round(0x44 + 0x40 * hover)));
-        hud(font, "BLUR", x + 14, y + (rowH - 11) / 2 + 2,
-                blendColor(TEXT, 0xFFFFFFFF, hover * 0.6F));
-
-        int trackH = Math.max(3, Math.round(4.0F * Math.min(1.2F, rowH / 30.0F)));
-        roundRect(barX, barY, barW, trackH, trackH / 2,
-                withAlpha(0xFFFFFF, Math.round(0x20 + 0x16 * hover)));
-        float value = MaverWallpaper.getBlurStrength();
-        int fill = Math.round(barW * value);
-        if (fill > 0) {
-            roundRect(barX, barY, fill, trackH, trackH / 2,
-                    withAlpha(ACCENT, Math.round(0xCC + 0x2A * hover)));
-            roundRect(barX, barY, fill, Math.max(1, trackH / 2),
-                    Math.max(1, trackH / 2), withAlpha(0xFFFFFF, 0x24));
-        }
-        int knob = clampInt(Math.round(7.0F + 2.0F * hover), 7, 10);
-        int knobX = barX + fill;
-        int knobY = barY + trackH / 2;
-        roundRect(knobX - knob / 2 - 2, knobY - knob / 2 - 2, knob + 4, knob + 4,
-                (knob + 4) / 2, withAlpha(ACCENT, Math.round(0x20 + 0x20 * hover)));
-        roundRect(knobX - knob / 2, knobY - knob / 2, knob, knob, knob / 2, ACCENT);
-
-        String percent = MaverWallpaper.getBlurPercent() + "%";
-        int textY = y + (rowH - 8) / 2;
-        micro(font, percent, x + w - 14 - microWidth(font, percent), textY,
-                blendColor(TEXT_2, TEXT, hover * 0.65F));
-    }
-
-    private void updateWallpaperBlur(int mouseX) {
-        int barX = wallpaperBlurBarX();
-        int barW = wallpaperBlurBarW();
-        if (barW <= 0) {
-            return;
-        }
-        float percent = (mouseX - barX) / (float) barW;
-        percent = Math.max(0.0F, Math.min(1.0F, percent));
-        MaverWallpaper.setBlurStrength(Math.round(percent * 100.0F) / 100.0F);
     }
 
     private void drawWallpaperFileRow(FontRenderer font, int x, int y, int w,
@@ -3100,12 +2957,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int rowH = wallpaperRowH();
         int gap = wallpaperRowGap();
 
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 4; i++) {
             int rowY = y + i * (rowH + gap);
             if (!isHovered(mouseX, mouseY, x, rowY, w, rowH)) {
                 continue;
             }
-            wallpaperBlurDragging = false;
             if (i == 0) {
                 MaverWallpaper.nextMode();
                 wallpaperScroll = 0;
@@ -3118,10 +2974,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             } else if (i == 3) {
                 MaverWallpaper.refreshFiles();
                 MaverWallpaper.openFolder();
-            } else {
-                // BLUR 进度条：按下立即跳到对应百分比，拖动由 drawScreen 持续更新。
-                wallpaperBlurDragging = true;
-                updateWallpaperBlur(mouseX);
             }
             press("wallrow:" + i);
             return;
@@ -3405,7 +3257,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         dragEntry = null;
         panelDragging = false;
         logoSizeDragging = false;
-        wallpaperBlurDragging = false;
         pressColumn = null;
         selectSetting = null;
         selectEntry = null;
@@ -4379,15 +4230,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                             + "  ·  " + Math.round(OpenMaverFeatures.getFakePlayerDistance()) + " m";
                 }
                 if ("Velocity".equals(module.getName())) {
-                    String summary = VelocityFeature.getSummary();
-                    if (VelocityFeature.isBlinkSuppressedByProfile()) {
-                        summary += "  ·  OFF (LEGIT)";
-                    }
-                    // PACKET = S12 已被管线拦下；SNIFF = 退化为运动差分检测。
-                    // 末尾的 KB 计数是硬证据：为 0 说明根本没有击退包被处理。
-                    return summary + "  ·  "
-                            + (VelocityFeature.isPacketHookInstalled() ? "PACKET" : "SNIFF")
-                            + "  ·  KB " + VelocityFeature.getKnockbackApplied();
+                    return AttackReduceFeature.getSummary() + "  ·  "
+                            + (AttackReduceFeature.isPacketHookInstalled() ? "PACKET" : "WAITING")
+                            + "  ·  KB " + AttackReduceFeature.getKnockbackApplied()
+                            + (AttackReduceFeature.getMode() != AttackReduceFeature.MODE_SIMPLE
+                                    ? " / HIT " + AttackReduceFeature.getSprintHits() + "  ·  " + AttackReduceFeature.getStatus() : "");
                 }
                 return module.getConfigKey().toUpperCase(Locale.ROOT);
             }

@@ -66,6 +66,7 @@ public final class McpReobf {
 
         m(MC, "getMinecraft", "func_71410_x");
         m(MC, "displayGuiScreen", "func_147108_a");
+        m(MC, "toggleFullscreen", "func_71352_k");
         m(MC, "getSession", "func_110432_I");
         m(MC, "shutdown", "func_71400_g");
         m(SESSION, "getUsername", "func_111285_a");

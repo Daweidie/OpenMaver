@@ -182,8 +182,8 @@ public final class OpenMaverHud {
             if (minecraft == null) {
                 return;
             }
-            // ClickGUI 打开时 HUD 仍然绘制：它会被 ClickGUI 的整屏毛玻璃一起模糊，
-            // 作为背景的一部分保留下来。提示卡例外，由 ClickGUI 在面板上方清晰重绘。
+            // ClickGUI 打开时 HUD 仍作为清晰背景保留。
+            // 提示卡由 ClickGUI 在面板上方绘制，避免重复显示。
             boolean clickGuiOpen = minecraft.currentScreen instanceof GuiOpenMaverClickGui;
             FontRenderer font = (FontRenderer) readField(minecraft,
                     "fontRendererObj", "field_71466_p");
@@ -485,12 +485,7 @@ public final class OpenMaverHud {
             return Math.max(0, blocks) + "b";
         }
         if ("Velocity".equals(name)) {
-            // 憋包中优先显示缓存的位置包数量，一眼能看出 blink 是否真的在起作用。
-            if (VelocityFeature.isBlinking()) {
-                return VelocityFeature.getHeldCount() + "p";
-            }
-            // SPRINT SLAP：窗口没打完时显示还剩几个 tick（每个 tick 一次 ×0.6）。
-            return VelocityFeature.getSummary();
+            return AttackReduceFeature.getSummary();
         }
         if ("KillAura".equals(name)) {
             int min = Math.min(OpenMaverFeatures.getKillAuraCpsMin(),

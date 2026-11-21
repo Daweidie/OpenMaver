@@ -26,11 +26,11 @@ import javax.imageio.stream.ImageInputStream;
 import org.w3c.dom.NodeList;
 
 /**
- * 主菜单壁纸：原版全景图、静态图片、动态 GIF 与内置动态背景。
+ * 主菜单壁纸：原版全景图、静态图片与动态 GIF。
  *
  * <p>壁纸文件统一放在 {@code config/openmaver/wallpapers/}，支持 PNG / JPG / BMP / GIF。
  * 静态模式只显示第一帧；动态模式下 GIF 会循环播放，普通图片则使用缓慢的
- * Ken Burns 平移 / 缩放，没有选择文件时绘制内置的动态渐变背景。
+ * Ken Burns 平移 / 缩放，没有选择文件时始终使用原版全景图。
  *
  * <p>图片解码与缩放全部在后台 daemon 线程完成，渲染线程只负责上传纹理和绘制，
  * 避免在主菜单里读大图造成卡顿。配置与 {@link OpenMaverFeatures} 共用
@@ -78,7 +78,6 @@ public final class MaverWallpaper {
     private static volatile int mode = MODE_PANORAMA;
     private static volatile int fit = FIT_COVER;
     private static volatile String path = "";
-    private static volatile float blurStrength = 0.0F;
     private static volatile long revision = 1L;
 
     // ------------------------------------------------------------------
@@ -147,17 +146,19 @@ public final class MaverWallpaper {
     private static void apply(Properties values) {
         int nextMode = readMode(values.getProperty("menu.wallpaper.mode"));
         int nextFit = readFit(values.getProperty("menu.wallpaper.fit"));
-        float nextBlur = readBlur(values.getProperty("menu.wallpaper.blur"));
         String nextPath = values.getProperty("menu.wallpaper.file", "");
         if (nextPath == null) {
             nextPath = "";
         }
         nextPath = nextPath.trim();
+        // 兼容旧版保存的 dynamic + 空文件配置，直接恢复清晰的原版背景。
+        if (nextPath.isEmpty()) {
+            nextMode = MODE_PANORAMA;
+        }
 
         boolean reload = nextMode != mode || !nextPath.equals(path);
         mode = nextMode;
         fit = nextFit;
-        blurStrength = nextBlur;
         path = nextPath;
         if (reload) {
             invalidate();
@@ -172,7 +173,6 @@ public final class MaverWallpaper {
         return "menu.wallpaper.mode=" + MODE_KEYS[safeMode]
                 + "\nmenu.wallpaper.file=" + escapeProperty(path)
                 + "\nmenu.wallpaper.fit=" + FIT_KEYS[safeFit]
-                + "\nmenu.wallpaper.blur=" + Math.round(blurStrength * 100.0F)
                 + "\n";
     }
 
@@ -225,37 +225,17 @@ public final class MaverWallpaper {
         return getFit();
     }
 
-    /** 背景模糊强度 0.0 ~ 1.0，0 表示完全清晰。 */
-    public static float getBlurStrength() {
-        ensureConfigLoaded();
-        return blurStrength;
-    }
-
-    public static int getBlurPercent() {
-        return Math.round(getBlurStrength() * 100.0F);
-    }
-
-    public static void setBlurStrength(float value) {
-        ensureConfigLoaded();
-        float next = Math.max(0.0F, Math.min(1.0F, value));
-        if (Math.abs(next - blurStrength) < 0.0005F) {
-            return;
-        }
-        blurStrength = next;
-        OpenMaverFeatures.markDirty();
-    }
-
     /** 当前选中的文件路径（可为相对路径 / 绝对路径 / 空字符串）。 */
     public static String getFilePath() {
         ensureConfigLoaded();
         return path;
     }
 
-    /** 当前选中文件的显示名；没有文件时返回 BUILT-IN。 */
+    /** 当前选中文件的显示名；没有文件时返回 MINECRAFT。 */
     public static String getDisplayName() {
         ensureConfigLoaded();
         if (path.isEmpty()) {
-            return "BUILT-IN";
+            return "MINECRAFT";
         }
         File file = new File(path);
         String name = file.getName();
@@ -270,10 +250,14 @@ public final class MaverWallpaper {
     public static void setFilePath(String value) {
         ensureConfigLoaded();
         String next = value == null ? "" : value.trim();
-        if (next.equals(path)) {
+        boolean restorePanorama = next.isEmpty() && mode != MODE_PANORAMA;
+        if (next.equals(path) && !restorePanorama) {
             return;
         }
         path = next;
+        if (next.isEmpty()) {
+            mode = MODE_PANORAMA;
+        }
         invalidate();
         OpenMaverFeatures.markDirty();
     }
@@ -414,7 +398,7 @@ public final class MaverWallpaper {
      */
     public static boolean draw(Minecraft mc, int width, int height) {
         ensureConfigLoaded();
-        if (width <= 0 || height <= 0 || mode == MODE_PANORAMA) {
+        if (width <= 0 || height <= 0 || mode == MODE_PANORAMA || path.isEmpty()) {
             // 切回原版全景图时释放自定义壁纸纹理；每帧只在确实有纹理时删一次。
             if (frameTextures.length > 0) {
                 cleanupRequested = true;
@@ -428,22 +412,13 @@ public final class MaverWallpaper {
             installPending();
         }
 
-        // 没选文件时两种模式都有内置背景：静态是冻结的渐变，动态是流动的极光。
-        if (path.isEmpty()) {
-            drawGenerated(width, height, System.currentTimeMillis(),
-                    mode == MODE_DYNAMIC);
-            return true;
-        }
-
         ensureLoaded();
         if (pending != null) {
             installPending();
         }
         if (frameTextures.length == 0) {
-            // 加载中 / 文件损坏时先用内置渐变垫底，避免露出上一帧或黑屏。
-            drawGenerated(width, height, System.currentTimeMillis(),
-                    mode == MODE_DYNAMIC);
-            return true;
+            // 加载中 / 文件损坏时回到原版全景图，不显示柔化的渐变背景。
+            return false;
         }
 
         long now = System.currentTimeMillis();
@@ -665,7 +640,7 @@ public final class MaverWallpaper {
         Graphics2D graphics = canvas.createGraphics();
         try {
             graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
-                    RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                    RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
             graphics.setRenderingHint(RenderingHints.KEY_RENDERING,
                     RenderingHints.VALUE_RENDER_QUALITY);
             graphics.drawImage(source, 0, 0, targetWidth, targetHeight, null);
@@ -722,9 +697,9 @@ public final class MaverWallpaper {
         int texture = GL11.glGenTextures();
         GlStateManager.bindTexture(texture);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER,
-                GL11.GL_LINEAR);
+                GL11.GL_NEAREST);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER,
-                GL11.GL_LINEAR);
+                GL11.GL_NEAREST);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S,
                 GL11.GL_CLAMP_TO_EDGE);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T,
@@ -879,73 +854,6 @@ public final class MaverWallpaper {
         }
     }
 
-    // ------------------------------------------------------------------
-    // 内置动态背景
-    // ------------------------------------------------------------------
-
-    private static void drawGenerated(int width, int height, long now, boolean animated) {
-        float time = animated ? (now % 1_000_000L) / 1000.0F : 0.0F;
-        int columns = clamp(Math.round(width / 42.0F), 14, 40);
-        int rows = clamp(Math.round(height / 42.0F), 10, 28);
-
-        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
-                | GL11.GL_DEPTH_BUFFER_BIT);
-        try {
-            GL11.glDisable(GL11.GL_DEPTH_TEST);
-            GL11.glDisable(GL11.GL_CULL_FACE);
-            GL11.glDisable(GL11.GL_ALPHA_TEST);
-            GL11.glDisable(GL11.GL_LIGHTING);
-            GL11.glDisable(GL11.GL_SCISSOR_TEST);
-            GL11.glDisable(GL11.GL_TEXTURE_2D);
-            GL11.glDisable(GL11.GL_BLEND);
-            GL11.glShadeModel(GL11.GL_SMOOTH);
-
-            GL11.glBegin(GL11.GL_QUADS);
-            for (int row = 0; row < rows; row++) {
-                float v0 = row / (float) rows;
-                float v1 = (row + 1) / (float) rows;
-                float y0 = v0 * height;
-                float y1 = v1 * height;
-                for (int column = 0; column < columns; column++) {
-                    float u0 = column / (float) columns;
-                    float u1 = (column + 1) / (float) columns;
-                    float x0 = u0 * width;
-                    float x1 = u1 * width;
-                    setGeneratedColor(u0, v0, time);
-                    GL11.glVertex2f(x0, y0);
-                    setGeneratedColor(u1, v0, time);
-                    GL11.glVertex2f(x1, y0);
-                    setGeneratedColor(u1, v1, time);
-                    GL11.glVertex2f(x1, y1);
-                    setGeneratedColor(u0, v1, time);
-                    GL11.glVertex2f(x0, y1);
-                }
-            }
-            GL11.glEnd();
-        } finally {
-            GL11.glPopAttrib();
-            GlColor.restore();
-        }
-    }
-
-    private static void setGeneratedColor(float u, float v, float time) {
-        float waveA = (float) Math.sin(u * 4.1F + time * 0.26F)
-                + (float) Math.sin(v * 5.4F - time * 0.21F);
-        float waveB = (float) Math.sin((u + v) * 3.2F + time * 0.17F)
-                + (float) Math.cos((u - v) * 4.8F - time * 0.13F);
-        float glowA = 0.5F + 0.25F * waveA;
-        float glowB = 0.5F + 0.25F * waveB;
-
-        float dx = (u - 0.5F) * 2.0F;
-        float dy = (v - 0.5F) * 2.0F;
-        float vignette = Math.max(0.35F, 1.0F - 0.42F * (dx * dx + dy * dy));
-
-        float red = (0.030F + 0.115F * glowA + 0.045F * glowB) * vignette;
-        float green = (0.055F + 0.235F * glowA + 0.105F * glowB) * vignette;
-        float blue = (0.105F + 0.170F * glowA + 0.380F * glowB) * vignette;
-        GL11.glColor4f(clamp01(red), clamp01(green), clamp01(blue), 1.0F);
-    }
-
     // ==================================================================
     // 工具
     // ==================================================================
@@ -1013,27 +921,6 @@ public final class MaverWallpaper {
             }
         }
         return FIT_COVER;
-    }
-
-    /** 读取背景模糊百分比；配置里写 0 ~ 100。 */
-    private static float readBlur(String raw) {
-        if (raw != null) {
-            String value = raw.trim();
-            if (value.endsWith("%")) {
-                value = value.substring(0, value.length() - 1).trim();
-            }
-            try {
-                float percent = Float.parseFloat(value);
-                // 兼容手动写 0.0 ~ 1.0 的比例值；GUI 保存的是 0 ~ 100 的百分比。
-                if (value.indexOf('.') >= 0 && percent >= 0.0F && percent <= 1.0F) {
-                    percent *= 100.0F;
-                }
-                return Math.max(0.0F, Math.min(100.0F, percent)) / 100.0F;
-            } catch (NumberFormatException ignored) {
-                // fall through
-            }
-        }
-        return 0.0F;
     }
 
     /** Properties 值需要转义反斜杠、冒号、等号与前导空格。 */

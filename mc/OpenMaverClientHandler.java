@@ -95,9 +95,8 @@ public final class OpenMaverClientHandler {
                 // C0F → C0E → C03，和玩家自己在界面里点鼠标一致。
                 ChestFeature.onTick(mc);
                 OpenMaverFeatures.onTickStart(mc);
-                // Velocity 必须在同一位置写入击退速度：原版本 tick 的 C03
-                // 会带走改写后的 motion。
-                VelocityFeature.onTickStart(mc);
+                // Velocity 独立维护本地实体 id 和击退包处理器。
+                AttackReduceFeature.onTickStart(mc);
                 return;
             }
             if (event.phase != TickEvent.Phase.END) {
@@ -110,8 +109,6 @@ public final class OpenMaverClientHandler {
             OpenMaverFeatures.onTick(mc);
             // 箱子：Chest ESP 的目标快照等每帧数据在 tick END 结算；
             // 真正发 windowClick 的搬运逻辑在 START（见上面那段注释）。
-            // Velocity 的 blink 窗口与攻击包爆发在 tick 末尾结算。
-            VelocityFeature.onTickEnd(mc);
             if (readField(mc, "theWorld", "field_71441_e") == null
                     || readField(mc, "thePlayer", "field_71439_g") == null) {
                 return;

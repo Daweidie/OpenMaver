@@ -3,7 +3,7 @@
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
 > 说明：本仓库包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接）
-> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Scaffold2 教材搭路辅助、GodBridge 神桥、Velocity、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、FPS / CPS 统计）
+> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Scaffold2 教材搭路辅助、GodBridge 神桥、AttackReduce、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、FPS / CPS 统计）
 > 以及 `legit / balanced / aggressive` 三档 Grim 对测 profile。
 > 请仅在你拥有或获得明确授权的服务器上进行测试。
 
@@ -37,7 +37,7 @@ OpenMaver/
 │       ├── combat/KillAura.java  # 自动攻击开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── movement/Scaffold.java # 搭桥开关（MC 侧逻辑在 ScaffoldFeature，OpenZen 移植）
 │       ├── movement/GodBridge.java # 神桥/蹲起搭路开关（MC 侧逻辑在 mc/GodBridgeFeature）
-│       ├── movement/Velocity.java # 防击退开关（MC 侧逻辑在 VelocityFeature）
+│       ├── movement/AttackReduce.java # 防击退开关（MC 侧逻辑在 AttackReduceFeature）
 │       ├── player/FastPlace.java  # 快速右键开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── player/ChestStealer.java # 开箱搬运 / 整理 / 存入开关（MC 侧逻辑在 mc/ChestFeature）
 │       ├── render/ChestEsp.java   # 箱子透视开关（MC 侧绘制在 mc/ChestFeature）
@@ -57,9 +57,9 @@ OpenMaver/
 │   ├── ChestFeature.java          # 箱子：存储方块 ESP + 开箱搬运/整理/存入
 │   ├── ChestPacketHook.java       # 入站 S2D/S30/S2E 窗口包记账（Netty 管线）
 │   ├── GuiOpenMaverClickGui.java  # 游戏内 ClickGUI（分类 / 搜索 / 展开设置）
-│   ├── GuiMaverMainMenu.java      # MC 标题界面风格主菜单（灰色按钮 / 皮肤展示）
+│   ├── GuiMaverMainMenu.java      # 开始主菜单（透明按钮 / 原版清晰全景 / 账号头像）
 │   ├── MenuSkinPreview.java       # 无需世界实体的完整皮肤模型展示
-│   ├── MaverWallpaper.java        # 主菜单壁纸（静态图片 / GIF / 内置动态背景）
+│   ├── MaverWallpaper.java        # 主菜单壁纸（原版全景 / 静态图片 / GIF）
 │   ├── MaverLogo.java             # 打包的 Maver Logo 纹理绘制
 │   ├── BundledResourcePack.java   # 首次启动安装自带的 2pimp v2 [16x] 材质包
 │   └── resources/openmaver/resourcepack/2pimp-v2-16x.zip  # 自带材质包本体
@@ -246,8 +246,8 @@ java -Djava.library.path=build/lib \
   右侧以较淡的白色显示该功能的当前参数摘要（例如 AutoClicker 的 CPS 区间、Reach 的
   实际距离），最右侧是一枚白色竖条；不再显示键位提示。禁用功能不会出现在列表中。每行拥有独立
   动画状态：启用时从右侧平滑淡入，禁用时先淡出再移除，剩余行平滑上移换位。
-  所有动画基于 `System.nanoTime()`，与帧率无关。ClickGUI 打开时隐藏该列表，
-  避免被全屏毛玻璃糊成一层残影。
+  所有动画基于 `System.nanoTime()`，与帧率无关。ClickGUI 打开时该列表保留在背景中，
+  提示卡则在界面上方绘制。
 - **Target HUD** `mc/TargetHud.java`：准星右侧的小卡片。**只有准星真正命中
   `EntityLivingBase` 时才显示**，移开准星立即隐藏；只保留正方形头像（玩家真实皮肤 /
   无头像时使用 Steve）、名称与细血条，卡片背景使用与功能栏相同的局部毛玻璃，
@@ -272,15 +272,14 @@ java -Djava.library.path=build/lib \
   游戏内启用 / 禁用功能时也会弹出「xxx enabled / xxx disabled」。
   绘制在 `RenderGameOverlayEvent.Post`（`type == ALL`）里，ClickGUI 内由 GUI 自己绘制。
 - **Maver 主菜单** `mc/GuiMaverMainMenu.java`：替换原版标题界面（`GuiOpenEvent`），
-  使用明亮的全景图背景、Maver Logo 和黄色 `Maver!` 缩放标语。
-  中央为灰色方框 **Singleplayer / Multiplayer / Settings** 按钮，底部提供
-  **Client Settings / Wallpaper / Quit Game**；界面文字使用英文。
-  右侧只展示当前账号的完整皮肤和用户名，无商店、Realms 或更衣室入口。
-  皮肤从微软 / Mojang 官方服务异步获取，支持旧版 64×32 皮肤，失败时展示 Steve。
-  Client Settings 打开 ClickGUI，Wallpaper 直接打开壁纸设置页。
-  背景可以替换成静态图片、动态 GIF 或内置动态渐变，
-  详见下面「主菜单壁纸」。
+  默认使用清晰的原版旋转全景图，中央展示白色 Maver 字标，以及三行半透明圆角按钮
+  **Singleplayer / Multiplayer / Settings**。背景和按钮均不使用模糊。
+  左上角展示当前账号头像与用户名，旁边的 **+** 打开 Client Settings；
+  右上角依次为 **Fullscreen / Wallpaper / Quit Game**，悬停显示入口名称。
+  头像从微软 / Mojang 官方服务异步获取，支持旧版 64×32 皮肤，失败时展示 Steve。
+  背景可以替换成静态图片或动态 GIF，详见下面「主菜单壁纸」。
 - **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关。
+  列布局和客户端设置页均只使用半透明背景遮罩，不对主菜单或游戏画面做整屏模糊。
   纯灰色面板 + 中性灰描边，全部强调色统一为白色；左侧 Combat / Movement / Render /
   Player / Misc 分类栏，以及 SYSTEM → Configs / Statistics / Wallpaper / Settings 页面
   （配置概览、模块统计、主菜单壁纸与客户端设置），顶部搜索（`Ctrl+K`）、ALL / ENABLED /
@@ -292,30 +291,30 @@ java -Djava.library.path=build/lib \
   Criticals、FastPlace、Target HUD 与 Player X-Ray 的设置直接绑定 `OpenMaverFeatures`，参数写入
   `config/openmaver.properties`（拖拽结束与关闭 GUI 时落盘）。
 - **主菜单壁纸** `mc/MaverWallpaper.java`：ClickGUI 的 **SYSTEM → Wallpaper**
-  （或主菜单底部的 **Wallpaper**）可以切换开始菜单背景：
+  （或主菜单右上角的图片图标）可以切换开始菜单背景：
 
   | 模式 | 效果 |
   |---|---|
-  | `PANORAMA` | 原版旋转全景图 + 毛玻璃（默认） |
+  | `PANORAMA` | 清晰的原版旋转全景图（默认，无模糊） |
   | `STATIC` | 静态 PNG / JPG / BMP 图片；GIF 只显示第一帧 |
-  | `DYNAMIC` | 动态 GIF 循环播放；普通图片做缓慢平移 / 缩放；未选文件时使用内置动态极光渐变 |
+  | `DYNAMIC` | 动态 GIF 循环播放；普通图片做缓慢平移 / 缩放；未选文件时使用原版全景 |
 
   把图片放到 `config/openmaver/wallpapers/`（支持 `.png` / `.jpg` / `.jpeg` / `.bmp` / `.gif`），
-  然后在 Wallpaper 页选择文件即可。`FIT` 可设为 `COVER`（裁切铺满）、`CONTAIN`（完整显示、留黑边）
+  然后在 Wallpaper 页选择文件即可；从主菜单打开时，选中的壁纸加载后会立即显示在设置页背景中。
+  `FIT` 可设为 `COVER`（裁切铺满）、`CONTAIN`（完整显示、留黑边）
   或 `STRETCH`（拉伸铺满）。GIF 会在后台线程解码并限制到 720px 边长 / 64 帧，避免大文件拖慢主菜单。
-  主菜单的模糊度在 ClickGUI 的 **SYSTEM → Wallpaper → BLUR** 进度条中调整
-  （0% 完全清晰，100% 最模糊）；自定义壁纸同样生效，拖动结束后自动保存。
+  主菜单始终保持清晰，背景纹理使用逐像素采样，旧配置中的 `menu.wallpaper.blur` 已忽略。
+  旧版 `dynamic` / `static` 模式未选文件时自动恢复原版全景，不再显示柔和的渐变背景。
   配置写入 `config/openmaver.properties`：
 
   ```properties
-  menu.wallpaper.mode=static          # panorama | static | dynamic
+  menu.wallpaper.mode=panorama        # panorama（默认）| static | dynamic
   menu.wallpaper.file=my-wallpaper.png
   menu.wallpaper.fit=cover            # cover | contain | stretch
-  menu.wallpaper.blur=35              # 背景模糊度 0 ~ 100
   ```
 
   `menu.wallpaper.file` 也支持绝对路径和 `~/` 开头的路径；相对路径优先在
-  `config/openmaver/wallpapers/` 下查找。壁纸解码失败或文件被删除时会自动回退到内置渐变背景，
+  `config/openmaver/wallpapers/` 下查找。壁纸解码失败或文件被删除时会自动回退到原版全景图，
   不会让主菜单黑屏。壁纸目录也可以通过 `-Dopenmaver.wallpapers=<dir>` 覆盖。
 - **模块键位**：`config/default.jsonc` 中的 `<分类>.<模块>.key`（如
   `movement.autosprint.key = "V"`）会在游戏内绑定到该键；键位提示不再显示在 HUD 上。
@@ -516,87 +515,19 @@ IO 失败只记录一次并自动停用 debug。
 - `STRAIGHT`：按住 S 和右键搭路并维持潜行；`DIAGONAL 45`：按住 S+D 和右键搭路并维持潜行，视角由玩家按教材摆成与桥线 45°；`SNEAK TOGGLE`：成功放置后松开 Shift 指定 tick 数，再自动按回。
 - 模块使用玩家当前准星，不自动转动视角；只在准星命中方块、手持方块物品且按住右键时尝试放置。`RELEASE` 设置蹲起模式松开 Shift 的时长。
 
-### Velocity 防击退（SPRINT SLAP / Blink Burst）
+### Velocity 防击退
 
-> **2026-11-16 结论修正**：Grim 上真正能用的只有 `SPRINT SLAP`。它一个字节的
-> 运动都不改，靠 1.8 原版「冲刺攻击把自己的水平速度 ×0.6」削击退 —— 这条 0.6
-> 在 Grim 的 `PredictionEngine.addAttackSlowToPossibilities` 里本来就是一条
-> 预测分支（每个攻击包一条，上限 5），所以既不欠位移也不吃 AntiKB。
-> 其余模式（`UNCERTAINTY` / `BLINK BURST` / `REVERSAL` / 低比例 `MODIFY`）在
-> Grim 上必然产生 flag，`GRIM GUARD` 现在一律把它们升级成 `SPRINT SLAP`。
-> 实机证据与逐条归因见 `design/VELOCITY_HANDOFF.md` 顶部。
->
-> **2026-11-16 19:1x（18:53 那局 vl 涨到 83 之后，按 Grim 2.0 源码重做）**：
-> `SPRINT SLAP` 的思路没错，错在 0.6 分支的成立条件。Grim 的
-> `PacketPlayerAttack` 里，没拿击退附魔的 1.8 客户端只有
-> `player.lastSprinting`（**上一 tick 结束时的冲刺状态**）为真时才会生成
-> `(0.6, 1, 0.6)` 预测分支，而且每 tick 只给一条
-> （`maxAttackSlow = minAttackSlow = 1`）。原实现攻击前
-> `setSprinting(true)`、原版攻击里 `setSprinting(false)`，tick 结束时冲刺是关的
-> → 下一发 0.6 一个分支都没有 → offset 恰好 `0.4 × v`：
-> `.143976 = 0.4×0.36`、`.046243 = 0.4×0.1156`、`.006153 = 0.4×0.0154`，
-> 和日志逐条对应。现在：
-> 1. 原版乘完**立刻把冲刺打开**，tick 结束保持冲刺（下一发才有 `lastSprinting`）；
-> 2. 出手闸门 `isSprinting && sprintAtLastTickEnd`，本 tick 已有别的 C02 也不打
->    （KillAura 双刀 = 0.36 对 0.6）；
-> 3. 窗口从 `kbArriveTick + 1` 开始（Grim 的击退由两个 transaction 夹住 S12，
->    同批事务下一 tick 才确认；`AntiKB` 的 `offsetToFlag` 默认只有 0.001）；
-> 4. 原版没乘 0.6（目标无敌帧）时**不补乘**；距离卡 2.9 格；窗口上限 5。
-
-- 配置路径：`movement.velocity`，默认关闭，默认键位留空（自行绑定）。
-- 逻辑在 `mc/VelocityFeature.java`，Netty 管线处理器在 `mc/VelocityPacketHook.java`。
-- **数据源**：入站 `S12PacketEntityVelocity`。本模块把 handler 插在 1.8.9 管线的
-  `packet_handler` 之前（即 `encoder` 之后），在同一位置拿到入站、出站两个方向的
-  `Packet` 对象：入站直接吞掉自己的击退包，出站按 blink 需要扣住 C03 移动包。
-  - 为什么不是插在 `encoder` 之前：出站方向从 tail 往 head 走，`packet_handler` 先于
-    `encoder` 执行；排在 `encoder` 之前的 handler 只能拿到序列化后的 ByteBuf，
-    blink 会完全失效。管线名与顺序取自真实 1.8.9 jar 的 `NetworkManager`。
-  - 注入失败（例如别的 mod 重写了管线）时自动退化为运动特征嗅探：水平速度 ≥ 0.33
-    且与上一 tick 的快照有明显突变、垂直非负（冲刺跳约 0.28、下落为负，都不会误触）。
-- **模式**（`velocity.mode`）：
-  - `MODIFY`：水平/垂直击退按比例缩放，0% = 完全无视，100% = 原版。
-  - `REVERSAL`：先吃掉击退，延迟 `REVERSAL DELAY` 毫秒后把反向速度打出去，把自己
-    推向对手。
-  - `STRAFE`：把向后的击退转成当前输入方向上的速度；没有输入时沿击退法线侧移
-    （绕对手走位）。
-  - `JUMP RESET`：击退到达的瞬间（可延迟 0~3 tick）起跳，用跳跃覆盖击退水平分量。
-    触发点是击退事件本身，不依赖 `hurtTime` 之类 SRG 名相近的受击字段。
-  - `NOXZ`（**GRIM 预设默认**，OpenZen `AntiKB/NoXZ` 移植）：空中挨打时吞掉 S12、
-    冻结出站 C03、扣住 `S32`（transaction 回执）→ 落地再放位置包、补给客户端击退、
-    连打 `NOXZ ATTACKS` 次（每次 ×0.6），下一 tick 才回执。核心是**骗 Grim 的
-    transaction 时序**：回执没回去，它只能把这段击退当成「可能还没到」，预测里
-    「没吃击退」也是合法分支。
-  - `SPRINT SLAP`（不依赖 transaction 时序）：S12 **原样放行**（客户端真的吃这次击退），
-    记录 `|kb|` 并开一个窗口（上限 5 tick = Grim 的 attack-slow 分支数，
-    0.6^5 ≈ 7.8%）；窗口**从收到击退的下一 tick 开始**，每 tick 打一次**准星里
-    2.9 格内**的实体，由原版冲刺攻击把 `motionX/Z` 乘 0.6，冲刺状态用
-    `C0BPacketEntityAction` 在 C03 之前同步。不发 C08、不憋包、不写 motion，
-    所以 `AntiKB / Simulation / Timer / FabricatedPlace / Hitboxes /
-    GroundSpoof / BadPacketsN` 一个都不会出现；原版这一下没乘 0.6（目标无敌帧 /
-    够不着）时整 tick 放弃，绝不自己补乘。
-  - `BLINK BURST`：收到击退后憋住 `BLINK TICKS`（默认 5）个 tick 的位置包，窗口
-    结束时**先一口气补发 `BURST ATTACKS`（默认 5）条攻击包**（C0A -> C02 交替，
-    服务端此时仍用憋包前的旧位置结算），**再补发缓存的位置包**。
-    `FLUSH POSITION` 关闭时改为直接丢弃位置包（表现成瞬移）。
-    仅用于对测，Grim 上会吃 `Timer / Simulation / BadPacketsN`。
-- **服务器预设**（`velocity.server`）：`CUSTOM / VANILLA / HYPIXEL / GRIM / INTAVE`，
-  只是把模式与参数配成一组针对该服务端反作弊观感的组合，之后仍可继续微调：
-  - `VANILLA`：`MODIFY 0/0%`。
-  - `HYPIXEL`：`MODIFY 12/0%` + 起跳延迟 1 tick（保留少量水平更接近人手）。
-  - `GRIM`：`NOXZ x3`（`velocity.horizontal/vertical = 100%`，即完全不改击退包），
-    守护把任何归零类模式（REVERSAL / UNCERTAINTY / BLINK / 低比例 MODIFY）升级成
-    `SPRINT SLAP`。
-  - `INTAVE`：`REVERSAL 100ms`、垂直 35%（击退判定有时间窗）。
-- 与 bypass profile 的联动：`LEGIT` 档下 blink 降级为 `JUMP RESET`，水平/垂直
-  保留比例至少 45% / 65%，避免一次抹平被运动预测直接判出；GUI 会显示 `OFF (LEGIT)`。
-- 主要设置（`config/openmaver.properties` 的 `velocity.*`）：
-  `velocity.mode / server / horizontal / vertical / reversalDelay / reversalStrength /
-  strafeFactor / jumpDelay / blinkTicks / burstAttacks / burstRange / blinkFlush /
-  slapAim / slapMaxTicks / slapSprintSync / noxzAttacks / noxzTx`。
-- 包层测试：`tools/velocity-test/run.sh`（真实 netty 4.0.23.Final；91 + 16 项断言，
-  其中 `VelocityInstallTest` 用真实注册通道覆盖「注入 / 换连接重挂 / 被摘除自愈」）。
-- 换连接（单人 → 服务器、切服、重连）会自动重挂管线；若钩子没生效，
-  ClickGUI 摘要末尾的 `KB n` 与 `logs/openmaver.log` 的 `[Velocity]` 行就是判据。
+- ClickGUI 与 HUD 显示为 `Velocity`；开关及热键继续使用 `movement.attackreduce`，保留现有配置。
+- 默认 `SLAP ATTACK`：参考上一级 OpenMyau-Fix 的 `Velocity.Slap_Attack`，按 S12 的水平整数幅度确定 3–9 tick 窗口。原包由 vanilla 施加后才开窗；窗口内有移动输入但本地尚未冲刺时，Velocity 请求本地冲刺，等 vanilla 发出同步并确认 `serverSprintState` 后再执行 `C0A → C02 → motionXZ × 0.6 → sprint=false`。这个短窗口请求不受 AutoSprint 的 `ONLY FORWARD` 限制；停住、潜行或使用物品时不请求。直接发攻击包，不经过原版控制器，避免重复减速；垂直速度不变。
+- 目标选择参考 OpenZen `NoXZMode`：优先使用 KillAura 已选中、转向已就绪的目标，再回落到准星生物。当前视线需命中 3 格内的可见存活目标。无目标时保留击退；此模式不要求目标 `hurtTime=0`。Aura / AutoClicker 仅启用不会阻止它，但本 tick 已实际攻击或右键操作时让位。
+- SLAP 跟踪两份 C03 之间的换槽、挥手、攻击、放置/挖掘、背包动作；有冲突则等待下一窗口。Netty 异步发包另有本地攻击预约，直到自己的 C02 和后续 C03 均经过管线才解除。GUI、使用物品、骑乘、蛛网/液体、手动鼠标操作时跳过；Scaffold、Scaffold2、GodBridge、Chest Stealer、Criticals 启用时让位。可配合 AutoSprint 和 KillAura 使用。
+- `SLAP EXACT` 默认开启，采用 Myau 默认幅度表；关闭后采用其回归公式（1–10 tick）。`SLAP CROSSHAIR` 默认开启；关闭后只使用 Aura 目标。OpenZen 来自 1.20.1，本次复用其目标选择，不包含其挂包、加速计时或 `NoXZ` 完整模式。
+- 原 `SPRINT HIT` 仍可选择：6 tick 内最多一次原版控制器攻击，由原版减速；保留它的目标受伤窗口及其它动作模块让位条件。
+- `SIMPLE` 保留旧百分比缩放，`SIMPLE H` / `SIMPLE V` 仅对它生效，范围 0–100（0 消除，100 原版），默认 H=0%、V=100%。此模式直接改变客户端击退，用户提供的日志已显示它触发 Grim AntiKB、Simulation 及 GroundSpoof。
+- 配置版本 19，`velocity.mode`（0=`SPRINT HIT`，1=`SIMPLE`，2=`SLAP ATTACK`），新增 `velocity.slapExact`、`velocity.slapCrosshair`；旧配置升级时默认选择 `SLAP ATTACK`，保留百分比、开关及热键。他人 S12、移动包、事务包和爆炸 S27 原样放行。
+- 包处理器在 `encoder` 与 `packet_handler` 之间，断线重连会重新安装。ClickGUI 显示管线状态、S12 计数、原版减速命中数，以及 `WAIT SPRINT SYNC` / `NO TARGET` / `HIT` 等原因。
+- `CHAT DEBUG` 默认开启（`velocity.chatDebug=true`）：本地聊天显示 `[Maver] Velocity before(x:0.4000 y:0.3600 z:-0.2000) after(x:0.2400 y:0.3600 z:-0.1200)`，随后一行显示模式、阻断原因、窗口、左右键、冲刺同步、`forward/strafe/sneak/usingItem`、AutoSprint 设置及冲突模块；同步记录到 `logs/openmaver.log`。SLAP / SPRINT HIT 比较同一次攻击尝试前后的 `motion`，SIMPLE 比较同一 S12 缩放前后的速度（整数 /8000）；重复阻断状态只在首次、状态变化及窗口结束报告。
+- `cmake --build build -j2` 构建；`tools/attackreduce-test/run.sh` 验证窗口边界、S12 应用时序、多 tick 减速、动作闸门、Aura 协作、失败状态与旧模式/重连。当前验证范围是本地真实 Netty 加游戏替身，目标服务器 Grim 结果尚待实测。详细来源、参数和回滚见 `design/ATTACKREDUCE_HANDOFF.md`。
 
 ### FPS / CPS 统计 HUD
 

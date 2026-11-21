@@ -212,6 +212,11 @@ def inject_game(pid):
 
 def launch_injected(args):
     os.chdir(GAME_DIR)
+    # 同上：保证子进程的 locale 是 UTF-8，否则 java 拿到的 console encoding 是 ASCII。
+    if os.environ.get("LANG", "") in ("", "C", "POSIX"):
+        os.environ["LANG"] = "C.UTF-8"
+    if not os.environ.get("LC_ALL", "").endswith("UTF-8"):
+        os.environ["LC_ALL"] = "C.UTF-8"
     log_path = GAME_DIR / "logs/latest.log"
     try:
         old_mtime = log_path.stat().st_mtime
@@ -308,6 +313,14 @@ def main():
         "-Djava.library.path=" + str(natives),
         "-Dorg.lwjgl.librarypath=" + str(natives),
         "-Djava.net.preferIPv4Stack=true",
+        # 控制台中文乱码（Forge 的 ConsoleAppender 按 JVM 默认字符集写 stdout）：
+        # 不显式指定时，LANG=C / POSIX 的机器会把每个汉字换成 '?'，
+        # 看起来就是 `[AttackReduce] ?????`（文件日志 logs/openmaver.log 一直是 UTF-8）。
+        "-Dfile.encoding=UTF-8",
+        "-Dsun.stdout.encoding=UTF-8",
+        "-Dsun.stderr.encoding=UTF-8",
+        "-Dstdout.encoding=UTF-8",
+        "-Dstderr.encoding=UTF-8",
         "-cp", os.pathsep.join(map(str, classpath)),
         forge_meta["mainClass"],
         "--username", username,

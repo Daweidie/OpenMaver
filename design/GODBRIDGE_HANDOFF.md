@@ -141,7 +141,7 @@ tick N+1 : flushPending()
 ```
 
 - `place()` 只从 `flushPending()` 调用，内部 `OpenMaverFeatures.claimPlacement()`
-  保证一 tick 一条 C08（与 Velocity 的 farm 共用名额）。
+  保证一 tick 一条 C08（与 AttackReduce 的 farm 共用名额）。
 - 切槽：先改 `inventory.currentItem`（客户端立即渲染），`serverSlot != blockSlot`
   时补 C09（由原版 `syncCurrentPlayItem` 负责：改完 `inventory.currentItem` 后
   `updateController()` 会在同一 tick 自查并发包；不要手发，否则会重复 slot）。

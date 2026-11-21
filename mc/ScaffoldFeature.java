@@ -1083,7 +1083,7 @@ public final class ScaffoldFeature {
             return false;
         }
         if (!OpenMaverFeatures.claimPlacement()) {
-            // 一 tick 一个 C08：与 Velocity 的 farm 共用名额（MultiPlace）。
+            // 一 tick 一个 C08：与 AttackReduce 的 farm 共用名额（MultiPlace）。
             OpenMaverDebug.noticeOnce("scaffold.place.shared",
                     "another module already sent a C08 this tick (MultiPlace)");
             return false;
@@ -1401,7 +1401,7 @@ public final class ScaffoldFeature {
     // ==================================================================
 
     /**
-     * 入站包观察者，由 {@link VelocityPacketHook} 在 Netty 线程调用。
+     * 入站包观察者，由 {@link AttackReducePacketHook} 在 Netty 线程调用。
      *
      * <p>OpenZen 在 {@code ClientboundSetEntityMotionPacket} 里判断“水平速度 ≥ 1.5
      * → velocityDelay = 60”。1.8.9 这里是 {@code S12PacketEntityVelocity}，只读字段，
@@ -1569,7 +1569,7 @@ public final class ScaffoldFeature {
     /**
      * 本 tick 是否会写入静默 aim。
      *
-     * <p>Velocity 的 SPRINT SLAP 用它避让：Scaffold 在 movementInput hook 里改
+     * <p>AttackReduce 的 SPRINT SLAP 用它避让：Scaffold 在 movementInput hook 里改
      * rotation，那条写包比 SLAP 的准星判定更晚；同一 tick 两个模块都改视角时，
      * 服务端看到的 rotation 和 SLAP 判定的不是同一个角度。
      */

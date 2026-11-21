@@ -66,9 +66,9 @@
 | --- | --- | --- |
 | `RotationPlace: post-flying` | **Scaffold（主要）** | C08 在 flying 包之后到达 —— 这是 1.8 的正常形态，Grim 用**当前** rotation 做 ray trace，失败即 flag |
 | `RotationPlace: pre-flying` | Scaffold（连带） | `onBlockPlace` 只在 `flagBuffer > 0` 时才 flag，所以是上面失败后的二次记账 |
-| `AirLiquidBreak: block=air, type=START_DIGGING` | **Velocity 的 ghost-block farm（已修）** | 旧 farm 会发 `C07 START_DESTROY_BLOCK` 打空气 |
+| `AirLiquidBreak: block=air, type=START_DIGGING` | **AttackReduce 的 ghost-block farm（已修）** | 旧 farm 会发 `C07 START_DESTROY_BLOCK` 打空气 |
 | `AimDuplicateLook` | Scaffold（已修，见 §4.3） | 连续几 tick 保持同一个 aim，包里的 yaw/pitch 完全相同 |
-| `Timer` | Velocity blink flush（见 §4.4） | 一次 flush 补发多条 C03 |
+| `Timer` | AttackReduce blink flush（见 §4.4） | 一次 flush 补发多条 C03 |
 
 ---
 
@@ -301,7 +301,7 @@ pending 跨多个 tick」时包里的 rotation 仍然完全相等 —— §4.3 �
 
 ### 4.4 【待定】`Timer`
 
-`VelocityFeature.finishBlink()` 会一次性 `releaseHeld()` 多条 C03（当前
+`AttackReduceFeature.finishBlink()` 会一次性 `releaseHeld()` 多条 C03（当前
 `uncertaintyTicks = 2`，即 2 条）。连续受击时会出现「短时间内多组批量 C03」，
 Grim 的 `Timer` 可能记账。
 
@@ -312,7 +312,7 @@ Grim 的 `Timer` 可能记账。
    `Simulation` 会多一段 offset，需要一起评估；
 3. flush 分散到后续 tick（每 tick 一条）—— 位置滞后更久，但包速率自然。
 
-**结论未定，需要实测**：先只打开 `Velocity` 打一场，确认 `Timer` 是否单独出现。
+**结论未定，需要实测**：先只打开 `AttackReduce` 打一场，确认 `Timer` 是否单独出现。
 
 ---
 
@@ -342,7 +342,7 @@ tools/scaffold-test/run.sh            # 35 项：决策表 + C03→C08 时序模
 
 ### 5.2 游戏内
 
-1. 只开 Scaffold（关 Velocity / AutoClicker / KillAura），搭 3~4 格桥；
+1. 只开 Scaffold（关 AttackReduce / AutoClicker / KillAura），搭 3~4 格桥；
 2. 看 `logs/openmaver.log` 里 `OpenMaverDebug.place(...)` 的 `aim=` 与
    `serverView=` 是否一致（一致 = 这次放置用的是服务端已知角度）；
 3. 打开 `debug.enabled=true` 会打出 `SCAFFOLD tick: ... aim=... serverView=...`，
@@ -388,10 +388,10 @@ tools/scaffold-test/run.sh            # 35 项：决策表 + C03→C08 时序模
 | 同上 | 1812 | `reaimPending`（重算角度，只进 C03） |
 | 同上 | 1847 | `pendingAction` 决策表（测试直接断言它） |
 | 同上 | ~3190 | `PendingPlace`（`retries` / `sent` / `sentYaw` / `sentPitch`） |
-| `mc/VelocityFeature.java` | ~604 | `farmUncertainty`（已从 ghost-block 改成真实视线 C08） |
+| `mc/AttackReduceFeature.java` | ~604 | `farmUncertainty`（已从 ghost-block 改成真实视线 C08） |
 | `mc/OpenMaverFeatures.java` | `advanceYaw` / `continuousYaw` | 连续 yaw，过 `AimModulo360` |
 | `tools/scaffold-test/` | — | 放置时序回归测试（35 项，`run.sh`） |
-| `design/VELOCITY_HANDOFF.md` | — | Velocity 侧的设计与坑 |
+| `design/ATTACKREDUCE_HANDOFF.md` | — | AttackReduce 侧的设计与坑 |
 | `README.md` | 「Grim 已知检查」一节 | 每个 check 的判据速查 |
 
 ---
@@ -469,7 +469,7 @@ tools/scaffold-test/run.sh            # 35 项：决策表 + C03→C08 时序模
 3. 预期 `RotationPlace` 的 vl 不再增长（`post-flying` 消失 → `pre-flying` 一并消失）；
 4. 若 `scaffold.pending.requeue` 刷得很频繁、且「放得慢半拍」明显，把
    `MAX_PENDING_RETRIES` 调到 3 再测（只影响掉块，不影响 flag）；
-5. `Timer`：按 §4.4 方案 1，先只开 `Velocity` 打一场确认归因，再决定 2/3 方案。
+5. `Timer`：按 §4.4 方案 1，先只开 `AttackReduce` 打一场确认归因，再决定 2/3 方案。
 
 ---
 
@@ -535,7 +535,7 @@ tools/scaffold-test/run.sh            # 35 项：决策表 + C03→C08 时序模
 
 ### 11.7 还没做的
 
-- ~~**`VelocityFeature.farmUncertainty` 的 C08** 走的是同一条判定链……照 §11.2
+- ~~**`AttackReduceFeature.farmUncertainty` 的 C08** 走的是同一条判定链……照 §11.2
   给它加同样的「同 tick 飞包携带同一角度」。~~
   **2026-11-16 18:00：这条不用做了。** 17:49 那局证明 farm 的 C08 是三头挨打：
   - `FabricatedPlace`：cursor 用了**世界坐标**（协议要 `[0,1]` 相对坐标，日志
@@ -544,24 +544,24 @@ tools/scaffold-test/run.sh            # 35 项：决策表 + C03→C08 时序模
     Scaffold 的 hold-aim 占着；
   - 它与 Scaffold 的 C08 撞同一个 tick → `MultiPlace`。
 
-  现在 GRIM 预设改走 `SPRINT SLAP`（Velocity 不再发任何 C08），farm 只在手动
+  现在 GRIM 预设改走 `SPRINT SLAP`（AttackReduce 不再发任何 C08），farm 只在手动
   选 `UNCERTAINTY` 时才跑，并且 cursor 已改成相对坐标。
 
-### 11.8 与 Velocity 的两个互斥闸门（2026-11-16 18:00 新增）
+### 11.8 与 AttackReduce 的两个互斥闸门（2026-11-16 18:00 新增）
 
-1. **`flushPendingPlace` 在 `VelocityFeature.isBlinking()` 时直接返回**，pending 原样
+1. **`flushPendingPlace` 在 `AttackReduceFeature.isBlinking()` 时直接返回**，pending 原样
    留到下一 tick。原因：blink 窗口里位置包被扣住，Grim 的 `lastClaimedPosition`
    比客户端老 1~2 tick，而我们用「当前眼睛」算 hitVec/角度 —— 两边几何不是同一个
    位置，`PositionPlace / FarPlace / AirLiquidPlace` 就是从这来的（日志里它们和
    blink 的 `blink #N` 时间戳完全对齐）。
 2. **`OpenMaverFeatures.claimPlacement()`**：本 tick 的 C08 名额。Scaffold 的
-   `place()` 和 Velocity 的 `farmUncertainty` 都先领名额；tick 顺序是
-   `ScaffoldFeature.onTickStart` → `VelocityFeature.onTickStart`，两边各放一个
+   `place()` 和 AttackReduce 的 `farmUncertainty` 都先领名额；tick 顺序是
+   `ScaffoldFeature.onTickStart` → `AttackReduceFeature.onTickStart`，两边各放一个
    就是同 tick 两条 C08（`MultiPlace`）。
 
 另外 `ScaffoldFeature.isAimingThisTick()` 是给**别人**用的信号：本 tick 的
 `rotationYaw/Pitch` 会在 `updatePlayerMoveState()` 里被静默 aim 覆盖，任何
-「按当前 rotation 做射线判定」的模块（Velocity 的 sprint-slap）必须在那一 tick
+「按当前 rotation 做射线判定」的模块（AttackReduce 的 sprint-slap）必须在那一 tick
 让位，否则它判定的角度和服务端最终收到的不是同一个。
 - 一个可以继续压榨的方向：既然判定用的是**本 tick**的包，理论上可以「本 tick 发 C08
   + 本 tick 的包携带该角度」，即每 tick 一块。做法是把 `planPlacement` 的眼睛改成

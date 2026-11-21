@@ -32,7 +32,7 @@
       "enabled": false,        // 教材式手动搭路辅助：默认关闭（按 G 切换）
       "key": "G"               // 绑定键位（按 G 切换）
     },
-    "velocity": {
+    "attackreduce": {
       "enabled": false,        // Velocity 防击退：默认关闭（参数在 ClickGUI 中调整）
       "key": ""               // 默认不占用按键，玩家可自行绑定
     }

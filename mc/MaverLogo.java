@@ -14,21 +14,30 @@ import java.util.Set;
 
 import javax.imageio.ImageIO;
 
-/** Draws the bundled Maver logo in the ClickGUI rail. */
+/** Draws the ClickGUI wordmark and the separate main-menu mark. */
 public final class MaverLogo {
 
-    private static final String RESOURCE = "/assets/openmaver/MaverLogo.png";
+    private static final MaverLogo WORDMARK = new MaverLogo("/assets/openmaver/MaverLogo.png");
+    private static final MaverLogo MENU_MARK = new MaverLogo("/assets/openmaver/MenuLogo.png");
 
-    private static int textureId;
-    private static int imageWidth;
-    private static int imageHeight;
-    private static final Set<String> LOGGED_SIZES = new HashSet<String>();
-    private static boolean failed;
+    private final String resource;
 
-    private MaverLogo() {
+    private int textureId;
+    private int imageWidth;
+    private int imageHeight;
+    private final Set<String> LOGGED_SIZES = new HashSet<String>();
+    private boolean failed;
+
+    private MaverLogo(String resource) {
+        this.resource = resource;
     }
 
     public static boolean draw(FontRenderer fallback, int x, int y, int maxWidth, int maxHeight,
+            float scale, int fallbackColor) {
+        return WORDMARK.drawInBox(fallback, x, y, maxWidth, maxHeight, scale, fallbackColor);
+    }
+
+    private boolean drawInBox(FontRenderer fallback, int x, int y, int maxWidth, int maxHeight,
             float scale, int fallbackColor) {
         if (!ensureLoaded()) {
             fallback.drawStringWithShadow("maver", x, y + 12, fallbackColor);
@@ -39,11 +48,23 @@ public final class MaverLogo {
         int width = Math.max(1, Math.round(imageWidth * fit * scale));
         int height = Math.max(1, Math.round(imageHeight * fit * scale));
         int drawX = x + Math.max(0, (maxWidth - width) / 2);
-        return drawScaled(fallback, drawX, y, width, height, scale);
+        return drawScaled(drawX, y, width, height, scale, fallbackColor);
     }
 
     /** Draws the logo centered on the given GUI point (used by the title screen badge). */
     public static boolean drawCentered(FontRenderer fallback, int centerX, int centerY,
+            int maxWidth, int maxHeight, float scale, int fallbackColor) {
+        return WORDMARK.drawCenteredImage(fallback, centerX, centerY, maxWidth, maxHeight,
+                scale, fallbackColor);
+    }
+
+    public static boolean drawMenuCentered(FontRenderer fallback, int centerX, int centerY,
+            int maxWidth, int maxHeight, float scale, int fallbackColor) {
+        return MENU_MARK.drawCenteredImage(fallback, centerX, centerY, maxWidth, maxHeight,
+                scale, fallbackColor);
+    }
+
+    private boolean drawCenteredImage(FontRenderer fallback, int centerX, int centerY,
             int maxWidth, int maxHeight, float scale, int fallbackColor) {
         if (!ensureLoaded()) {
             fallback.drawStringWithShadow("maver", centerX - 18, centerY, fallbackColor);
@@ -53,12 +74,12 @@ public final class MaverLogo {
         float fit = Math.min(maxWidth / (float) imageWidth, maxHeight / (float) imageHeight);
         int width = Math.max(1, Math.round(imageWidth * fit * scale));
         int height = Math.max(1, Math.round(imageHeight * fit * scale));
-        return drawScaled(fallback, centerX - width / 2, centerY - height / 2, width, height,
-                scale);
+        return drawScaled(centerX - width / 2, centerY - height / 2, width, height,
+                scale, fallbackColor);
     }
 
-    private static boolean drawScaled(FontRenderer fallback, int drawX, int y, int width,
-            int height, float scale) {
+    private boolean drawScaled(int drawX, int y, int width,
+            int height, float scale, int color) {
         String sizeKey = width + "x" + height + "@" + scale;
         if (LOGGED_SIZES.add(sizeKey)) {
             Logger.info("Logo", String.format(java.util.Locale.ROOT,
@@ -73,7 +94,7 @@ public final class MaverLogo {
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         GL11.glDisable(GL11.GL_DEPTH_TEST);
         GL11.glDisable(GL11.GL_LIGHTING);
-        GlColor.set(1.0F, 1.0F, 1.0F, 1.0F);
+        GlColor.set(1.0F, 1.0F, 1.0F, (color >>> 24) / 255.0F);
         GlStateManager.bindTexture(textureId);
         // This helper derives UVs from the destination size, so use that size
         // for the texture span as well to sample the entire logo when scaled.
@@ -85,20 +106,20 @@ public final class MaverLogo {
         return true;
     }
 
-    private static boolean ensureLoaded() {
+    private boolean ensureLoaded() {
         if (textureId != 0) {
             return true;
         }
         if (failed) {
             return false;
         }
-        try (InputStream input = MaverLogo.class.getResourceAsStream(RESOURCE)) {
+        try (InputStream input = MaverLogo.class.getResourceAsStream(resource)) {
             if (input == null) {
-                throw new IllegalStateException("Maver wordmark resource is missing");
+                throw new IllegalStateException("Maver logo resource is missing: " + resource);
             }
             BufferedImage image = ImageIO.read(input);
             if (image == null) {
-                throw new IllegalStateException("Maver wordmark image is invalid");
+                throw new IllegalStateException("Maver logo image is invalid: " + resource);
             }
             imageWidth = image.getWidth();
             imageHeight = image.getHeight();

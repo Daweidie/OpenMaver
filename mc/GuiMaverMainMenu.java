@@ -6,7 +6,6 @@ import net.minecraft.client.gui.GuiMultiplayer;
 import net.minecraft.client.gui.GuiOptions;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiSelectWorld;
-import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.client.renderer.texture.TextureManager;
@@ -38,8 +37,7 @@ import java.util.UUID;
 import javax.imageio.ImageIO;
 
 /**
- * Minecraft 标题界面风格的 Maver 主菜单：中央灰色按钮、右侧皮肤展示。
- * 自绘皮肤不依赖世界或玩家实体，因此尚未进入世界也能显示。
+ * 清晰的原版全景图、中央 Logo 与三行透明按钮；账号头像与快捷入口放在顶部。
  */
 @SideOnly(Side.CLIENT)
 public final class GuiMaverMainMenu extends GuiScreen {
@@ -58,30 +56,50 @@ public final class GuiMaverMainMenu extends GuiScreen {
     private static final int ACTION_OPTIONS = 4;
     private static final int ACTION_QUIT = 5;
     private static final int ACTION_WALLPAPER = 6;
+    private static final int ACTION_FULLSCREEN = 7;
 
     private final List<MenuButton> buttons = new ArrayList<MenuButton>();
     private String username = "Player";
     private boolean profileResolved;
     private boolean failed;
-    private boolean previewFailed;
+    private boolean avatarFailed;
     private volatile BufferedImage skinImage;
     private ResourceLocation skinTexture;
     private boolean skinFetchStarted;
     private static final Map<String, BufferedImage> SKIN_CACHE =
             new HashMap<String, BufferedImage>();
 
+    private int menuTop;
+    /** 菜单第一次打开的时间，用于入场动画；改窗口大小重新布局时不重置。 */
+    private long openedAt;
+    private long lastFrameAt;
+
     private static final class MenuButton {
         final String label;
         final int action;
         final int x, y, w, h;
+        /** 入场动画的先后顺序。 */
+        final int order;
+        /** 退出按钮悬停时用红色强调。 */
+        final boolean danger;
+        /** 0..1 的悬停进度，逐帧向目标值靠近。 */
+        float hover;
 
-        MenuButton(String label, int action, int x, int y, int w, int h) {
+        MenuButton(String label, int action, int x, int y, int w, int h,
+                int order, boolean danger) {
             this.label = label;
             this.action = action;
             this.x = x;
             this.y = y;
             this.w = w;
             this.h = h;
+            this.order = order;
+            this.danger = danger;
+        }
+
+        boolean isShortcut() {
+            return action != ACTION_SINGLEPLAYER && action != ACTION_MULTIPLAYER
+                    && action != ACTION_OPTIONS;
         }
     }
 
@@ -90,23 +108,28 @@ public final class GuiMaverMainMenu extends GuiScreen {
         super.initGui();
         buttonList.clear();
         failed = false;
-        previewFailed = false;
+        avatarFailed = false;
+        if (openedAt == 0L) {
+            openedAt = System.currentTimeMillis();
+        }
         resolveProfile();
+        HudFont.useMenuFont();
         layoutMenu();
     }
 
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
+        HudFont.useMenuFont();
+        updateHover(mouseX, mouseY);
         try {
-            resetUiState();
-            drawBackground();
+            drawBackground(width, height);
             drawTitle();
-            if (!previewFailed) {
+            if (!avatarFailed) {
                 try {
-                    drawPlayerPreview();
+                    drawAccount();
                 } catch (Throwable t) {
-                    previewFailed = true;
-                    System.err.println("[OpenMaver] Skin preview unavailable: " + t);
+                    avatarFailed = true;
+                    System.err.println("[OpenMaver] Account avatar unavailable: " + t);
                 } finally {
                     resetUiState();
                 }
@@ -119,7 +142,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
                 System.err.println("[OpenMaver] Main menu fallback: " + t);
             }
             resetUiState();
-            Gui.drawRect(0, 0, width, height, 0xFF343434);
+            Gui.drawRect(0, 0, width, height, 0xFF15181E);
             drawPixelText("Maver", width / 2.0F, height * 0.18F, 2.0F * uiScale(),
                     0xFFFFFFFF, true);
             drawButtons(mouseX, mouseY);
@@ -522,30 +545,54 @@ public final class GuiMaverMainMenu extends GuiScreen {
     private void layoutMenu() {
         float ui = uiScale();
         int buttonW = Math.round(190.0F * ui);
-        int buttonH = Math.round(36.0F * ui);
-        int gap = Math.max(2, Math.round(5.0F * ui));
+        int buttonH = Math.round(22.0F * ui);
+        int gap = Math.max(3, Math.round(5.0F * ui));
         int x = (width - buttonW) / 2;
-        int top = Math.round(height * 0.36F);
+        int top = Math.round(height * 0.43F);
         buttons.clear();
         buttons.add(new MenuButton("Singleplayer", ACTION_SINGLEPLAYER,
-                x, top, buttonW, buttonH));
+                x, top, buttonW, buttonH, 0, false));
         buttons.add(new MenuButton("Multiplayer", ACTION_MULTIPLAYER,
-                x, top + buttonH + gap, buttonW, buttonH));
+                x, top + buttonH + gap, buttonW, buttonH, 1, false));
         buttons.add(new MenuButton("Settings", ACTION_OPTIONS,
-                x, top + 2 * (buttonH + gap), buttonW, buttonH));
+                x, top + 2 * (buttonH + gap), buttonW, buttonH, 2, false));
 
-        int pad = Math.max(4, Math.round(8.0F * ui));
-        int bottomY = height - Math.round(47.0F * ui);
-        int smallH = Math.round(28.0F * ui);
-        int clientW = Math.round(112.0F * ui);
-        int wallpaperW = Math.round(82.0F * ui);
-        int quitW = Math.round(82.0F * ui);
-        buttons.add(new MenuButton("Client Settings", ACTION_CLIENT,
-                pad, bottomY, clientW, smallH));
+        int iconSize = Math.round(24.0F * ui);
+        int iconGap = Math.max(3, Math.round(5.0F * ui));
+        int pad = Math.round(12.0F * ui);
+        int iconY = Math.round(10.0F * ui);
+        int right = width - pad - iconSize;
+        buttons.add(new MenuButton("Fullscreen", ACTION_FULLSCREEN,
+                right - 2 * (iconSize + iconGap), iconY, iconSize, iconSize, 0, false));
         buttons.add(new MenuButton("Wallpaper", ACTION_WALLPAPER,
-                pad + clientW + gap, bottomY, wallpaperW, smallH));
+                right - iconSize - iconGap, iconY, iconSize, iconSize, 0, false));
         buttons.add(new MenuButton("Quit Game", ACTION_QUIT,
-                width - pad - quitW, bottomY, quitW, smallH));
+                right, iconY, iconSize, iconSize, 0, true));
+        int nameW = HudFont.getStringWidth(fontRendererObj, username, 0.95F * ui);
+        int clientX = Math.round(40.0F * ui) + nameW + Math.round(5.0F * ui);
+        clientX = Math.min(clientX, right - 3 * (iconSize + iconGap));
+        buttons.add(new MenuButton("Client Settings", ACTION_CLIENT,
+                clientX, iconY, iconSize, iconSize, 0, false));
+        menuTop = top;
+    }
+
+    /** 0..1 的入场进度；index 越大越晚出现，形成错落的渐入。 */
+    private float appear(int index) {
+        float t = (System.currentTimeMillis() - openedAt - index * 45.0F) / 380.0F;
+        t = Math.max(0.0F, Math.min(1.0F, t));
+        float inv = 1.0F - t;
+        return 1.0F - inv * inv * inv;
+    }
+
+    private void updateHover(int mouseX, int mouseY) {
+        long now = System.currentTimeMillis();
+        float dt = lastFrameAt == 0L ? 0.0F : Math.min(50.0F, now - lastFrameAt);
+        lastFrameAt = now;
+        float k = Math.min(1.0F, dt / 90.0F);
+        for (MenuButton button : buttons) {
+            float target = inside(mouseX, mouseY, button) ? 1.0F : 0.0F;
+            button.hover += (target - button.hover) * k;
+        }
     }
 
     private static void resetUiState() {
@@ -566,23 +613,84 @@ public final class GuiMaverMainMenu extends GuiScreen {
         GlColor.restore();
     }
 
-    private void drawBackground() {
+    /** 与菜单设置页共用，每帧绘制当前壁纸，异步加载完成后立即显示。 */
+    void drawBackground(int width, int height) {
+        resetUiState();
         boolean custom = MaverWallpaper.draw(mc, width, height);
         if (!custom) {
             drawPanorama();
         }
-        float blur = MaverWallpaper.getBlurStrength();
-        if (blur > 0.01F) {
-            try {
-                ScaledResolution resolution = new ScaledResolution(mc);
-                GuiBlur.beginFrame(width, height, resolution.getScaleFactor());
-                GuiBlur.draw(0, 0, width, height, 0.0F, 0x000000, 0.0F, 1.0F, blur);
-            } catch (Throwable ignored) {
-                // 模糊不可用时仍保留全景图 / 壁纸。
+        // 直接呈现原始背景，不捕获低分辨率快照，也不执行任何模糊通道。
+        verticalGradient(0, 0, width, Math.round(height * 0.18F), 0x28000000, 0x00000000);
+        verticalGradient(0, Math.round(height * 0.88F), width, height, 0x00000000, 0x30000000);
+    }
+
+    private void drawTitle() {
+        float ui = uiScale();
+        float a = appear(0);
+        float lift = (1.0F - a) * 8.0F * ui;
+        int centerX = width / 2;
+        int logoH = Math.round(44.0F * ui);
+        int logoW = Math.round(148.0F * ui);
+        int logoCenterY = Math.round(menuTop - 40.0F * ui + lift);
+
+        if (a > 0.02F) {
+            MaverLogo.drawMenuCentered(fontRendererObj, centerX, logoCenterY,
+                    logoW, logoH, 1.0F, fade(0xFFFFFFFF, a));
+        }
+    }
+
+    private void drawButtons(int mouseX, int mouseY) {
+        float ui = uiScale();
+        float textSize = 1.05F * ui;
+        for (MenuButton button : buttons) {
+            if (button.isShortcut()) {
+                drawShortcut(button, mouseX, mouseY);
+                continue;
+            }
+            float a = appear(button.order + 1);
+            if (a <= 0.01F) {
+                continue;
+            }
+            float h = button.hover;
+            float lift = (1.0F - a) * 6.0F * ui;
+            int x = button.x;
+            int y = Math.round(button.y + lift);
+            int w = button.w;
+            int bh = button.h;
+            float r = Math.min(6.0F * ui, bh / 2.0F);
+            // 纯半透明底色，背景纹理直接透过按钮，不做毛玻璃处理。
+            fillRound(x, y, w, bh, r, fade(blend(0x48FFFFFF, 0x78FFFFFF, h), a));
+            int rim = blend(0x28FFFFFF, 0x80FFFFFF, h);
+            strokeRound(x, y, w, bh, r, 1.0F, fade(rim, a));
+
+            int textColor = 0xFFFFFFFF;
+            float size = Math.min(textSize,
+                    (w - 12.0F) / Math.max(1, HudFont.getStringWidth(fontRendererObj,
+                            button.label, 1.0F)));
+            int textW = HudFont.getStringWidth(fontRendererObj, button.label, size);
+            drawText(button.label, x + (w - textW) / 2.0F,
+                    y + (bh - 8.0F * size) / 2.0F, size, fade(textColor, a));
+            if (h > 0.02F) {
+                // 悬停时底部出现一条细亮线，宽度随悬停进度展开。
+                float lineW = (w - 2.0F * r) * h;
+                fillRound(x + (w - lineW) / 2.0F, y + bh - 2.0F, lineW, 1.0F, 0.5F,
+                        fade(0xFFFFFFFF, a * h * 0.85F));
             }
         }
-        Gui.drawRect(0, 0, width, height, 0x18000000);
-        Gui.drawRect(0, height - Math.round(16.0F * uiScale()), width, height, 0x35000000);
+    }
+
+    private void drawFooter() {
+        float ui = uiScale();
+        float a = appear(3);
+        float size = 0.78F * ui;
+        float y = height - 13.0F * ui;
+        int color = fade(0xFFDDE2E5, a);
+        float pad = 8.0F * ui;
+        drawText("Maver Client " + OpenMaver.VERSION, pad, y, size, color);
+        String copyright = "Copyright Mojang AB. Do not distribute!";
+        int copyrightW = HudFont.getStringWidth(fontRendererObj, copyright, size);
+        drawText(copyright, width - pad - copyrightW, y, size, color);
     }
 
     private void drawPanorama() {
@@ -617,8 +725,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             GlColor.restore();
 
-            // 只绘制一次全景立方体。之前叠加 36 层不同角度的半透明副本会在
-            // 模糊度调到 0 时仍然显得发糊；模糊交给 GuiBlur 按滑块强度处理。
+            // 全分辨率绘制一次原版全景立方体，不叠加抖动采样或模糊副本。
             GL11.glRotatef((float) Math.sin(ticks / 400.0D) * 25.0F + 20.0F,
                     1.0F, 0.0F, 0.0F);
             GL11.glRotatef(-ticks * 0.1F, 0.0F, 1.0F, 0.0F);
@@ -640,6 +747,15 @@ public final class GuiMaverMainMenu extends GuiScreen {
 
                     GlStateManager.bindTexture(0);
                     mc.getTextureManager().bindTexture(PANORAMA[face]);
+                    // 原版全景贴图只有 256×256；强制逐像素采样，避免放大时被平滑滤镜糊开。
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER,
+                            GL11.GL_NEAREST);
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER,
+                            GL11.GL_NEAREST);
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S,
+                            GL11.GL_CLAMP_TO_EDGE);
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T,
+                            GL11.GL_CLAMP_TO_EDGE);
                     GL11.glBegin(GL11.GL_QUADS);
                     setVertexColor(0xFFFFFFFF, 1.0F);
                     GL11.glTexCoord2f(0.0F, 0.0F);
@@ -666,138 +782,145 @@ public final class GuiMaverMainMenu extends GuiScreen {
         }
     }
 
-    private void drawTitle() {
-        float ui = uiScale();
-        drawMinecraftWordmark();
-        double phase = (System.nanoTime() % 1_000_000_000L) / 1_000_000_000.0 * Math.PI * 2.0;
-        float pulse = 1.8F - (float) Math.abs(Math.sin(phase)) * 0.1F;
-        GL11.glPushMatrix();
-        try {
-            GL11.glTranslatef(width / 2.0F + 66.0F * ui, height * 0.285F, 0.0F);
-            GL11.glRotatef(-20.0F, 0.0F, 0.0F, 1.0F);
-            drawPixelText("Maver!", 0, -4.0F * pulse * ui, pulse * ui, 0xFFFFFF00, true);
-        } finally {
-            GL11.glPopMatrix();
-            GlColor.restore();
+    private void drawAccount() {
+        TextureManager textures = mc.getTextureManager();
+        if (textures == null) {
+            return;
         }
-    }
-
-    /** Five-by-seven block lettering with the pale stone face and dark extrusion of the MC title. */
-    private void drawMinecraftWordmark() {
-        final String[] glyphs = {
-            // A proper M: the two outer stems stay vertical while the inner
-            // diagonals meet at the top, so it can never be read as N.
-            "10001/11011/10101/10101/10001/10001/10001", // M
-            "01110/10001/10001/11111/10001/10001/10001", // A
-            "10001/10001/10001/10001/10001/01010/00100", // V
-            "11111/10000/10000/11110/10000/10000/11111", // E
-            "11110/10001/10001/11110/10100/10010/10001"  // R
-        };
-        // Keep the brand mark present without letting it dominate the menu.
-        float scale = Math.min(width * 0.44F / 29.0F, height * 0.16F / 7.0F);
-        scale = Math.max(1.0F, scale);
-        float depth = Math.max(2.0F, scale * 0.18F);
-        float originX = width / 2.0F - 14.5F * scale;
-        float originY = height * 0.13F;
-
-        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
-                | GL11.GL_TEXTURE_BIT | GL11.GL_DEPTH_BUFFER_BIT);
-        try {
-            GL11.glDisable(GL11.GL_TEXTURE_2D);
-            GL11.glDisable(GL11.GL_DEPTH_TEST);
-            GL11.glDisable(GL11.GL_CULL_FACE);
-            GL11.glEnable(GL11.GL_BLEND);
-            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            GL11.glBegin(GL11.GL_QUADS);
-
-            // Offset layers build a chunky black outline and the title's extruded edge.
-            for (int layer = 4; layer >= 0; layer--) {
-                int color = layer == 0 ? 0xFF101010 : 0xFF181818;
-                float offset = depth + layer * Math.max(1.0F, scale * 0.06F);
-                drawWordPixels(glyphs, originX + offset, originY + offset,
-                        scale, color, false);
+        float ui = uiScale();
+        float a = appear(0);
+        float x = 14.0F * ui;
+        float y = 13.0F * ui;
+        float size = 18.0F * ui;
+        BufferedImage image = skinImage;
+        if (skinTexture == null && image != null) {
+            ResourceLocation location = new ResourceLocation("openmaver", "skin/menu_player");
+            if (textures.loadTexture(location, new DynamicTexture(image))) {
+                skinTexture = location;
             }
-            drawWordPixels(glyphs, originX, originY, scale, 0xFFE2E0DC, false);
-            // A sparse darker pixel pattern gives the light face a stone-cut look.
-            drawWordPixels(glyphs, originX, originY, scale, 0xFFAAA8A5, true);
-            GL11.glEnd();
+        }
+        ResourceLocation skin = skinTexture != null ? skinTexture
+                : DefaultPlayerSkin.getDefaultSkin(new UUID(0L, 0L));
+        GL11.glPushAttrib(GL11.GL_TEXTURE_BIT);
+        try {
+            GlStateManager.bindTexture(0);
+            textures.bindTexture(skin);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
+            setVertexColor(fade(0xFFFFFFFF, a), 1.0F);
+            drawSkinFace(x, y, size, 8, 8);
+            drawSkinFace(x, y, size, 40, 8);
         } finally {
-            GlColor.restore();
+            GlStateManager.bindTexture(0);
             GL11.glPopAttrib();
             GlColor.restore();
         }
+        float nameX = 40.0F * ui;
+        float nameSize = 0.95F * ui;
+        float available = buttons.get(buttons.size() - 1).x - nameX - 4.0F * ui;
+        String name = username;
+        while (name.length() > 0
+                && HudFont.getStringWidth(fontRendererObj, name, nameSize) > available) {
+            name = name.substring(0, name.length() - 1);
+        }
+        drawText(name, nameX, y + (size - 8.0F * nameSize) / 2.0F,
+                nameSize, fade(0xFFFFFFFF, a));
     }
 
-    private static void drawWordPixels(String[] glyphs, float x, float y,
-            float scale, int color, boolean texture) {
-        int cursor = 0;
-        for (int glyph = 0; glyph < glyphs.length; glyph++) {
-            String[] rows = glyphs[glyph].split("/");
-            for (int row = 0; row < rows.length; row++) {
-                for (int column = 0; column < rows[row].length(); column++) {
-                    if (rows[row].charAt(column) != '1'
-                            || (texture && (row + column + glyph) % 4 != 0)) {
-                        continue;
-                    }
-                    GL11.glColor4f((color >> 16 & 0xFF) / 255.0F,
-                            (color >> 8 & 0xFF) / 255.0F,
-                            (color & 0xFF) / 255.0F,
-                            (color >>> 24) / 255.0F);
-                    float left = x + (cursor + column) * scale;
-                    float top = y + row * scale;
-                    GL11.glVertex2f(left, top);
-                    GL11.glVertex2f(left, top + scale);
-                    GL11.glVertex2f(left + scale, top + scale);
-                    GL11.glVertex2f(left + scale, top);
-                }
+    private static void drawSkinFace(float x, float y, float size, int u, int v) {
+        GL11.glBegin(GL11.GL_QUADS);
+        GL11.glTexCoord2f(u / 64.0F, v / 64.0F);
+        GL11.glVertex2f(x, y);
+        GL11.glTexCoord2f(u / 64.0F, (v + 8) / 64.0F);
+        GL11.glVertex2f(x, y + size);
+        GL11.glTexCoord2f((u + 8) / 64.0F, (v + 8) / 64.0F);
+        GL11.glVertex2f(x + size, y + size);
+        GL11.glTexCoord2f((u + 8) / 64.0F, v / 64.0F);
+        GL11.glVertex2f(x + size, y);
+        GL11.glEnd();
+    }
+
+    private void drawShortcut(MenuButton button, int mouseX, int mouseY) {
+        float ui = uiScale();
+        float a = appear(0);
+        float h = button.hover;
+        int tint = button.danger ? 0xFFE5676B : 0xFFFFFFFF;
+        int color = fade(blend(0xE6FFFFFF, tint, h), a);
+        float x = button.x, y = button.y, w = button.w, bh = button.h;
+        float cx = x + w / 2.0F, cy = y + bh / 2.0F;
+        if (button.action != ACTION_CLIENT || h > 0.01F) {
+            fillRound(x, y, w, bh, 3.0F * ui,
+                    fade(blend(0x28FFFFFF, button.danger ? 0x60D84950 : 0x55FFFFFF, h), a));
+        }
+        float d = 5.0F * ui;
+        float lineWidth = Math.max(0.7F, 1.2F * ui);
+        if (button.action == ACTION_QUIT || button.action == ACTION_CLIENT) {
+            if (button.action == ACTION_QUIT) {
+                iconLine(cx - d, cy - d, cx + d, cy + d, lineWidth, color);
+                iconLine(cx - d, cy + d, cx + d, cy - d, lineWidth, color);
+            } else {
+                iconLine(cx - d, cy, cx + d, cy, lineWidth, color);
+                iconLine(cx, cy - d, cx, cy + d, lineWidth, color);
             }
-            cursor += 6;
+        } else if (button.action == ACTION_FULLSCREEN) {
+            strokeRound(cx - d, cy - d / 2, d * 1.5F, d * 1.5F,
+                    ui, lineWidth, color);
+            strokeRound(cx - d / 2, cy - d, d * 1.5F, d * 1.5F,
+                    ui, lineWidth, color);
+        } else if (button.action == ACTION_WALLPAPER) {
+            strokeRound(cx - d, cy - d, d * 2, d * 2, ui, lineWidth, color);
+            fillRound(cx + d * 0.25F, cy - d * 0.55F, ui * 1.8F, ui * 1.8F, ui, color);
+            iconLine(cx - d * 0.7F, cy + d * 0.6F, cx - d * 0.15F, cy - d * 0.1F,
+                    lineWidth, color);
+            iconLine(cx - d * 0.15F, cy - d * 0.1F, cx + d * 0.65F, cy + d * 0.6F,
+                    lineWidth, color);
+        }
+        if (inside(mouseX, mouseY, button)) {
+            float textSize = 0.75F * ui;
+            int textW = HudFont.getStringWidth(fontRendererObj, button.label, textSize);
+            float textX = Math.max(4.0F * ui,
+                    Math.min(cx - textW / 2.0F, width - textW - 8.0F * ui));
+            float textY = y + bh + 7.0F * ui;
+            fillRound(textX - 4.0F * ui, textY - 3.0F * ui,
+                    textW + 8.0F * ui, 14.0F * ui, 3.0F * ui, fade(0xC02A3036, a));
+            drawText(button.label, textX, textY, textSize, fade(0xFFFFFFFF, a));
         }
     }
 
-    private void drawButtons(int mouseX, int mouseY) {
-        for (MenuButton button : buttons) {
-            boolean hover = inside(mouseX, mouseY, button);
-            int x = button.x, y = button.y, w = button.w, h = button.h;
-            Gui.drawRect(x + 2, y + 3, x + w + 2, y + h + 3, 0x65000000);
-            Gui.drawRect(x, y, x + w, y + h, 0xFF171717);
-            Gui.drawRect(x + 1, y + 1, x + w - 1, y + h - 1,
-                    hover ? 0xFF218306 : 0xFFC6C6C6);
-            Gui.drawRect(x + 2, y + 2, x + w - 2, y + 3,
-                    hover ? 0xFF59BA39 : 0xFFF2F2F2);
-            Gui.drawRect(x + 2, y + 3, x + 3, y + h - 3,
-                    hover ? 0xFF59BA39 : 0xFFE8E8E8);
-            Gui.drawRect(x + 2, y + h - 3, x + w - 2, y + h - 1,
-                    hover ? 0xFF135000 : 0xFF656565);
-            Gui.drawRect(x + w - 3, y + 3, x + w - 1, y + h - 3,
-                    hover ? 0xFF135000 : 0xFF777777);
-            float size = 1.05F * uiScale();
-            size = Math.min(size, (w - 10.0F) / Math.max(1, fontRendererObj.getStringWidth(button.label)));
-            drawPixelText(button.label, x + w / 2.0F, y + (h - 8.0F * size) / 2.0F,
-                    size, hover ? 0xFFFFFFFF : 0xFF383838, false);
+    private static void iconLine(float x0, float y0, float x1, float y1,
+            float thickness, int color) {
+        float length = (float) Math.hypot(x1 - x0, y1 - y0);
+        if (length <= 0.0F) {
+            return;
         }
+        float dx = -(y1 - y0) / length * thickness / 2.0F;
+        float dy = (x1 - x0) / length * thickness / 2.0F;
+        shapeBegin();
+        GL11.glBegin(GL11.GL_QUADS);
+        setVertexColor(color, 1.0F);
+        GL11.glVertex2f(x0 + dx, y0 + dy);
+        GL11.glVertex2f(x1 + dx, y1 + dy);
+        GL11.glVertex2f(x1 - dx, y1 - dy);
+        GL11.glVertex2f(x0 - dx, y0 - dy);
+        GL11.glEnd();
+        shapeEnd();
     }
 
-    private void drawFooter() {
-        float size = uiScale();
-        float y = height - 12.0F * size;
-        drawPixelText("OPEN CLIENT  ·  Minecraft 1.8.9", 5.0F * size, y,
-                size, 0xFFFFFFFF, false, false);
-        String version = "Maver " + OpenMaver.VERSION;
-        drawPixelText(version, width - (5.0F + fontRendererObj.getStringWidth(version)) * size,
-                y, size, 0xFFFFFFFF, false, false);
+    private void drawText(String text, float x, float y, float size, int color) {
+        if ((color >>> 24) < 4) {
+            return;
+        }
+        GlColor.restore();
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        HudFont.drawString(fontRendererObj, text, Math.round(x), Math.round(y), color, size);
+        GlColor.restore();
     }
 
     private void drawPixelText(String text, float x, float y, float size, int color,
             boolean shadow) {
-        drawPixelText(text, x, y, size, color, shadow, true);
-    }
-
-    private void drawPixelText(String text, float x, float y, float size, int color,
-            boolean shadow, boolean centered) {
         GlColor.restore();
-        // Gui.drawRect closes blending after drawing each button. Restore it here
-        // so transparent glyph texels do not become solid black rectangles.
         GL11.glEnable(GL11.GL_TEXTURE_2D);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
@@ -805,7 +928,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
         try {
             GL11.glTranslatef(x, y, 0.0F);
             GL11.glScalef(size, size, 1.0F);
-            int textX = centered ? -fontRendererObj.getStringWidth(text) / 2 : 0;
+            int textX = -fontRendererObj.getStringWidth(text) / 2;
             if (shadow) {
                 fontRendererObj.drawStringWithShadow(text, textX, 0, color);
             } else {
@@ -817,28 +940,131 @@ public final class GuiMaverMainMenu extends GuiScreen {
         }
     }
 
-    private void drawPlayerPreview() {
-        TextureManager textures = mc.getTextureManager();
-        if (textures == null) {
+    // ------------------------------------------------------------------
+    // 形状：带 1px 顶点 alpha 羽化的圆角矩形，与 ClickGUI 的画法一致。
+    // ------------------------------------------------------------------
+
+    private static final int ARC_SEGMENTS = 8;
+
+    private static void fillRound(float x, float y, float w, float h, float radius, int color) {
+        if (w <= 0.0F || h <= 0.0F || (color >>> 24) == 0) {
             return;
         }
-        BufferedImage image = skinImage;
-        if (skinTexture == null && image != null) {
-            ResourceLocation location = new ResourceLocation("openmaver", "skin/menu_player");
-            if (textures.loadTexture(location, new DynamicTexture(image))) {
-                skinTexture = location;
+        float r = Math.max(0.0F, Math.min(radius, Math.min(w, h) / 2.0F));
+        float[][] inner = roundedPath(x, y, w, h, r);
+        float[][] outer = roundedPath(x - 1.0F, y - 1.0F, w + 2.0F, h + 2.0F, r + 1.0F);
+        shapeBegin();
+        GL11.glBegin(GL11.GL_TRIANGLE_FAN);
+        setVertexColor(color, 1.0F);
+        GL11.glVertex2f(x + w / 2.0F, y + h / 2.0F);
+        for (int i = 0; i <= inner[0].length; i++) {
+            int k = i % inner[0].length;
+            GL11.glVertex2f(inner[0][k], inner[1][k]);
+        }
+        GL11.glEnd();
+        band(inner, outer, color, 1.0F, 0.0F);
+        shapeEnd();
+    }
+
+    /** 圆角描边：内外各带一圈羽化，细线也不会出现锯齿。 */
+    private static void strokeRound(float x, float y, float w, float h, float radius,
+            float thickness, int color) {
+        if (w <= 0.0F || h <= 0.0F || (color >>> 24) == 0) {
+            return;
+        }
+        float r = Math.max(0.0F, Math.min(radius, Math.min(w, h) / 2.0F));
+        float t = thickness;
+        float[][] solidOut = roundedPath(x, y, w, h, r);
+        float[][] solidIn = roundedPath(x + t, y + t, w - 2 * t, h - 2 * t, Math.max(0.0F, r - t));
+        float[][] featherOut = roundedPath(x - 0.6F, y - 0.6F, w + 1.2F, h + 1.2F, r + 0.6F);
+        float[][] featherIn = roundedPath(x + t + 0.6F, y + t + 0.6F,
+                w - 2 * t - 1.2F, h - 2 * t - 1.2F, Math.max(0.0F, r - t - 0.6F));
+        shapeBegin();
+        band(featherIn, solidIn, color, 0.0F, 1.0F);
+        band(solidIn, solidOut, color, 1.0F, 1.0F);
+        band(solidOut, featherOut, color, 1.0F, 0.0F);
+        shapeEnd();
+    }
+
+    private static void band(float[][] from, float[][] to, int color, float fromAlpha,
+            float toAlpha) {
+        int n = from[0].length;
+        GL11.glBegin(GL11.GL_TRIANGLE_STRIP);
+        for (int i = 0; i <= n; i++) {
+            int k = i % n;
+            setVertexColor(color, fromAlpha);
+            GL11.glVertex2f(from[0][k], from[1][k]);
+            setVertexColor(color, toAlpha);
+            GL11.glVertex2f(to[0][k], to[1][k]);
+        }
+        GL11.glEnd();
+    }
+
+    /** 顺时针采样四个圆角，点数固定，方便内外两条路径逐点配对。 */
+    private static float[][] roundedPath(float x, float y, float w, float h, float r) {
+        int per = ARC_SEGMENTS + 1;
+        float[] xs = new float[per * 4];
+        float[] ys = new float[per * 4];
+        float[] cx = {x + r, x + w - r, x + w - r, x + r};
+        float[] cy = {y + r, y + r, y + h - r, y + h - r};
+        float[] start = {180.0F, 270.0F, 0.0F, 90.0F};
+        int index = 0;
+        for (int corner = 0; corner < 4; corner++) {
+            for (int i = 0; i <= ARC_SEGMENTS; i++) {
+                double angle = Math.toRadians(start[corner] + i * (90.0F / ARC_SEGMENTS));
+                xs[index] = cx[corner] + (float) Math.cos(angle) * r;
+                ys[index] = cy[corner] + (float) Math.sin(angle) * r;
+                index++;
             }
         }
-        // 没取到官方皮肤时展示 Steve，联网失败不影响菜单使用。
-        ResourceLocation skin = skinTexture != null ? skinTexture
-                : DefaultPlayerSkin.getDefaultSkin(new UUID(0L, 0L));
-        float ui = uiScale();
-        float centerX = width * 0.83F;
-        float feetY = height * 0.68F;
-        MenuSkinPreview.draw(textures, skin, centerX, feetY, 2.6F * ui);
-        float nameSize = Math.min(ui, 96.0F * ui
-                / Math.max(1, fontRendererObj.getStringWidth(username)));
-        drawPixelText(username, centerX, feetY + 10.0F * ui, nameSize, 0xFFFFFFFF, true);
+        return new float[][] {xs, ys};
+    }
+
+    private static void verticalGradient(float x0, float y0, float x1, float y1,
+            int top, int bottom) {
+        shapeBegin();
+        GL11.glShadeModel(GL11.GL_SMOOTH);
+        GL11.glBegin(GL11.GL_QUADS);
+        setVertexColor(top, 1.0F);
+        GL11.glVertex2f(x0, y0);
+        setVertexColor(bottom, 1.0F);
+        GL11.glVertex2f(x0, y1);
+        GL11.glVertex2f(x1, y1);
+        setVertexColor(top, 1.0F);
+        GL11.glVertex2f(x1, y0);
+        GL11.glEnd();
+        shapeEnd();
+    }
+
+    private static void shapeBegin() {
+        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
+                | GL11.GL_TEXTURE_BIT);
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glDisable(GL11.GL_CULL_FACE);
+        GL11.glDisable(GL11.GL_ALPHA_TEST);
+        GL11.glDisable(GL11.GL_POLYGON_SMOOTH);
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+    }
+
+    private static void shapeEnd() {
+        GL11.glPopAttrib();
+        GlColor.restore();
+    }
+
+    private static int fade(int argb, float alpha) {
+        float a = Math.max(0.0F, Math.min(1.0F, alpha));
+        return Math.round((argb >>> 24) * a) << 24 | (argb & 0xFFFFFF);
+    }
+
+    private static int blend(int from, int to, float amount) {
+        float t = Math.max(0.0F, Math.min(1.0F, amount));
+        int alpha = Math.round((from >>> 24) + ((to >>> 24) - (from >>> 24)) * t);
+        int red = Math.round((from >> 16 & 0xFF) + ((to >> 16 & 0xFF) - (from >> 16 & 0xFF)) * t);
+        int green = Math.round((from >> 8 & 0xFF) + ((to >> 8 & 0xFF) - (from >> 8 & 0xFF)) * t);
+        int blue = Math.round((from & 0xFF) + ((to & 0xFF) - (from & 0xFF)) * t);
+        return alpha << 24 | red << 16 | green << 8 | blue;
     }
 
     private void perform(int action) {
@@ -854,6 +1080,8 @@ public final class GuiMaverMainMenu extends GuiScreen {
                 openClientGui("wallpaper");
             } else if (action == ACTION_OPTIONS) {
                 mc.displayGuiScreen(new GuiOptions(this, mc.gameSettings));
+            } else if (action == ACTION_FULLSCREEN) {
+                mc.toggleFullscreen();
             } else if (action == ACTION_QUIT) {
                 mc.shutdown();
             }

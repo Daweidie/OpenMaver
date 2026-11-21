@@ -215,8 +215,16 @@ public final class OpenMaverFeatures {
     private static int autoclickerAttackMode = ATTACK_MODE_FULL_CHARGE;
     private static boolean autoclickerHumanize = true;
 
+    /** 旧版防击退模块（Velocity）遗留的配置键后缀，v13 迁移时搬到 attackreduce.*。 */
+    private static final String[] LEGACY_ATTACKREDUCE_KEYS = {
+            "mode", "server", "horizontal", "vertical", "reversalDelay", "reversalStrength",
+            "strafeFactor", "jumpDelay", "blinkTicks", "burstAttacks", "burstRange",
+            "blinkFlush", "blinkKeep", "burstRotate", "blinkRewind", "grimGuard",
+            "uncertaintyTicks", "uncertaintyFarm", "slapMaxTicks", "slapAim",
+            "slapSprintSync", "noxzAttacks", "noxzTx"};
+
     /** openmaver.properties 的结构版本，用于迁移旧默认值。 */
-    private static final int SETTINGS_VERSION = 12;
+    private static final int SETTINGS_VERSION = 19;
 
     /**
      * 1.8.9 服务端的受击无敌窗口是 10 tick（hurtResistantTime 20 -> 10 才会结算）。
@@ -325,11 +333,11 @@ public final class OpenMaverFeatures {
     private static boolean rightClickUsedThisTick;
 
     /**
-     * 本 tick 已经发出去几个 C08（Scaffold 与 Velocity 的 farm 共用）。
+     * 本 tick 已经发出去几个 C08（Scaffold 与 AttackReduce 的 farm 共用）。
      *
      * <p>Grim 的 {@code MultiPlace} 判的是「同一个 tick 里多条放置包」。两个模块
      * 各自维护自己的 "一 tick 一次" 是挡不住的：tick 顺序是 Scaffold 先跑、
-     * Velocity 后跑，两边各放一个就是两条 C08。这里给一个公共闸门。
+     * AttackReduce 后跑，两边各放一个就是两条 C08。这里给一个公共闸门。
      */
     private static int placementsThisTick;
     /** 上次成功放置的 tick，用于 debug 中的放置间隔。 */
@@ -355,6 +363,20 @@ public final class OpenMaverFeatures {
     private static boolean killAuraRequirePress;
     private static boolean killAuraFailed;
     private static EntityLivingBase killAuraTarget;
+    private static boolean killAuraAttackedThisTick;
+    private static boolean killAuraAimReady;
+
+    /** Velocity 在 Aura 选目标后运行，复用目标而不是因为 Aura 启用就停用。 */
+    static EntityLivingBase velocityAuraTarget() {
+        Module aura = ModuleManager.getModule("KillAura");
+        return aura != null && aura.isEnabled() && killAuraAimReady ? killAuraTarget : null;
+    }
+
+    /** 主线程闸门补上 Netty 异步 SEND 观察尚未看见的本 tick 动作。 */
+    static boolean velocityActionUsedThisTick() {
+        return killAuraAttackedThisTick || autoclickerClickedThisTick || rightClickUsedThisTick
+                || placementsThisTick > 0;
+    }
     private static long killAuraNextAttackNanos;
     private static long killAuraLastSwitchNanos;
     private static final Random KILL_AURA_RANDOM = new Random();
@@ -415,6 +437,8 @@ public final class OpenMaverFeatures {
         // 放到 END 阶段注入会被服务端以 “failed Post: attack/place” 拒绝。
         rightClickUsedThisTick = false;
         autoclickerClickedThisTick = false;
+        killAuraAttackedThisTick = false;
+        killAuraAimReady = false;
         placementsThisTick = 0;
         if (tickStartFailed) {
             processPendingCriticalJump(mc);
@@ -456,7 +480,7 @@ public final class OpenMaverFeatures {
     }
 
     /**
-     * 本 tick 的 C08 名额（Scaffold 与 Velocity 的 farm 共用）。
+     * 本 tick 的 C08 名额（Scaffold 与 AttackReduce 的 farm 共用）。
      *
      * @return 本 tick 第一个调用者拿到 {@code true}，其余为 {@code false}
      */
@@ -2168,6 +2192,7 @@ public final class OpenMaverFeatures {
         // 攻击使用“本 tick 转向之前”的视角判断：本 tick 的 rotation 还没随 C03
         // 发到服务端，等服务端收到后再攻击，避免 RotationPlace / Aim 类误判。
         boolean aimed = !killAuraRotate || killAuraAimError(player, target) <= 15.0F;
+        killAuraAimReady = aimed;
         if (killAuraRotate) {
             applyKillAuraRotation(player, target);
         }
@@ -2188,6 +2213,7 @@ public final class OpenMaverFeatures {
             return;
         }
         boolean attacked = attackEntityFirst(mc, player, target);
+        killAuraAttackedThisTick = attacked;
         restoreCriticalsSprint(player, stopSprintSent);
         if (!attacked) {
             OpenMaverDebug.noticeOnce("killaura.attack",
@@ -2510,50 +2536,50 @@ public final class OpenMaverFeatures {
             // Simulation 是逐 tick 全量预测，缺位移就是每 tick 一条 flag（vl 冲到 78）。
             // v9 起换成 UNCERTAINTY：受击瞬间先 ghost-block（放置 + 立刻开始挖）
             // 撑开 Grim 的 uncertainty 容差，再归零，缺掉的位移落进容差里。
-            String vMode = values.getProperty("velocity.mode");
+            String vMode = values.getProperty("attackreduce.mode");
             if (vMode != null && "4".equals(vMode.trim())) {
-                values.setProperty("velocity.mode", "5");
+                values.setProperty("attackreduce.mode", "5");
             }
-            if (values.getProperty("velocity.uncertaintyTicks") == null) {
-                values.setProperty("velocity.uncertaintyTicks", "2");
+            if (values.getProperty("attackreduce.uncertaintyTicks") == null) {
+                values.setProperty("attackreduce.uncertaintyTicks", "2");
             }
-            if (values.getProperty("velocity.uncertaintyFarm") == null) {
-                values.setProperty("velocity.uncertaintyFarm", "true");
+            if (values.getProperty("attackreduce.uncertaintyFarm") == null) {
+                values.setProperty("attackreduce.uncertaintyFarm", "true");
             }
             if (vMode != null) {
                 // UNCERTAINTY 归零水平，垂直必须留满，否则滞空 -> GroundSpoof。
-                values.setProperty("velocity.vertical", "1.0");
+                values.setProperty("attackreduce.vertical", "1.0");
             }
             settingsDirty = true;
         }
         if (settingsVersion < 8) {
-            // v7 及更早的 Velocity 对测配置是 INTAVE 那套 REVERSAL（水平归零 +
+            // v7 及更早的 AttackReduce 对测配置是 INTAVE 那套 REVERSAL（水平归零 +
             // 延迟反向）。在 Grim 上这套等于「每 tick 欠服务端一段位移」：
             //   AntiKB (vl:0.0): o: .507910
             //   Simulation (vl:0.0→53): .194 / .151 / .143 / .375 …
             //   GroundSpoof (vl:0.0): claimed false
             // v8 起统一搬到 GRIM 预设（BLINK BURST 5t x5，满受力），并打开
             // grimGuard：之后再手动切回归零类模式会被自动升级成 blink。
-            String vMode = values.getProperty("velocity.mode");
-            String vServer = values.getProperty("velocity.server");
+            String vMode = values.getProperty("attackreduce.mode");
+            String vServer = values.getProperty("attackreduce.server");
             boolean reversed = vMode == null || "1".equals(vMode.trim());
             boolean intave = vServer != null && "4".equals(vServer.trim());
             if (reversed || intave) {
-                values.setProperty("velocity.mode", "4");
+                values.setProperty("attackreduce.mode", "4");
                 if (intave || vServer == null) {
-                    values.setProperty("velocity.server", "3");
+                    values.setProperty("attackreduce.server", "3");
                 }
-                values.setProperty("velocity.horizontal", "1.0");
-                values.setProperty("velocity.vertical", "1.0");
-                values.setProperty("velocity.blinkTicks", "5");
-                values.setProperty("velocity.burstAttacks", "5");
-                values.setProperty("velocity.blinkKeep", "1.0");
-                values.setProperty("velocity.blinkFlush", "true");
-                values.setProperty("velocity.blinkRewind", "false");
-                values.setProperty("velocity.burstRotate", "true");
+                values.setProperty("attackreduce.horizontal", "1.0");
+                values.setProperty("attackreduce.vertical", "1.0");
+                values.setProperty("attackreduce.blinkTicks", "5");
+                values.setProperty("attackreduce.burstAttacks", "5");
+                values.setProperty("attackreduce.blinkKeep", "1.0");
+                values.setProperty("attackreduce.blinkFlush", "true");
+                values.setProperty("attackreduce.blinkRewind", "false");
+                values.setProperty("attackreduce.burstRotate", "true");
             }
-            if (values.getProperty("velocity.grimGuard") == null) {
-                values.setProperty("velocity.grimGuard", "true");
+            if (values.getProperty("attackreduce.grimGuard") == null) {
+                values.setProperty("attackreduce.grimGuard", "true");
             }
             settingsDirty = true;
         }
@@ -2565,15 +2591,15 @@ public final class OpenMaverFeatures {
             // v12 起预设回到 SPRINT SLAP：每一 tick 都是一记**真·冲刺攻击**
             // （先 setSprinting(true) 再 attackEntity），0.6 与冲刺复位都落在
             // 服务端自己的预测分支里。
-            String vMode = values.getProperty("velocity.mode");
+            String vMode = values.getProperty("attackreduce.mode");
             String modeText = vMode == null ? "" : vMode.trim();
             if (modeText.isEmpty() || "8".equals(modeText)) {
-                values.setProperty("velocity.mode", "7");
-                values.setProperty("velocity.server", "3");
-                values.setProperty("velocity.slapMaxTicks", "6");
-                values.setProperty("velocity.horizontal", "1.0");
-                values.setProperty("velocity.vertical", "1.0");
-                values.setProperty("velocity.grimGuard", "true");
+                values.setProperty("attackreduce.mode", "7");
+                values.setProperty("attackreduce.server", "3");
+                values.setProperty("attackreduce.slapMaxTicks", "6");
+                values.setProperty("attackreduce.horizontal", "1.0");
+                values.setProperty("attackreduce.vertical", "1.0");
+                values.setProperty("attackreduce.grimGuard", "true");
             }
             settingsDirty = true;
         }
@@ -2581,11 +2607,11 @@ public final class OpenMaverFeatures {
             // v10 的 GRIM 预设是 SPRINT SLAP（只在有目标时生效）。v11 换成
             // OpenZen 的 AntiKB/NoXZ：空中吞击退 + 冻结位置包 + 扣 transaction
             // 回执，落地再放包/补击退/连打，属于真正"站着也能减击退"的那条路。
-            values.setProperty("velocity.mode", "8");
-            values.setProperty("velocity.server", "3");
-            values.setProperty("velocity.noxzAttacks", "3");
-            if (values.getProperty("velocity.grimGuard") == null) {
-                values.setProperty("velocity.grimGuard", "true");
+            values.setProperty("attackreduce.mode", "8");
+            values.setProperty("attackreduce.server", "3");
+            values.setProperty("attackreduce.noxzAttacks", "3");
+            if (values.getProperty("attackreduce.grimGuard") == null) {
+                values.setProperty("attackreduce.grimGuard", "true");
             }
             settingsDirty = true;
         }
@@ -2598,28 +2624,28 @@ public final class OpenMaverFeatures {
             // v10 起统一搬到 SPRINT SLAP：S12 原样放行，靠 1.8 原版「冲刺攻击
             // 自己乘 0.6」削击退 —— 这条 0.6 在 Grim 的预测里本来就是一个分支，
             // 所以既不欠位移也不会被 AntiKB 抓。
-            String vMode = values.getProperty("velocity.mode");
-            String vServer = values.getProperty("velocity.server");
+            String vMode = values.getProperty("attackreduce.mode");
+            String vServer = values.getProperty("attackreduce.server");
             String modeText = vMode == null ? "" : vMode.trim();
             String serverText = vServer == null ? "" : vServer.trim();
             boolean flaggy = vMode == null || "1".equals(modeText)
                     || "4".equals(modeText) || "5".equals(modeText);
             boolean grimLike = vServer == null || "3".equals(serverText);
             if (flaggy && grimLike) {
-                values.setProperty("velocity.mode", "7");
-                values.setProperty("velocity.server", "3");
-                values.setProperty("velocity.horizontal", "1.0");
-                values.setProperty("velocity.vertical", "1.0");
-                values.setProperty("velocity.slapMaxTicks", "6");
-                values.setProperty("velocity.grimGuard", "true");
+                values.setProperty("attackreduce.mode", "7");
+                values.setProperty("attackreduce.server", "3");
+                values.setProperty("attackreduce.horizontal", "1.0");
+                values.setProperty("attackreduce.vertical", "1.0");
+                values.setProperty("attackreduce.slapMaxTicks", "6");
+                values.setProperty("attackreduce.grimGuard", "true");
                 // 旧配置里可能残留 blinkRewind=true（弃包 + 本地回退）。那是
                 // AntiKB o:5.58 的直接来源：服务端眼里我们没动过，补发时整段
                 // 击退位移都是缺口。SPRINT SLAP 不憋包，这两个开关一律关掉。
-                values.setProperty("velocity.blinkRewind", "false");
-                values.setProperty("velocity.burstRotate", "false");
+                values.setProperty("attackreduce.blinkRewind", "false");
+                values.setProperty("attackreduce.burstRotate", "false");
             }
-            if (values.getProperty("velocity.slapMaxTicks") == null) {
-                values.setProperty("velocity.slapMaxTicks", "6");
+            if (values.getProperty("attackreduce.slapMaxTicks") == null) {
+                values.setProperty("attackreduce.slapMaxTicks", "6");
             }
             settingsDirty = true;
         }
@@ -2687,11 +2713,94 @@ public final class OpenMaverFeatures {
             }
             settingsDirty = true;
         }
+        if (settingsVersion < 13) {
+            // v13：防击退模块改名 Velocity -> AttackReduce（配置键 velocity.* ->
+            // attackreduce.*），默认策略也从「原地完全不动」（MODIFY 0/0）改成
+            // UPWARD：挨打时不再被向后打飞，把水平击退换算成向上的弹跳。
+            // 老的 velocity.* 原样搬过来（服务端预设/比例/窗口参数都保留），
+            // 只有 mode 统一落到 UPWARD —— 旧默认那套「完全不动」正是这一版要换掉的。
+            for (String key : LEGACY_ATTACKREDUCE_KEYS) {
+                String legacy = values.getProperty("velocity." + key);
+                if (legacy != null && values.getProperty("attackreduce." + key) == null) {
+                    values.setProperty("attackreduce." + key, legacy);
+                }
+                values.remove("velocity." + key);
+            }
+            values.setProperty("attackreduce.mode", "7");
+            values.setProperty("attackreduce.slapJump", "true");
+            if (values.getProperty("attackreduce.lift") == null) {
+                values.setProperty("attackreduce.lift", "1.0");
+            }
+            if (values.getProperty("attackreduce.vertical") == null) {
+                values.setProperty("attackreduce.vertical", "1.0");
+            }
+            settingsDirty = true;
+        }
+        if (settingsVersion < 14) {
+            // v14：写 motion 的 UPWARD（mode=9）在 Grim 上必吃 AntiKB/Simulation
+            // （2026-11-20 22:04~22:07 实机：o .157/.182/1.05，Simulation 一路到 46）。
+            // 统一搬回 attack reduce：S12 原样放行 + 受击起跳（合法 jump 分支）+
+            // 每次真·冲刺攻击 ×0.6。想继续对测 UPWARD 的，在 ClickGUI 里手动选回去。
+            String mode = values.getProperty("attackreduce.mode");
+            if (mode != null && "9".equals(mode.trim())) {
+                values.setProperty("attackreduce.mode", "7");
+            }
+            values.setProperty("attackreduce.slapJump", "true");
+            settingsDirty = true;
+        }
+        if (settingsVersion < 15) {
+            // v15：AttackReduce 的配置简化成「只有一个 mode」。历史上那些滑块键
+            // （horizontal/vertical/lift/blinkTicks/slapJump/...）全部删掉，
+            // 以后只写 attackreduce.mode；旧 velocity.* 也一并清掉。
+            java.util.List<String> stale = new java.util.ArrayList<String>();
+            for (String name : values.stringPropertyNames()) {
+                if (name.startsWith("velocity.")) {
+                    stale.add(name);
+                } else if (name.startsWith("attackreduce.")
+                        && !"attackreduce.mode".equals(name)) {
+                    stale.add(name);
+                }
+            }
+            for (String name : stale) {
+                values.remove(name);
+            }
+            if (values.getProperty("attackreduce.mode") == null) {
+                values.setProperty("attackreduce.mode", "7");
+            }
+            settingsDirty = true;
+        }
+        if (settingsVersion < 16) {
+            // v16：Velocity 旧策略统一改为 OpenMyau-Fix Slap_Attack。
+            for (String name : new java.util.ArrayList<String>(values.stringPropertyNames())) {
+                if (name.startsWith("velocity.") || name.startsWith("attackreduce.")) {
+                    values.remove(name);
+                }
+            }
+            values.setProperty("attackreduce.mode", "7");
+            settingsDirty = true;
+        }
+        if (settingsVersion < 17) {
+            // v17：独立 Velocity，默认消除水平击退、保留垂直。
+            values.setProperty("velocity.horizontal", "0.0");
+            values.setProperty("velocity.vertical", "100.0");
+            values.remove("attackreduce.mode");
+            settingsDirty = true;
+        }
+        if (settingsVersion < 18) {
+            // v18：直接缩放无法保持服务端击退预测，默认转为原版冲刺命中减速。
+            values.setProperty("velocity.mode", "0");
+            settingsDirty = true;
+        }
+        if (settingsVersion < 19) {
+            // v19：参考 Myau Slap_Attack 的多 tick 窗口，Zen 的 Aura/准星目标选择。
+            values.setProperty("velocity.mode", "2");
+            settingsDirty = true;
+        }
         fastPlaceOnlyBlocks = readBoolean(values, "fastplace.onlyBlocks", true);
         ScaffoldFeature.load(values);
         GodBridgeFeature.load(values);
         Scaffold2Feature.load(values);
-        VelocityFeature.load(values);
+        AttackReduceFeature.load(values);
         killAuraRange = clamp(readFloat(values, "killaura.range", 3.0F), 3.0F, 6.0F);
         killAuraCpsMin = clamp(readInt(values, "killaura.cpsMin", 8, 20), 1, 20);
         killAuraCpsMax = clamp(readInt(values, "killaura.cpsMax", 12, 20), 1, 20);
@@ -3362,7 +3471,7 @@ public final class OpenMaverFeatures {
                     + "\n" + ScaffoldFeature.save()
                     + "\n" + GodBridgeFeature.save()
                     + "\n" + Scaffold2Feature.save()
-                    + VelocityFeature.save()
+                    + "\n" + AttackReduceFeature.save()
                     + "fakeplayer.count=" + fakePlayerCount
                     + "\nfakeplayer.distance=" + fakePlayerDistance
                     + "\nfakeplayer.showName=" + fakePlayerShowName
