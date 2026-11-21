@@ -24,6 +24,10 @@
       "enabled": false,        // Scaffold 搭桥（OpenZen 移植）：默认关闭
       "key": ""                // 不绑定默认热键
     },
+    "safewalk": {
+      "enabled": false,        // SafeWalk 方块边缘潜行（从 Scaffold 的 eagle 拆出）：默认关闭
+      "key": ""                // 不绑定默认热键
+    },
     "godbridge": {
       "enabled": false,        // 神桥/蹲起搭路（教材三种手法）：默认关闭（按 N 切换）
       "key": "N"               // 绑定键位（按 N 切换）

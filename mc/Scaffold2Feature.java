@@ -28,6 +28,13 @@ public final class Scaffold2Feature {
     private static boolean oldSneakPressed;
     private static Object sneakBinding;
     private static boolean failed;
+    /**
+     * 本 tick 是否正在用自己的节拍写 {@code keyBindSneak}（按住 S 搭路 / 蹲起循环）。
+     *
+     * <p>SafeWalk 用它判断让位：这里松开 Shift 的那几个 tick 不能被别人的
+     * “贴边潜行”又按回去，否则 SNEAK TOGGLE 的速度优势直接消失。
+     */
+    private static boolean controlling;
 
     private Scaffold2Feature() {
     }
@@ -66,6 +73,7 @@ public final class Scaffold2Feature {
             if (!running) {
                 phaseTicks = 0;
                 releasePhase = 0;
+                controlling = false;
                 writePressed(sneakBinding, physicalSneak());
                 return;
             }
@@ -92,6 +100,7 @@ public final class Scaffold2Feature {
                     phaseTicks = 0;
                 }
             }
+            controlling = true;
             writePressed(sneakBinding, sneak);
         } catch (Throwable error) {
             failed = true;
@@ -103,6 +112,11 @@ public final class Scaffold2Feature {
     public static void reset() {
         restore();
         failed = false;
+    }
+
+    /** 是否正在接管 {@code keyBindSneak}（按住 S 搭路 / 蹲起循环期间）。 */
+    public static boolean ownsSneakKey() {
+        return active && !failed && controlling;
     }
 
     public static void load(Properties values) {
@@ -193,6 +207,7 @@ public final class Scaffold2Feature {
     private static void restore() {
         if (active) writePressed(sneakBinding, physicalSneak());
         active = false;
+        controlling = false;
         phaseTicks = 0;
         releasePhase = 0;
         clickCooldown = 0;

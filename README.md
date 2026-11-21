@@ -3,7 +3,7 @@
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
 > 说明：本仓库包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接）
-> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Scaffold2 教材搭路辅助、GodBridge 神桥、AttackReduce、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、Inventory Manager 自动整理背包 / 自动穿甲、FPS / CPS 统计）
+> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Scaffold2 教材搭路辅助、GodBridge 神桥、SafeWalk 方块边缘潜行、AttackReduce、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、Inventory Manager 自动整理背包 / 自动穿甲、FPS / CPS 统计）
 > 以及 `legit / balanced / aggressive` 三档 Grim 对测 profile。
 > 请仅在你拥有或获得明确授权的服务器上进行测试。
 
@@ -37,6 +37,7 @@ OpenMaver/
 │       ├── combat/KillAura.java  # 自动攻击开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── movement/Scaffold.java # 搭桥开关（MC 侧逻辑在 ScaffoldFeature，OpenZen 移植）
 │       ├── movement/GodBridge.java # 神桥/蹲起搭路开关（MC 侧逻辑在 mc/GodBridgeFeature）
+│       ├── movement/SafeWalk.java # 方块边缘潜行开关（MC 侧逻辑在 mc/SafeWalkFeature）
 │       ├── movement/AttackReduce.java # 防击退开关（MC 侧逻辑在 AttackReduceFeature）
 │       ├── player/FastPlace.java  # 快速右键开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── player/ChestStealer.java # 开箱搬运 / 整理 / 存入开关（MC 侧逻辑在 mc/ChestFeature）
@@ -170,6 +171,15 @@ mc/*.java --javac(对 MCP API)--> mc-classes --McpReobf(MCP->SRG)--> mc-classes-
 ./launch-openmaver.sh --inject     # 启动后自动运行期注入
 ```
 
+`./launch_openmaver.sh` 是同一启动流程的兼容入口。
+
+启动前会校验并安装 `~/Downloads/viaforge-mc189-4.3.2.jar` 到当前实例的 `mods/`。
+ViaForge 在 `--mod`、`--inject` 两种模式下都由 Forge 启动加载；进入服务器前在游戏内
+选择目标协议 `1.21.1`，本地游戏仍为 Forge 1.8.9。
+已安装且 SHA-256 匹配的 ViaForge 会被复用，下载文件之后可移走；冲突版本或重复 mod 会阻止启动。
+用 `OPENMAVER_VIAFORGE_JAR=/path/to/viaforge-mc189-4.3.2.jar` 指定下载文件位置。
+`OPENMAVER_VIAFORGE=0` 跳过自动安装与校验，已有的 ViaForge mod 仍照常加载。
+
 两种模式互斥，避免同一实例里同时从 mod jar 和注入 jar 各加载一套 `OpenMaver` 类：
 
 - `--mod`：把 `build/openmaver-mod.jar` 安装到 `minecraft/mods/OpenMaver.jar`，
@@ -183,7 +193,8 @@ mc/*.java --javac(对 MCP API)--> mc-classes --McpReobf(MCP->SRG)--> mc-classes-
 `OPENMAVER_INSTANCE_DIR` 和 `PRISM_ROOT` 指定自定义目录。账号会话沿用该机器已缓存的
 有效游戏令牌；没有活动账号时可设置 `OPENMAVER_USERNAME` 以离线身份进入仅允许离线账号的服务器。
 
-仅检查启动参数和本地依赖，不打开游戏：`python3 launch-openmaver.py --dry-run --inject`。
+仅检查启动参数和本地依赖：`./launch-openmaver.sh --dry-run --inject`；此模式跳过构建、
+ViaForge 安装和实例修改，也可直接运行 `python3 launch-openmaver.py --dry-run --inject`。
 
 ### 终端设置
 
@@ -518,6 +529,41 @@ IO 失败只记录一次并自动停用 debug。
 - 配置路径：`movement.scaffold2`，默认关闭，默认键位 **G**；旧 Scaffold 默认不绑定热键，GodBridge 仍绑定 **N**。
 - `STRAIGHT`：按住 S 和右键搭路并维持潜行；`DIAGONAL 45`：按住 S+D 和右键搭路并维持潜行，视角由玩家按教材摆成与桥线 45°；`SNEAK TOGGLE`：成功放置后松开 Shift 指定 tick 数，再自动按回。
 - 模块使用玩家当前准星，不自动转动视角；只在准星命中方块、手持方块物品且按住右键时尝试放置。`RELEASE` 设置蹲起模式松开 Shift 的时长。
+
+### SafeWalk 方块边缘潜行（从 Scaffold 的 eagle 拆出的独立模块）
+
+- 配置路径：`movement.safewalk`，默认关闭，默认不绑定热键。原来的实现只有
+  `scaffold.eagle` 一行，且只在 `Scaffold` 的 `NORMAL` 模式下生效；拆成独立模块后
+  任何场景都能用，不用先开 Scaffold。
+- 做法：站在方块边缘时替玩家按住 `keyBindSneak`（原版潜行键）。只改
+  `KeyBinding.pressed`，本 tick 的 `updatePlayerMoveState()` 会把它读成
+  `MovementInput.sneak`，随后**原版自己**发 C0B `START/STOP_SNEAKING`。
+  不写 motion、不改 rotation、不发任何伪造包 —— 服务端看到的就是一次普通潜行输入。
+- 探针：沿本 tick 的输入方向（与 vanilla `moveFlying` 同一个换算
+  `x = strafe*cos - forward*sin`、`z = forward*cos + strafe*sin`）把碰撞箱中心前推
+  `DISTANCE` 格，在**脚底以下**放一个 0.12 宽的探针盒，用
+  `World.getCollidingBoundingBoxes` 查支撑面；查不到就是“再走一步会踏空”。
+  探针整体压低到脚下，贴着墙走不会被脚下高度的方块误判。
+- 设置：
+  | 设置 | 默认 | 说明 |
+  |---|---|---|
+  | `DISTANCE` | 0.30b | 探针前伸距离；越大越早接管（0.05~0.60） |
+  | `ONLY GROUND` | 开 | 只在地面生效 |
+  | `REQUIRE MOVING` | 开 | 只有按着 WASD 才生效 |
+  | `RESPECT SNEAK` | 开 | 玩家自己按着 Shift 时不接管（原版潜行本来就防边缘） |
+  | `HOLD` | 2t | 松开边缘后继续按住的 tick 数，避免贴着边缘走时逐 tick 抖 SHIFT |
+- 让位：`Scaffold` 的 `Eagle` / `Sneak`、`GodBridge` 的 `SNEAK TOGGLE` 写的是同一个
+  `keyBindSneak`。它们活跃时 `SafeWalk` 整体让位（状态 `YIELD`），一根手指都不碰这个键；
+  想让 SafeWalk 接管全局潜行，把 Scaffold 的 Eagle/Sneak 关掉或关掉 Scaffold 即可。
+- 配置写在 `config/openmaver.properties`：`safewalk.distance` / `safewalk.onlyGround` /
+  `safewalk.requireMoving` / `safewalk.respectSneak` / `safewalk.holdTicks`（settings.version 22 起）。
+- 实现位置：`mc/SafeWalkFeature.java`（行为）、`java/module/movement/SafeWalk.java`（开关）、
+  `OpenMaverFeatures.onTickStart()`（在三套搭路之后驱动一次）、
+  `ScaffoldFeature.ownsSneakKey()`（让位判定）、`GuiOpenMaverClickGui`（设置面板）、
+  `OpenMaverHud`（`EDGE` / `0.3b` 参数摘要）。
+- 回归测试：`tools/safewalk-test/run.sh`（61 项：决策表、滞回、方向换算、探针几何、
+  配置往返、只写按键不写 motion/rotation、接线与 GUI 断言）。
+- 实现说明：`design/SAFEWALK_HANDOFF.md`。
 
 ### Velocity 防击退
 

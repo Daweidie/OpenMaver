@@ -7,6 +7,7 @@ import module.combat.KillAura;
 import module.combat.Reach;
 import module.movement.AutoSprint;
 import module.movement.GodBridge;
+import module.movement.SafeWalk;
 import module.movement.Scaffold;
 import module.movement.Scaffold2;
 import module.movement.AttackReduce;
@@ -316,6 +317,10 @@ public final class OpenMaver {
 
         // 移动模块：GodBridge 神桥 / 蹲起搭路（配置路径 movement.godbridge；MC 侧逻辑在 mc/GodBridgeFeature）
         ModuleManager.register(new GodBridge());
+
+        // 移动模块：SafeWalk 方块边缘潜行（配置路径 movement.safewalk；
+        // MC 侧逻辑在 mc/SafeWalkFeature，原本是 Scaffold 的 eagle）
+        ModuleManager.register(new SafeWalk());
 
         // 移动模块：Velocity 防击退（配置路径 movement.attackreduce；MC 侧逻辑在 mc/AttackReduceFeature）
         ModuleManager.register(new AttackReduce());

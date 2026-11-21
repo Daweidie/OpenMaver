@@ -225,7 +225,7 @@ public final class OpenMaverFeatures {
             "slapSprintSync", "noxzAttacks", "noxzTx"};
 
     /** openmaver.properties 的结构版本，用于迁移旧默认值。 */
-    private static final int SETTINGS_VERSION = 21;
+    private static final int SETTINGS_VERSION = 22;
 
     /**
      * 1.8.9 服务端的受击无敌窗口是 10 tick（hurtResistantTime 20 -> 10 才会结算）。
@@ -462,6 +462,10 @@ public final class OpenMaverFeatures {
             // 这里已经完成按键还原，神桥可以重新接管 Shift。
             GodBridgeFeature.onTickStart(mc);
             Scaffold2Feature.onTickStart(mc);
+            // SafeWalk（方块边缘潜行）放在三套搭路之后：它写的是同一个
+            // keyBindSneak，必须能先看到 Scaffold / GodBridge 本 tick 有没有接管，
+            // 接管了就整体让位（写两遍会变成逐 tick 的 STOP/START 潜行）。
+            SafeWalkFeature.onTickStart(mc);
             // KillAura 先选目标并转向，再攻击；AutoClicker 在 KillAura 启用时让位。
             updateKillAura(mc);
             updateAutoClicker(mc);
@@ -2897,11 +2901,32 @@ public final class OpenMaverFeatures {
             }
             settingsDirty = true;
         }
+        if (settingsVersion < 22) {
+            // v22：SafeWalk（方块边缘潜行）从 Scaffold 的 eagle 拆成独立模块，
+            // 老配置里没有 safewalk.*，这里把默认值写进文件，方便直接手改。
+            if (values.getProperty("safewalk.distance") == null) {
+                values.setProperty("safewalk.distance", "0.3");
+            }
+            if (values.getProperty("safewalk.onlyGround") == null) {
+                values.setProperty("safewalk.onlyGround", "true");
+            }
+            if (values.getProperty("safewalk.requireMoving") == null) {
+                values.setProperty("safewalk.requireMoving", "true");
+            }
+            if (values.getProperty("safewalk.respectSneak") == null) {
+                values.setProperty("safewalk.respectSneak", "true");
+            }
+            if (values.getProperty("safewalk.holdTicks") == null) {
+                values.setProperty("safewalk.holdTicks", "2");
+            }
+            settingsDirty = true;
+        }
         fastPlaceJitter = readBoolean(values, "fastplace.jitter", true);
         fastPlaceOnlyBlocks = readBoolean(values, "fastplace.onlyBlocks", true);
         ScaffoldFeature.load(values);
         GodBridgeFeature.load(values);
         Scaffold2Feature.load(values);
+        SafeWalkFeature.load(values);
         AttackReduceFeature.load(values);
         killAuraRange = clamp(readFloat(values, "killaura.range", 3.0F), 3.0F, 6.0F);
         killAuraCpsMin = clamp(readInt(values, "killaura.cpsMin", 8, 20), 1, 20);
@@ -2929,6 +2954,7 @@ public final class OpenMaverFeatures {
         ScaffoldFeature.reset();
         GodBridgeFeature.reset();
         Scaffold2Feature.reset();
+        SafeWalkFeature.reset();
         resetKillAuraState();
     }
 
@@ -3382,6 +3408,7 @@ public final class OpenMaverFeatures {
         ScaffoldFeature.reset();
         GodBridgeFeature.reset();
         Scaffold2Feature.reset();
+        SafeWalkFeature.reset();
         resetKillAuraState();
         criticalsSprintWasActive = false;
         criticalsLastAttackNanos = 0L;
@@ -3583,6 +3610,7 @@ public final class OpenMaverFeatures {
                     + "\n" + ScaffoldFeature.save()
                     + "\n" + GodBridgeFeature.save()
                     + "\n" + Scaffold2Feature.save()
+                    + "\n" + SafeWalkFeature.save()
                     + "\n" + AttackReduceFeature.save()
                     + "fakeplayer.count=" + fakePlayerCount
                     + "\nfakeplayer.distance=" + fakePlayerDistance

@@ -424,6 +424,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 addGodBridgeSettings(entry);
             } else if ("Scaffold2".equals(module.getName())) {
                 addScaffold2Settings(entry);
+            } else if ("SafeWalk".equals(module.getName())) {
+                addSafeWalkSettings(entry);
             } else if ("Velocity".equals(module.getName())) {
                 addAttackReduceSettings(entry);
             } else if ("FakePlayer".equals(module.getName())) {
@@ -897,6 +899,40 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         entry.settings.add(Setting.slider("RELEASE", 1.0F, 4.0F, 1.0F, 0, "t", new Binding() {
             public double get() { return Scaffold2Feature.getReleaseTicks(); }
             public void set(double value) { Scaffold2Feature.setReleaseTicks((int) Math.round(value)); }
+        }));
+    }
+
+    /**
+     * SafeWalk 设置 —— 从 Scaffold 的 eagle 拆出来的独立“方块边缘潜行”。
+     *
+     * <ul>
+     *   <li><b>DISTANCE</b>：探针沿输入方向前伸多少格开始按 Shift（越大越早接管）；</li>
+     *   <li><b>ONLY GROUND</b>：只在地面生效；</li>
+     *   <li><b>REQUIRE MOVING</b>：只有按着 WASD 才生效；</li>
+     *   <li><b>RESPECT SNEAK</b>：玩家自己按着 Shift 时不接管；</li>
+     *   <li><b>HOLD</b>：松开边缘后继续保持潜行的 tick 数（防抖动）。</li>
+     * </ul>
+     */
+    private void addSafeWalkSettings(Entry entry) {
+        entry.settings.add(Setting.slider("DISTANCE", 0.05F, 0.60F, 0.01F, 2, "b", new Binding() {
+            public double get() { return SafeWalkFeature.getDistance(); }
+            public void set(double value) { SafeWalkFeature.setDistance(value); }
+        }));
+        entry.settings.add(Setting.check("ONLY GROUND", new Binding() {
+            public double get() { return SafeWalkFeature.isOnlyGround() ? 1.0D : 0.0D; }
+            public void set(double value) { SafeWalkFeature.setOnlyGround(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("REQUIRE MOVING", new Binding() {
+            public double get() { return SafeWalkFeature.isRequireMoving() ? 1.0D : 0.0D; }
+            public void set(double value) { SafeWalkFeature.setRequireMoving(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("RESPECT SNEAK", new Binding() {
+            public double get() { return SafeWalkFeature.isRespectSneak() ? 1.0D : 0.0D; }
+            public void set(double value) { SafeWalkFeature.setRespectSneak(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("HOLD", 0.0F, 5.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return SafeWalkFeature.getHoldTicks(); }
+            public void set(double value) { SafeWalkFeature.setHoldTicks((int) Math.round(value)); }
         }));
     }
 

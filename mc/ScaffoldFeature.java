@@ -2402,6 +2402,16 @@ public final class ScaffoldFeature {
         OpenMaverFeatures.markDirty();
     }
 
+    /**
+     * 是否正在接管 {@code keyBindSneak}（本类的 Eagle / Sneak）。
+     *
+     * <p>独立模块 {@code SafeWalkFeature} 用它判断让位：同一个按键两边都写会
+     * 逐 tick 互相覆盖，服务端看到的是一串 STOP/START 潜行动作。
+     */
+    public static boolean ownsSneakKey() {
+        return active && !failed && ((mode == MODE_NORMAL && eagle) || sneak);
+    }
+
     public static boolean isSnap() {
         return snap;
     }

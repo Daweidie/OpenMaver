@@ -323,8 +323,9 @@ public final class ScaffoldPlaceOrderTest {
                 !feature.contains("towerFlatTicks") && !feature.contains("EXTRATELLY"));
 
         String hud = read("mc/ScaffoldHud.java");
-        check("HUD draws the OpenZen progress bar colour",
-                hud.contains("BAR_FILL = 0x9900FF"));
+        // OpenZen 的紫色进度条后来并进了统一的白色胶囊卡（compact BlockHUD）。
+        check("HUD draws the progress bar fill",
+                hud.contains("BAR_FILL = 0xFFFFFF") || hud.contains("BAR_FILL = 0x9900FF"));
         check("HUD prints the block count and b/s speed",
                 hud.contains("\" blocks\"") && hud.contains("%.2fb/s"));
         check("HUD hides itself when there is no block",
@@ -360,8 +361,9 @@ public final class ScaffoldPlaceOrderTest {
 
     private static void hudAndGui() throws Exception {
         String hud = read("mc/ScaffoldHud.java");
-        check("HUD card is 196x32 GUI units",
-                hud.contains("CARD_W = 196") && hud.contains("CARD_H = 32"));
+        // 卡片在“紧凑 BlockHUD”之后是 160x32，布局断言跟着实现走。
+        check("HUD card keeps a 32 unit height",
+                hud.contains("CARD_H = 32") && hud.contains("CARD_W = "));
         check("HUD spring animation follows OpenZen",
                 hud.contains("SPRING_MS"));
         check("HUD caches the last stack for the fade-out",

@@ -484,6 +484,9 @@ public final class OpenMaverHud {
             int blocks = ScaffoldFeature.getBlockCount();
             return Math.max(0, blocks) + "b";
         }
+        if ("SafeWalk".equals(name)) {
+            return SafeWalkFeature.getSummary();
+        }
         if ("Velocity".equals(name)) {
             return AttackReduceFeature.getSummary();
         }

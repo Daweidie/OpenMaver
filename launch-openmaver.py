@@ -11,6 +11,8 @@ import time
 import zipfile
 from pathlib import Path
 
+from tools import viaforge
+
 
 REPO = Path(__file__).resolve().parent
 PRISM_ROOT = Path(os.environ.get(
@@ -253,6 +255,9 @@ def main():
             print("usage: launch-openmaver.py [--mod|--inject] [--dry-run]")
             print("  --mod      launch with mods/OpenMaver.jar (default)")
             print("  --inject   launch without the mod, then attach the runtime agent")
+            print("  --dry-run  validate dependencies without building or changing the instance")
+            print("  ViaForge 4.3.2 is installed before either launch mode.")
+            print("  OPENMAVER_VIAFORGE_JAR overrides its source; OPENMAVER_VIAFORGE=0 skips auto-install.")
             return
         elif argument != "--dry-run":
             fail("unknown argument: " + argument)
@@ -268,6 +273,11 @@ def main():
         java = Path(shutil.which("java") or "")
     if not java.is_file():
         fail("Java 8 was not found; set JavaPath in instance.cfg or put Java 8 on PATH")
+
+    try:
+        viaforge_jar = viaforge.install(GAME_DIR, dry_run=dry_run)
+    except viaforge.InstallError as exc:
+        fail(str(exc))
 
     if not dry_run:
         if mode == "inject":
@@ -349,6 +359,8 @@ def main():
                   REPO / "build/openmaver-mc.jar")
         else:
             print("OpenMaver mod:", mod_jar_path(), "(installed at launch)")
+        if viaforge_jar is not None:
+            print("ViaForge mod:", viaforge_jar, "(loaded at startup in both modes)")
         print("Resource pack:", REPO / "mc/resources/openmaver/resourcepack/2pimp-v2-16x.zip")
         print("Account:", username, "(credentials omitted)")
         return
