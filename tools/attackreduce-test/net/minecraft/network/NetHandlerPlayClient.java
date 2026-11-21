@@ -4,6 +4,8 @@ package net.minecraft.network;
 public class NetHandlerPlayClient {
     private final NetworkManager netManager;
     public java.util.function.Consumer<Object> outbound;
+    public java.util.function.Consumer<Object> inbound;
+    public void process(Object packet) { if (inbound != null) inbound.accept(packet); }
     public int failAt, sent;
 
     public NetHandlerPlayClient(NetworkManager netManager) {

@@ -224,7 +224,7 @@ public final class OpenMaverFeatures {
             "slapSprintSync", "noxzAttacks", "noxzTx"};
 
     /** openmaver.properties 的结构版本，用于迁移旧默认值。 */
-    private static final int SETTINGS_VERSION = 19;
+    private static final int SETTINGS_VERSION = 20;
 
     /**
      * 1.8.9 服务端的受击无敌窗口是 10 tick（hurtResistantTime 20 -> 10 才会结算）。
@@ -363,19 +363,11 @@ public final class OpenMaverFeatures {
     private static boolean killAuraRequirePress;
     private static boolean killAuraFailed;
     private static EntityLivingBase killAuraTarget;
-    private static boolean killAuraAttackedThisTick;
-    private static boolean killAuraAimReady;
 
     /** Velocity 在 Aura 选目标后运行，复用目标而不是因为 Aura 启用就停用。 */
     static EntityLivingBase velocityAuraTarget() {
         Module aura = ModuleManager.getModule("KillAura");
-        return aura != null && aura.isEnabled() && killAuraAimReady ? killAuraTarget : null;
-    }
-
-    /** 主线程闸门补上 Netty 异步 SEND 观察尚未看见的本 tick 动作。 */
-    static boolean velocityActionUsedThisTick() {
-        return killAuraAttackedThisTick || autoclickerClickedThisTick || rightClickUsedThisTick
-                || placementsThisTick > 0;
+        return aura != null && aura.isEnabled() ? killAuraTarget : null;
     }
     private static long killAuraNextAttackNanos;
     private static long killAuraLastSwitchNanos;
@@ -437,8 +429,6 @@ public final class OpenMaverFeatures {
         // 放到 END 阶段注入会被服务端以 “failed Post: attack/place” 拒绝。
         rightClickUsedThisTick = false;
         autoclickerClickedThisTick = false;
-        killAuraAttackedThisTick = false;
-        killAuraAimReady = false;
         placementsThisTick = 0;
         if (tickStartFailed) {
             processPendingCriticalJump(mc);
@@ -2192,7 +2182,6 @@ public final class OpenMaverFeatures {
         // 攻击使用“本 tick 转向之前”的视角判断：本 tick 的 rotation 还没随 C03
         // 发到服务端，等服务端收到后再攻击，避免 RotationPlace / Aim 类误判。
         boolean aimed = !killAuraRotate || killAuraAimError(player, target) <= 15.0F;
-        killAuraAimReady = aimed;
         if (killAuraRotate) {
             applyKillAuraRotation(player, target);
         }
@@ -2213,7 +2202,6 @@ public final class OpenMaverFeatures {
             return;
         }
         boolean attacked = attackEntityFirst(mc, player, target);
-        killAuraAttackedThisTick = attacked;
         restoreCriticalsSprint(player, stopSprintSent);
         if (!attacked) {
             OpenMaverDebug.noticeOnce("killaura.attack",
@@ -2794,6 +2782,14 @@ public final class OpenMaverFeatures {
         if (settingsVersion < 19) {
             // v19：参考 Myau Slap_Attack 的多 tick 窗口，Zen 的 Aura/准星目标选择。
             values.setProperty("velocity.mode", "2");
+            settingsDirty = true;
+        }
+        if (settingsVersion < 20) {
+            // v20：完整 OpenZen AntiKB；旧数值模式和百分比设置全部退役。
+            for (String key : new java.util.ArrayList<String>(values.stringPropertyNames())) {
+                if (key.startsWith("velocity.") || key.startsWith("attackreduce.")) values.remove(key);
+            }
+            values.setProperty("velocity.zen.mode", "NoXZ");
             settingsDirty = true;
         }
         fastPlaceOnlyBlocks = readBoolean(values, "fastplace.onlyBlocks", true);

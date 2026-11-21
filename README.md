@@ -517,17 +517,13 @@ IO 失败只记录一次并自动停用 debug。
 
 ### Velocity 防击退
 
-- ClickGUI 与 HUD 显示为 `Velocity`；开关及热键继续使用 `movement.attackreduce`，保留现有配置。
-- 默认 `SLAP ATTACK`：参考上一级 OpenMyau-Fix 的 `Velocity.Slap_Attack`，按 S12 的水平整数幅度确定 3–9 tick 窗口。原包由 vanilla 施加后才开窗；窗口内有移动输入但本地尚未冲刺时，Velocity 请求本地冲刺，等 vanilla 发出同步并确认 `serverSprintState` 后再执行 `C0A → C02 → motionXZ × 0.6 → sprint=false`。这个短窗口请求不受 AutoSprint 的 `ONLY FORWARD` 限制；停住、潜行或使用物品时不请求。直接发攻击包，不经过原版控制器，避免重复减速；垂直速度不变。
-- 目标选择参考 OpenZen `NoXZMode`：优先使用 KillAura 已选中、转向已就绪的目标，再回落到准星生物。当前视线需命中 3 格内的可见存活目标。无目标时保留击退；此模式不要求目标 `hurtTime=0`。Aura / AutoClicker 仅启用不会阻止它，但本 tick 已实际攻击或右键操作时让位。
-- SLAP 跟踪两份 C03 之间的换槽、挥手、攻击、放置/挖掘、背包动作；有冲突则等待下一窗口。Netty 异步发包另有本地攻击预约，直到自己的 C02 和后续 C03 均经过管线才解除。GUI、使用物品、骑乘、蛛网/液体、手动鼠标操作时跳过；Scaffold、Scaffold2、GodBridge、Chest Stealer、Criticals 启用时让位。可配合 AutoSprint 和 KillAura 使用。
-- `SLAP EXACT` 默认开启，采用 Myau 默认幅度表；关闭后采用其回归公式（1–10 tick）。`SLAP CROSSHAIR` 默认开启；关闭后只使用 Aura 目标。OpenZen 来自 1.20.1，本次复用其目标选择，不包含其挂包、加速计时或 `NoXZ` 完整模式。
-- 原 `SPRINT HIT` 仍可选择：6 tick 内最多一次原版控制器攻击，由原版减速；保留它的目标受伤窗口及其它动作模块让位条件。
-- `SIMPLE` 保留旧百分比缩放，`SIMPLE H` / `SIMPLE V` 仅对它生效，范围 0–100（0 消除，100 原版），默认 H=0%、V=100%。此模式直接改变客户端击退，用户提供的日志已显示它触发 Grim AntiKB、Simulation 及 GroundSpoof。
-- 配置版本 19，`velocity.mode`（0=`SPRINT HIT`，1=`SIMPLE`，2=`SLAP ATTACK`），新增 `velocity.slapExact`、`velocity.slapCrosshair`；旧配置升级时默认选择 `SLAP ATTACK`，保留百分比、开关及热键。他人 S12、移动包、事务包和爆炸 S27 原样放行。
-- 包处理器在 `encoder` 与 `packet_handler` 之间，断线重连会重新安装。ClickGUI 显示管线状态、S12 计数、原版减速命中数，以及 `WAIT SPRINT SYNC` / `NO TARGET` / `HIT` 等原因。
-- `CHAT DEBUG` 默认开启（`velocity.chatDebug=true`）：本地聊天显示 `[Maver] Velocity before(x:0.4000 y:0.3600 z:-0.2000) after(x:0.2400 y:0.3600 z:-0.1200)`，随后一行显示模式、阻断原因、窗口、左右键、冲刺同步、`forward/strafe/sneak/usingItem`、AutoSprint 设置及冲突模块；同步记录到 `logs/openmaver.log`。SLAP / SPRINT HIT 比较同一次攻击尝试前后的 `motion`，SIMPLE 比较同一 S12 缩放前后的速度（整数 /8000）；重复阻断状态只在首次、状态变化及窗口结束报告。
-- `cmake --build build -j2` 构建；`tools/attackreduce-test/run.sh` 验证窗口边界、S12 应用时序、多 tick 减速、动作闸门、Aura 协作、失败状态与旧模式/重连。当前验证范围是本地真实 Netty 加游戏替身，目标服务器 Grim 结果尚待实测。详细来源、参数和回滚见 `design/ATTACKREDUCE_HANDOFF.md`。
+- 完整移植 `../OpenZen` 的 AntiKB 三模式：`NoXZ`（默认）、`Jump Reset`、`Mix`；旧 `SPRINT HIT / SIMPLE / SLAP ATTACK` 实现及控件已移除。ClickGUI/HUD 仍显示 `Velocity`，开关与热键保留 `movement.attackreduce`。
+- `NoXZ`：本地正 Y 的 S12 触发；地面有目标且疾跑时按 Zen 顺序攻击并手动减速 XZ。其余情况挂起击退与部分入站包，同时缓存 C03；落地或 12 tick 超时释放原包。Aura 目标优先，否则取准星生物，眼睛到目标 AABB 距离上限为 Zen 原值 3.7。原始 S12 不做百分比缩放。
+- `Jump Reset`：地面 10 tick / 空中 20 tick 倒计时结束后的下一 tick 释放；空中落地提前释放。地面分支随后跳跃一次，可按击退方向静默转向或接管前进输入。
+- `Mix`：选择性缓存速度、实体移动、事务和传送包，落地或连续空中 24 tick 释放；支持受伤跳跃、短时方向接管、静默转向及 Aura 双击。双击按受击瞬间的疾跑状态执行 Zen 默认 Keep Sprint 的两次 XZ×0.6。
+- 参数默认与 Zen 对齐：`Attack Amount=5`、`Rotate Ticks=12`、`Sprint State Check=true`，其余开关为 false。`Instant Attack` 将等待阶段设为 0.5×、执行阶段设为 4×，结束后恢复原计时倍率。
+- 配置版本 20，使用 `velocity.zen.*` 字符串模式配置；升级旧配置清除历史 Velocity 参数，默认 `NoXZ`，保留模块开关和键位。HUD 显示模式、管线状态、击退/攻击计数和状态。
+- 1.8.9 适配包括主线程包回放、真实 Netty 出站队列、输入回调、相机/计时恢复、重连/重生与队列上限。构建：`cmake --build build -j2`；行为测试：`tools/attackreduce-test/run.sh`。来源、依赖映射、差异及验证范围见 `design/ATTACKREDUCE_HANDOFF.md`；游戏内及服务器端到端效果仍待实测。
 
 ### FPS / CPS 统计 HUD
 

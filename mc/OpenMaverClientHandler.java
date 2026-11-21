@@ -107,6 +107,7 @@ public final class OpenMaverClientHandler {
                 debug("first client tick", null);
             }
             OpenMaverFeatures.onTick(mc);
+            AttackReduceFeature.onTickEnd(mc);
             // 箱子：Chest ESP 的目标快照等每帧数据在 tick END 结算；
             // 真正发 windowClick 的搬运逻辑在 START（见上面那段注释）。
             if (readField(mc, "theWorld", "field_71441_e") == null

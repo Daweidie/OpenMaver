@@ -891,31 +891,43 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }));
     }
 
-    /** Myau/Zen 参考模式、原版攻击模式、SIMPLE 百分比模式。 */
+    /** OpenZen AntiKB 的三个模式及原始参数。 */
     private void addAttackReduceSettings(Entry entry) {
         entry.settings.add(Setting.select("MODE", AttackReduceFeature.MODE_NAMES, new Binding() {
             public double get() { return AttackReduceFeature.getMode(); }
             public void set(double value) { AttackReduceFeature.setMode((int) Math.round(value)); }
         }));
-        entry.settings.add(Setting.check("CHAT DEBUG", new Binding() {
-            public double get() { return AttackReduceFeature.getChatDebug() ? 1.0D : 0.0D; }
-            public void set(double value) { AttackReduceFeature.setChatDebug(value > 0.5D); }
+        entry.settings.add(Setting.slider("ATTACK AMOUNT (NOXZ)", 1, 20, 1, 0, "", new Binding() {
+            public double get() { return AttackReduceFeature.getAttackAmount(); }
+            public void set(double value) { AttackReduceFeature.setAttackAmount((int) Math.round(value)); }
         }));
-        entry.settings.add(Setting.check("SLAP EXACT", new Binding() {
-            public double get() { return AttackReduceFeature.getSlapExact() ? 1.0D : 0.0D; }
-            public void set(double value) { AttackReduceFeature.setSlapExact(value > 0.5D); }
+        entry.settings.add(Setting.check("INSTANT ATTACK (NOXZ)", new Binding() {
+            public double get() { return AttackReduceFeature.getInstantAttack() ? 1 : 0; }
+            public void set(double value) { AttackReduceFeature.setInstantAttack(value > 0.5D); }
         }));
-        entry.settings.add(Setting.check("SLAP CROSSHAIR", new Binding() {
-            public double get() { return AttackReduceFeature.getSlapCrosshair() ? 1.0D : 0.0D; }
-            public void set(double value) { AttackReduceFeature.setSlapCrosshair(value > 0.5D); }
+        entry.settings.add(Setting.check("SPRINT STATE CHECK (NOXZ)", new Binding() {
+            public double get() { return AttackReduceFeature.getSprintStateCheck() ? 1 : 0; }
+            public void set(double value) { AttackReduceFeature.setSprintStateCheck(value > 0.5D); }
         }));
-        entry.settings.add(Setting.slider("SIMPLE H", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
-            public double get() { return AttackReduceFeature.getHorizontal(); }
-            public void set(double value) { AttackReduceFeature.setHorizontal(value); }
+        entry.settings.add(Setting.check("ROTATE (JUMP RESET / MIX)", new Binding() {
+            public double get() { return AttackReduceFeature.getRotate() ? 1 : 0; }
+            public void set(double value) { AttackReduceFeature.setRotate(value > 0.5D); }
         }));
-        entry.settings.add(Setting.slider("SIMPLE V", 0.0F, 100.0F, 1.0F, 0, "%", new Binding() {
-            public double get() { return AttackReduceFeature.getVertical(); }
-            public void set(double value) { AttackReduceFeature.setVertical(value); }
+        entry.settings.add(Setting.check("FOLLOW DIRECTION (JUMP RESET)", new Binding() {
+            public double get() { return AttackReduceFeature.getFollowDirection() ? 1 : 0; }
+            public void set(double value) { AttackReduceFeature.setFollowDirection(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("ROTATE TICKS (JUMP RESET)", 3, 20, 1, 0, " ticks", new Binding() {
+            public double get() { return AttackReduceFeature.getRotateTicks(); }
+            public void set(double value) { AttackReduceFeature.setRotateTicks((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("TRY ATTACK (MIX)", new Binding() {
+            public double get() { return AttackReduceFeature.getTryAttack() ? 1 : 0; }
+            public void set(double value) { AttackReduceFeature.setTryAttack(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("MOVEMENT OVERRIDE (MIX)", new Binding() {
+            public double get() { return AttackReduceFeature.getMovementOverride() ? 1 : 0; }
+            public void set(double value) { AttackReduceFeature.setMovementOverride(value > 0.5D); }
         }));
     }
 
@@ -4233,8 +4245,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     return AttackReduceFeature.getSummary() + "  ·  "
                             + (AttackReduceFeature.isPacketHookInstalled() ? "PACKET" : "WAITING")
                             + "  ·  KB " + AttackReduceFeature.getKnockbackApplied()
-                            + (AttackReduceFeature.getMode() != AttackReduceFeature.MODE_SIMPLE
-                                    ? " / HIT " + AttackReduceFeature.getSprintHits() + "  ·  " + AttackReduceFeature.getStatus() : "");
+                            + " / HIT " + AttackReduceFeature.getSprintHits() + "  ·  " + AttackReduceFeature.getStatus();
                 }
                 return module.getConfigKey().toUpperCase(Locale.ROOT);
             }

@@ -1,667 +1,404 @@
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelPipeline;
+import io.netty.channel.ChannelPromise;
 import module.Module;
 import module.ModuleManager;
-import util.Logger;
-
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.settings.GameSettings;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.util.AxisAlignedBB;
-import io.netty.channel.ChannelPipeline;
-import org.lwjgl.input.Mouse;
-
+import net.minecraft.util.MovementInput;
+import util.Logger;
 import java.lang.reflect.Field;
-import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
-import java.util.Locale;
 import java.util.Properties;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
-/** 1.8.9 Velocity：Myau Slap_Attack 攻击窗口 + Zen 的 Aura/准星目标选择。 */
+/** OpenZen AntiKB 的 1.8.9 适配层；状态机位于 antikb/。 */
 public final class AttackReduceFeature {
-    public static final int MODE_SPRINT_HIT = 0;
-    public static final int MODE_SIMPLE = 1;
-    public static final int MODE_SLAP_ATTACK = 2;
-    public static final String[] MODE_NAMES = {"SPRINT HIT", "SIMPLE", "SLAP ATTACK"};
-    private static volatile int mode = MODE_SLAP_ATTACK;
-    private static volatile boolean slapExact = true;
-    private static volatile boolean slapCrosshair = true;
-    private static volatile boolean chatDebug = true;
-    private static volatile double horizontal = 0.0D;
-    private static volatile double vertical = 100.0D;
-    private static volatile boolean active;
-    private static volatile int localEntityId = Integer.MIN_VALUE;
-    private static volatile Module activeModule;
-    private static final AtomicLong KB_SEEN = new AtomicLong();
-    private static volatile Object trackedPlayer;
-    private static volatile Object trackedWorld;
-    private static volatile Minecraft client;
-    private static volatile long generation;
-    private static int attackWindow;
-    private static long sprintHits;
+    public static final int MODE_NOXZ = 0, MODE_JUMP_RESET = 1, MODE_MIX = 2;
+    public static final String[] MODE_NAMES = {"NoXZ", "Jump Reset", "Mix"};
+    private static int mode = MODE_NOXZ;
+    private static boolean rotate, tryAttack, movementOverride, followDirection, instantAttack;
+    private static boolean sprintStateCheck = true;
+    private static int rotateTicks = 12, attackAmount = 5;
+    private static final AntiKBMode[] MODES = {new NoXZMode(), new JumpResetMode(), new MixMode()};
+    private static volatile Session session;
+    private static long knockbacks, attacks;
+    private static int tick, nextHookAttempt;
+    private static Object timerOwner;
+    private static double timerBefore = 1;
+    private static Object cameraPlayer;
+    private static float cameraYaw, cameraPitch, writtenYaw, writtenPitch;
+    private static boolean cameraChanged;
+    static Float rotationYaw;
+    private static float rotationPitch;
     private static String status = "IDLE";
-    private static String lastDebugState;
-    private static boolean chatWarned;
-    // Netty 的 SEND 观察与主线程攻击共用闸门。保留本地预约，直到自己的 C02 及
-    // 后续 C03 都已经过管线；滞后的 C03 不能把尚未发出的本地攻击预约清掉。
-    private static final Object ACTION_LOCK = new Object();
-    private static final AtomicInteger ACTIONS = new AtomicInteger();
-    private static Object reservedAttack;
-    private static boolean reservedAttackWritten;
-    private static final int SLOT = 1, ATTACK = 2, SWING = 4, BLOCK = 8, INVENTORY = 16, DIG = 32;
-    private static final String[] ACTION_MODULES = {
-            "AutoClicker", "KillAura", "Scaffold", "Scaffold2", "GodBridge", "Chest Stealer", "Criticals"
-    };
-    private static volatile Object hookNetHandler;
-    private static ChannelPipeline hookPipeline;
-    private static volatile AttackReducePacketHook hookInstance;
-    private static boolean hookInstalled;
-    private static boolean hookWarned;
-    private static boolean packetWarned;
-    private static int clientTick;
-    private static int hookAttemptTick = -20;
-
+    static final int MAX_PENDING = 4096;
     private AttackReduceFeature() { }
 
+    static final class Session {
+        final Minecraft mc;
+        final Object player, world, handler;
+        final int entityId, mode;
+        final AttackReducePacketHook hook;
+        final ChannelPipeline pipeline;
+        final Deque<Move> moves = new ArrayDeque<Move>();
+        volatile boolean holdMoves, closed;
+        boolean worldTransition;
+        boolean releaseScheduled;
+        Session(Minecraft mc, Object player, Object world, Object handler, int id,
+                int mode, AttackReducePacketHook hook, ChannelPipeline pipeline) {
+            this.mc = mc; this.player = player; this.world = world; this.handler = handler;
+            this.entityId = id; this.mode = mode; this.hook = hook; this.pipeline = pipeline;
+        }
+    }
+    private static final class Move {
+        final ChannelHandlerContext ctx;
+        final Object packet;
+        final ChannelPromise promise;
+        Move(ChannelHandlerContext c, Object p, ChannelPromise f) { ctx = c; packet = p; promise = f; }
+    }
+    /** 原始包及所属连接；回放直接调用 processPacket，避免再次经过钩子。 */
+    static final class Packet {
+        final Object raw;
+        final Session owner;
+        final Method process;
+        Packet(Object raw, Session owner, Method process) { this.raw = raw; this.owner = owner; this.process = process; }
+        boolean is(String name) { return packetName(raw, name); }
+        int id() { return integer(raw, "entityID", "entityId", "field_149417_a", "field_148981_a"); }
+        int x() { return integer(raw, "motionX", "field_149415_b"); }
+        int y() { return integer(raw, "motionY", "field_149416_c"); }
+        int z() { return integer(raw, "motionZ", "field_149414_d"); }
+        void handle() {
+            if (!sameConnection(owner)) return;
+            process();
+        }
+        void process() {
+            try { process.invoke(raw, owner.handler); }
+            catch (Exception error) { Logger.warn("Velocity", "Packet replay failed: " + error); }
+        }
+    }
+    static final class ReceivePacketEvent {
+        final Packet packet;
+        boolean cancelled;
+        ReceivePacketEvent(Packet packet) { this.packet = packet; }
+        void cancel() { cancelled = true; }
+    }
+
     public static void onTickStart(Minecraft mc) {
-        Module module = ModuleManager.getModule("Velocity");
-        Object player = OpenMaverFeatures.read(mc, "thePlayer", "field_71439_g", null);
-        Object world = OpenMaverFeatures.read(mc, "theWorld", "field_71441_e", null);
-        if (module == null || !module.isEnabled() || player == null || world == null) {
-            deactivate();
-            return;
+        tick++;
+        restoreCamera();
+        Object player = read(mc, "thePlayer", "field_71439_g");
+        Object world = read(mc, "theWorld", "field_71441_e");
+        Object handler = read(player, "sendQueue", "field_71174_a");
+        Session s = session;
+        if (!enabled() || player == null || world == null || handler == null) { stop(true); return; }
+        if (s != null && (!sameConnection(s) || s.mode != mode || !isPacketHookInstalled())) {
+            stop(true); nextHookAttempt = tick; s = null;
         }
-        if (!active || trackedPlayer != player || trackedWorld != world) {
-            deactivate();
-            trackedPlayer = player;
-            trackedWorld = world;
-            Object id = OpenMaverFeatures.call(player, "getEntityId", "func_145782_y", null);
-            localEntityId = id instanceof Number ? ((Number) id).intValue() : Integer.MIN_VALUE;
-            activeModule = module;
-            client = mc;
-            active = true;
-        }
-        clientTick++;
-        maintainHook(mc, player);
-        if (mode == MODE_SLAP_ATTACK && attackWindow > 0) {
-            double beforeX = OpenMaverFeatures.number(player, "motionX", "field_70159_w");
-            double beforeY = OpenMaverFeatures.number(player, "motionY", "field_70181_x");
-            double beforeZ = OpenMaverFeatures.number(player, "motionZ", "field_70179_y");
-            boolean exhausted = --attackWindow == 0; // Myau Update PRE：先消耗，再判断。
-            updateSlapAttack(mc, player);
-            debugAttempt(player, beforeX, beforeY, beforeZ, exhausted);
-            if (exhausted && !"HIT".equals(status) && !status.endsWith("FAILED")) status = "EXPIRED";
-        }
-        if (mode == MODE_SPRINT_HIT && attackWindow > 0) {
-            double beforeX = OpenMaverFeatures.number(player, "motionX", "field_70159_w");
-            double beforeY = OpenMaverFeatures.number(player, "motionY", "field_70181_x");
-            double beforeZ = OpenMaverFeatures.number(player, "motionZ", "field_70179_y");
-            updateSprintHit(mc, player);
-            debugAttempt(player, beforeX, beforeY, beforeZ, attackWindow == 1);
-            if (attackWindow > 0 && --attackWindow == 0) status = "EXPIRED";
-        }
-    }
-
-    private static void deactivate() {
-        active = false;
-        generation++;
-        attackWindow = 0;
-        resetActions();
-        status = "IDLE";
-        lastDebugState = null;
-        chatWarned = false;
-        client = null;
-        activeModule = null;
-        detachHook("模块关闭 / 世界变化");
-        hookNetHandler = null;
-        trackedPlayer = null;
-        trackedWorld = null;
-        localEntityId = Integer.MIN_VALUE;
-        hookAttemptTick = clientTick - 20;
-        packetWarned = false;
-    }
-
-    /** 在 Netty 上只解析包；返回的任务必须排在 vanilla 的包处理任务之后。 */
-    static Runnable beforeInbound(final AttackReducePacketHook source, Object packet) {
-        Module module = activeModule;
-        if (!active || module == null || !module.isEnabled() || packet == null
-                || localEntityId == Integer.MIN_VALUE
-                || !packet.getClass().getName().equals(
-                        "net.minecraft.network.play.server.S12PacketEntityVelocity")) return null;
-        try {
-            Field id = intField(packet, "entityID", "entityId", "field_149417_a");
-            Field x = intField(packet, "motionX", "field_149415_b");
-            Field y = intField(packet, "motionY", "field_149416_c");
-            Field z = intField(packet, "motionZ", "field_149414_d");
-            if (id == null || x == null || y == null || z == null) {
-                throw new IllegalStateException("S12 字段映射缺失");
+        if (s == null && tick >= nextHookAttempt) {
+            nextHookAttempt = tick + 20;
+            try {
+                Object manager = fieldByType(handler, "net.minecraft.network.NetworkManager");
+                Object channel = fieldByType(manager, "io.netty.channel.Channel");
+                ChannelPipeline pipeline = (ChannelPipeline) call(channel, "pipeline", "pipeline");
+                if (pipeline == null || pickBaseName(pipeline.names()) == null) throw new IllegalStateException("packet_handler missing");
+                if (pipeline.names().contains(AttackReducePacketHook.NAME)) pipeline.remove(AttackReducePacketHook.NAME);
+                AttackReducePacketHook hook = new AttackReducePacketHook();
+                Object id = call(player, "getEntityId", "func_145782_y");
+                if (!(id instanceof Number)) throw new IllegalStateException("entity id missing");
+                s = new Session(mc, player, world, handler, ((Number) id).intValue(), mode, hook, pipeline);
+                session = s;
+                current().onEnable();
+                pipeline.addBefore("packet_handler", AttackReducePacketHook.NAME, hook);
+                Logger.info("Velocity", "OpenZen " + MODE_NAMES[mode] + " packet hook installed");
+            } catch (Exception error) {
+                stop(false); Logger.warn("Velocity", "Packet hook retry in 20 ticks: " + error); return;
             }
-            if (id.getInt(packet) != localEntityId) return null;
-            final int packetMode = mode;
-            final Minecraft mc = client;
-            final Object player = trackedPlayer, world = trackedWorld;
-            final long epoch = generation;
-            final int oldX = x.getInt(packet), oldY = y.getInt(packet), oldZ = z.getInt(packet);
-            if (packetMode != MODE_SIMPLE) {
-                final boolean horizontalMotion = oldX != 0 || oldZ != 0;
-                final int window = horizontalMotion
-                        ? (packetMode == MODE_SLAP_ATTACK ? calculateSlapTicks(x.getInt(packet), z.getInt(packet)) : 6) : 0;
-                KB_SEEN.incrementAndGet();
-                return new Runnable() {
-                    public void run() {
-                        if (!active || !acceptsHook(source) || !module.isEnabled() || mode != packetMode
-                                || epoch != generation || mc == null
-                                || player != trackedPlayer || world != trackedWorld
-                                || OpenMaverFeatures.read(mc, "thePlayer", "field_71439_g", null) != player
-                                || OpenMaverFeatures.read(mc, "theWorld", "field_71441_e", null) != world) return;
-                        // 现在 vanilla 已经施加这份 S12；从此处开窗，避免先攻击后受力。
-                        attackWindow = window;
-                        lastDebugState = null;
-                        status = horizontalMotion ? "READY" : "NO HORIZONTAL KB";
-                        if (!horizontalMotion) debugVelocity(player, oldX / 8000.0D, oldY / 8000.0D,
-                                oldZ / 8000.0D, oldX / 8000.0D, oldY / 8000.0D, oldZ / 8000.0D,
-                                status, false);
+        }
+        if (s == null) return;
+        ensureMovementHook(s);
+        current().onTick();
+        current().onSprint();
+    }
+    public static void onTickEnd(Minecraft mc) {
+        Session s = session;
+        if (s != null) {
+            if (!enabled() || !sameConnection(s)) stop(true);
+            else current().onMotion();
+        }
+        restoreCamera();
+    }
+
+    /** Netty 只转交包；世界与目标判断都发生在 Minecraft 主线程。 */
+    static boolean captureInbound(AttackReducePacketHook source, Object raw) {
+        final Session s = session;
+        if (s == null || s.hook != source || s.closed || raw == null || !enabled()) return false;
+        Method process = packetMethod(raw, s.handler);
+        if (process == null) return false;
+        final Packet packet = new Packet(raw, s, process);
+        return schedule(s, new Runnable() {
+            public void run() {
+                if (!sameConnection(s)) {
+                    // S07 会在同一网络连接中更换 player/world；其后的批量包属于新世界。
+                    if (s.worldTransition && s.pipeline.channel().isOpen()
+                            && read(read(s.mc, "thePlayer", "field_71439_g"), "sendQueue", "field_71174_a") == s.handler) packet.process();
+                    return;
+                }
+                if (session != s || !enabled()) { packet.handle(); return; }
+                if (packet.is("S08PacketPlayerPosLook") || packet.is("S07PacketRespawn") || packet.is("S40PacketDisconnect")) {
+                    current().release(); current().onMotion(); current().onEnable(); restoreTimer(); rotationYaw = null;
+                    if (packet.is("S08PacketPlayerPosLook")) current().onCorrection();
+                    if (packet.is("S07PacketRespawn")) s.worldTransition = true;
+                    packet.handle(); return;
+                }
+                if (ownVelocity(packet)) knockbacks++;
+                if (ignored()) { current().release(); current().onMotion(); packet.handle(); return; }
+                ReceivePacketEvent event = new ReceivePacketEvent(packet);
+                current().onReceivePacket(event);
+                if (!event.cancelled) packet.handle();
+                if (current().pendingCount() >= MAX_PENDING) { current().release(); current().onMotion(); status("QUEUE LIMIT"); }
+            }
+        });
+    }
+    /** NoXZ movePacketQueue 接到真正的 SEND 路径；保留 promise 与 FIFO。 */
+    static boolean captureOutbound(AttackReducePacketHook source, ChannelHandlerContext ctx, Object packet, ChannelPromise promise) {
+        final Session s = session;
+        if (s == null || s.hook != source || s.closed || !packetName(packet, "C03PacketPlayer")) return false;
+        synchronized (s.moves) {
+            if (!s.holdMoves) return false;
+            s.moves.add(new Move(ctx, packet, promise));
+            if (s.moves.size() >= MAX_PENDING && !s.releaseScheduled) {
+                s.releaseScheduled = true;
+                if (!schedule(s, new Runnable() { public void run() { if (session == s) current().release(); } })) flushMoves(s);
+            }
+            return true;
+        }
+    }
+    static void holdMoves() { Session s = session; if (s != null) s.holdMoves = true; }
+    static void sendMovePackets() { flushMoves(session); }
+    private static void flushMoves(final Session s) {
+        if (s == null) return;
+        Runnable flush = new Runnable() {
+            public void run() {
+                synchronized (s.moves) {
+                    Move move; ChannelHandlerContext last = null;
+                    while ((move = s.moves.poll()) != null) {
+                        if (move.promise.isDone()) continue;
+                        if (s.closed || !move.ctx.channel().isOpen()) move.promise.tryFailure(new IllegalStateException("Velocity connection closed"));
+                        else try { move.ctx.write(move.packet, move.promise); last = move.ctx; }
+                        catch (Exception error) { move.promise.tryFailure(error); }
                     }
-                };
-            }
-            double h = horizontal / 100.0D;
-            double v = vertical / 100.0D;
-            final int newX = (int) (oldX * h), newY = (int) (oldY * v), newZ = (int) (oldZ * h);
-            // S12 的速度单位为 1/8000；先解析全部字段再写入，不触碰其它实体。
-            x.setInt(packet, newX);
-            y.setInt(packet, newY);
-            z.setInt(packet, newZ);
-            KB_SEEN.incrementAndGet();
-            if (!chatDebug) return null;
-            return new Runnable() {
-                public void run() {
-                    if (!active || !acceptsHook(source) || !module.isEnabled() || mode != packetMode
-                            || epoch != generation || mc == null
-                            || player != trackedPlayer || world != trackedWorld
-                            || OpenMaverFeatures.read(mc, "thePlayer", "field_71439_g", null) != player
-                            || OpenMaverFeatures.read(mc, "theWorld", "field_71441_e", null) != world) return;
-                    debugVelocity(player, oldX / 8000.0D, oldY / 8000.0D, oldZ / 8000.0D,
-                            newX / 8000.0D, newY / 8000.0D, newZ / 8000.0D, "S12 SCALE", false);
+                    if (last != null) last.flush();
+                    s.holdMoves = false; s.releaseScheduled = false;
                 }
-            };
-        } catch (Throwable error) {
-            if (!packetWarned) {
-                packetWarned = true;
-                Logger.warn("Velocity", "击退包缩放失败: " + error);
             }
-        }
-        return null;
-    }
-
-    static void afterInbound(Runnable task) {
-        if (task != null && !OpenMaverFeatures.callVoid(client,
-                "addScheduledTask", "func_152344_a", null, task) && !packetWarned) {
-            packetWarned = true;
-            Logger.warn("Velocity", "主线程回调入队失败");
-        }
-    }
-
-    static boolean acceptsHook(AttackReducePacketHook source) {
-        // 重连后旧 channel 的已排队回调不得污染新连接的窗口/出站动作。
-        return hookInstance == source || (hookInstance == null && hookNetHandler == null);
-    }
-
-    /** OpenMyau-Fix Velocity.calculateSlapTicks：输入为 S12 整数，不是 /8000 后的速度。 */
-    static int calculateSlapTicks(int x, int z) {
-        double magnitude = Math.hypot((double) x, (double) z);
-        if (!slapExact) return Math.max(1, Math.min(10,
-                (int) Math.round(6.43153527E-4D * magnitude + 2.9419087136D)));
-        int[] bounds = {500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000};
-        int[] ticks = {3, 4, 4, 5, 6, 6, 7, 7, 8, 8};
-        for (int i = 0; i < bounds.length; i++) if (magnitude <= bounds[i]) return ticks[i];
-        return 9;
-    }
-
-    /** 只观察已经发出的动作；不取消、修改、缓存任何出站包。 */
-    static void noteOutbound(AttackReducePacketHook source, Object packet) {
-        Module module = activeModule;
-        if (!active || module == null || !module.isEnabled() || packet == null) return;
-        synchronized (ACTION_LOCK) {
-            if (!active || !acceptsHook(source)) return;
-            if (isPacket(packet, "C03PacketPlayer")) {
-                ACTIONS.set(0);
-                if (reservedAttackWritten) {
-                    reservedAttack = null;
-                    reservedAttackWritten = false;
-                }
-                return;
-            }
-            int bits = 0;
-            if (isPacket(packet, "C09PacketHeldItemChange")) bits = SLOT;
-            else if (isPacket(packet, "C0APacketAnimation")) bits = SWING;
-            else if (isPacket(packet, "C02PacketUseEntity")) {
-                Object action = OpenMaverFeatures.call(packet, "getAction", "func_149565_c", null);
-                // 映射失效时保守地视为 ATTACK；INTERACT 不误计入。
-                if (action == null || "ATTACK".equals(String.valueOf(action))) bits = ATTACK;
-            } else if (isPacket(packet, "C08PacketPlayerBlockPlacement")) bits = BLOCK;
-            else if (isPacket(packet, "C07PacketPlayerDigging")) bits = BLOCK | DIG;
-            else if (isPacket(packet, "C0DPacketCloseWindow") || isPacket(packet, "C0EPacketClickWindow")) bits = INVENTORY;
-            else if (isPacket(packet, "C16PacketClientStatus")) {
-                Object action = OpenMaverFeatures.call(packet, "getStatus", "func_149435_c", null);
-                if (action == null || "OPEN_INVENTORY_ACHIEVEMENT".equals(String.valueOf(action))) bits = INVENTORY;
-            }
-            ACTIONS.set(ACTIONS.get() | bits);
-            if (packet == reservedAttack) reservedAttackWritten = true;
-        }
-    }
-
-    private static boolean isPacket(Object packet, String name) {
-        for (Class<?> type = packet.getClass(); type != null; type = type.getSuperclass()) {
-            if (type.getName().equals("net.minecraft.network.play.client." + name)) return true;
-        }
-        return false;
-    }
-
-    private static void resetActions() {
-        synchronized (ACTION_LOCK) {
-            ACTIONS.set(0);
-            reservedAttack = null;
-            reservedAttackWritten = false;
-        }
-    }
-
-    static boolean hasBadPackets() {
-        synchronized (ACTION_LOCK) { return ACTIONS.get() != 0 || reservedAttack != null; }
-    }
-
-    private static boolean enabled(String name) {
-        Module module = ModuleManager.getModule(name);
-        return module != null && module.isEnabled();
-    }
-
-    /** 同一尝试前后取样，排除 tick 间摩擦/重力；阻断状态重复时仅在窗口结束再报一次。 */
-    private static void debugAttempt(Object player, double x, double y, double z, boolean exhausted) {
-        if (!chatDebug) return;
-        String state = status + "|" + debugContext(player);
-        if (!exhausted && !"HIT".equals(status) && state.equals(lastDebugState)) return;
-        lastDebugState = state;
-        debugVelocity(player, x, y, z,
-                OpenMaverFeatures.number(player, "motionX", "field_70159_w"),
-                OpenMaverFeatures.number(player, "motionY", "field_70181_x"),
-                OpenMaverFeatures.number(player, "motionZ", "field_70179_y"), status, exhausted);
-    }
-
-    private static String debugContext(Object player) {
-        StringBuilder modules = new StringBuilder();
-        for (String name : ACTION_MODULES) if (enabled(name)) {
-            if (modules.length() > 0) modules.append(',');
-            modules.append(name);
-        }
-        Object input = OpenMaverFeatures.read(player, "movementInput", "field_71158_b", null);
-        Module autoSprint = ModuleManager.getModule("AutoSprint");
-        return "left=" + Mouse.isButtonDown(0) + " right=" + Mouse.isButtonDown(1)
-                + " sprint=" + Boolean.TRUE.equals(OpenMaverFeatures.call(player, "isSprinting", "func_70051_ag", null))
-                + " sentSprint=" + Boolean.TRUE.equals(OpenMaverFeatures.read(player, "serverSprintState", "field_175171_bO", null))
-                + " actions=" + ACTIONS.get() + " localAction=" + OpenMaverFeatures.velocityActionUsedThisTick()
-                + " forward=" + debugNumber(OpenMaverFeatures.number(input, "moveForward", "field_78900_b"))
-                + " strafe=" + debugNumber(OpenMaverFeatures.number(input, "moveStrafe", "field_78902_a"))
-                + " sneak=" + Boolean.TRUE.equals(OpenMaverFeatures.read(input, "sneak", "field_78899_d", Boolean.class))
-                + " usingItem=" + Boolean.TRUE.equals(OpenMaverFeatures.call(player, "isUsingItem", "func_71039_bw", null))
-                + " autoSprint=" + (autoSprint != null && autoSprint.isEnabled())
-                + " onlyForward=" + OpenMaverFeatures.isSprintOnlyForward()
-                + " modules=" + (modules.length() == 0 ? "none" : modules.toString());
-    }
-
-    private static String debugNumber(double value) {
-        return String.format(Locale.ROOT, "%.2f", value);
-    }
-
-    /** 仅主线程调用：addChatMessage 是本地显示，不向服务器发送聊天。 */
-    private static void debugVelocity(Object player, double x, double y, double z,
-            double afterX, double afterY, double afterZ, String reason, boolean exhausted) {
-        if (!chatDebug) return;
+        };
         try {
-            String motion = String.format(Locale.ROOT,
-                    "[Maver] Velocity before(x:%.4f y:%.4f z:%.4f) after(x:%.4f y:%.4f z:%.4f)",
-                    x, y, z, afterX, afterY, afterZ);
-            String detail = "[Maver] Velocity mode=" + MODE_NAMES[mode] + " reason=" + reason
-                    + " window=" + attackWindow + (exhausted ? " expired=true" : "") + " " + debugContext(player);
-            Logger.info("Velocity", motion + " " + detail);
-            Class<?> component = Class.forName("net.minecraft.util.ChatComponentText");
-            Constructor<?> ctor = component.getConstructor(String.class);
-            if (!OpenMaverFeatures.callVoid(player, "addChatMessage", "func_145747_a", null, ctor.newInstance(motion))
-                    || !OpenMaverFeatures.callVoid(player, "addChatMessage", "func_145747_a", null, ctor.newInstance(detail))) {
-                throw new IllegalStateException("addChatMessage 映射不可用");
-            }
-        } catch (Throwable error) {
-            if (!chatWarned) { chatWarned = true; Logger.warn("Velocity", "聊天调试显示失败: " + error); }
+            ChannelHandlerContext ctx = s.hook.context;
+            if (ctx == null) { s.closed = true; flush.run(); }
+            else ctx.channel().eventLoop().execute(flush);
+        } catch (Exception error) { s.closed = true; flush.run(); }
+    }
+    static void connectionClosed(final AttackReducePacketHook hook) {
+        final Session s = session;
+        if (s == null || s.hook != hook) return;
+        s.closed = true; flushMoves(s);
+        schedule(s, new Runnable() { public void run() { if (session == s) stop(false); } });
+    }
+    private static void stop(boolean release) {
+        Session s = session;
+        if (s != null) {
+            if (!sameConnection(s)) s.closed = true;
+            if (release && sameConnection(s)) { MODES[s.mode].release(); MODES[s.mode].onMotion(); }
+            MODES[s.mode].onDisable(); flushMoves(s); session = null;
+            try { s.pipeline.remove(s.hook); } catch (Exception ignored) { }
         }
+        rotationYaw = null; restoreCamera(); restoreTimer(); status = "IDLE";
     }
 
-    private static void updateSlapAttack(Minecraft mc, Object player) {
-        if (!isPacketHookInstalled()) { status = "WAIT HOOK"; return; }
-        if (OpenMaverFeatures.read(mc, "currentScreen", "field_71462_r", null) != null
-                || !OpenMaverFeatures.alive(player)
-                || Boolean.TRUE.equals(OpenMaverFeatures.call(player, "isUsingItem", "func_71039_bw", null))
-                || OpenMaverFeatures.read(player, "ridingEntity", "field_70154_o", null) != null
-                || Boolean.TRUE.equals(OpenMaverFeatures.read(player, "isInWeb", "field_70134_J", null))
-                || Boolean.TRUE.equals(OpenMaverFeatures.call(player, "isInWater", "func_70090_H", null))
-                || Boolean.TRUE.equals(OpenMaverFeatures.call(player, "isInLava", "func_180799_ab", null))
-                || Mouse.isButtonDown(0) || Mouse.isButtonDown(1)) {
-            status = "PLAYER BUSY"; return;
+    static void afterMovementInput(MovementInput input) {
+        restoreCamera();
+        Session s = session;
+        if (s == null || !sameConnection(s) || !enabled()) return;
+        current().onStrafe(input);
+        if (rotationYaw != null && !rotationBusy()) {
+            cameraPlayer = s.player;
+            cameraYaw = (float) number(s.player, "rotationYaw", "field_70177_z");
+            cameraPitch = (float) number(s.player, "rotationPitch", "field_70125_A");
+            writtenYaw = cameraYaw + OpenMaverFeatures.wrapDegrees(rotationYaw - cameraYaw); writtenPitch = rotationPitch;
+            if (!(mode == MODE_JUMP_RESET && followDirection)) moveFix(input, cameraYaw, writtenYaw);
+            set(s.player, "rotationYaw", "field_70177_z", writtenYaw);
+            set(s.player, "rotationPitch", "field_70125_A", writtenPitch); cameraChanged = true;
         }
-        if (enabled("Scaffold") || enabled("Scaffold2") || enabled("GodBridge")
-                || enabled("Chest Stealer") || enabled("Criticals")
-                || OpenMaverFeatures.velocityActionUsedThisTick()) {
-            status = "OTHER ACTION"; return;
+        current().onMotion();
+    }
+    private static void moveFix(MovementInput input, float from, float to) {
+        float scale = input.sneak ? 0.3F : 1;
+        double radians = Math.toRadians(from - to);
+        double x = (input.moveForward * Math.cos(radians) + input.moveStrafe * Math.sin(radians)) / scale;
+        double y = (input.moveStrafe * Math.cos(radians) - input.moveForward * Math.sin(radians)) / scale;
+        double best = Double.MAX_VALUE; float bestF = 0, bestZ = 0;
+        for (int a = -1; a <= 1; a++) for (int b = -1; b <= 1; b++) {
+            double d = (x - a) * (x - a) + (y - b) * (y - b);
+            if (d < best) { best = d; bestF = a; bestZ = b; }
         }
-        // 不再仅因 Aura/AutoClicker 启用而拒绝：只让位于本 tick 实际发生的动作。
-        if (hasBadPackets()) { status = "BAD PACKETS"; return; }
-        Object input = OpenMaverFeatures.read(player, "movementInput", "field_71158_b", null);
-        if (input == null || (OpenMaverFeatures.number(input, "moveForward", "field_78900_b") == 0.0D
-                && OpenMaverFeatures.number(input, "moveStrafe", "field_78902_a") == 0.0D)) {
-            status = "NOT MOVING"; return;
-        }
-        if (Boolean.TRUE.equals(OpenMaverFeatures.read(input, "sneak", "field_78899_d", Boolean.class))) {
-            status = "SNEAKING"; return;
-        }
-        if (!Boolean.TRUE.equals(OpenMaverFeatures.call(player, "isSprinting", "func_70051_ag", null))) {
-            if (OpenMaverFeatures.callVoid(player, "setSprinting", "func_70031_b", null, Boolean.TRUE)) {
-                status = "REQUEST SPRINT SYNC";
-            } else {
-                status = "SPRINT REQUEST FAILED";
-            }
-            return;
-        }
-        if (!Boolean.TRUE.equals(OpenMaverFeatures.read(player, "serverSprintState", "field_175171_bO", null))) {
-            status = "WAIT SPRINT SYNC"; return;
-        }
-        // Zen NoXZ.getAttackTarget：Aura 优先，否则回落到准星生物。
+        input.moveForward = bestF * scale; input.moveStrafe = bestZ * scale;
+    }
+    private static void restoreCamera() {
+        if (!cameraChanged) return;
+        set(cameraPlayer, "rotationYaw", "field_70177_z", cameraYaw + number(cameraPlayer, "rotationYaw", "field_70177_z") - writtenYaw);
+        set(cameraPlayer, "rotationPitch", "field_70125_A", cameraPitch + number(cameraPlayer, "rotationPitch", "field_70125_A") - writtenPitch);
+        cameraChanged = false; cameraPlayer = null;
+    }
+    private static boolean rotationBusy() { return moduleEnabled("Scaffold") || moduleEnabled("GodBridge") || OpenMaverFeatures.velocityAuraTarget() != null; }
+    private static void ensureMovementHook(Session s) {
+        Object input = read(s.player, "movementInput", "field_71158_b");
+        if (input instanceof ScaffoldMovementInput) return;
+        if (input != null && !input.getClass().getName().equals("net.minecraft.util.MovementInputFromOptions")) return;
+        Object settings = read(s.mc, "gameSettings", "field_71474_y");
+        if (settings instanceof GameSettings) OpenMaverFeatures.writeObjectField(s.player, "movementInput", "field_71158_b", new ScaffoldMovementInput((GameSettings) settings));
+    }
+    static void timer(float multiplier) {
+        Object owner = read(mc(), "timer", "field_71428_T");
+        if (owner == null) return;
+        if (timerOwner != owner) { restoreTimer(); timerOwner = owner; timerBefore = number(owner, "timerSpeed", "field_74278_d"); }
+        set(owner, "timerSpeed", "field_74278_d", multiplier);
+    }
+    static void restoreTimer() { if (timerOwner != null) set(timerOwner, "timerSpeed", "field_74278_d", timerBefore); timerOwner = null; }
+    static boolean ignored() {
+        Object p = player(), abilities = read(p, "capabilities", "field_71075_bZ");
+        return p == null || !OpenMaverFeatures.alive(p) || truth(p, "isSpectator", "func_175149_v")
+                || flag(abilities, "isFlying", "field_75100_b") || truth(p, "isInWater", "func_70090_H")
+                || truth(p, "isInLava", "func_180799_ab") || truth(p, "isBurning", "func_70027_ad")
+                || truth(p, "isOnLadder", "func_70617_f_") || truth(p, "isPlayerSleeping", "func_70608_bn")
+                || flag(p, "isInWeb", "field_70134_J") || moduleEnabled("Stuck") || moduleEnabled("FireballBlink") || moduleEnabled("HighJump");
+    }
+    static Object attackTarget() {
         Object target = OpenMaverFeatures.velocityAuraTarget();
-        if (target == null && slapCrosshair) {
-            Object hit = OpenMaverFeatures.read(mc, "objectMouseOver", "field_71476_x", null);
-            if ("ENTITY".equals(String.valueOf(OpenMaverFeatures.read(hit, "typeOfHit", "field_72313_a", null))))
-                target = OpenMaverFeatures.read(hit, "entityHit", "field_72308_g", null);
-        }
-        if (!(target instanceof EntityLivingBase) || target == player || !OpenMaverFeatures.alive(target)
-                || !crosshairWithinReach(player, target)
-                || !Boolean.TRUE.equals(OpenMaverFeatures.call(player, "canEntityBeSeen", "func_70685_l", null, target))) {
-            status = "NO TARGET"; return;
-        }
-        Object queue = OpenMaverFeatures.read(player, "sendQueue", "field_71174_a", null);
-        if (queue == null) { status = "NO CONNECTION"; return; }
-        try {
-            Class<?> animationType = Class.forName("net.minecraft.network.play.client.C0APacketAnimation");
-            Class<?> attackType = Class.forName("net.minecraft.network.play.client.C02PacketUseEntity");
-            Class<?> actionType = Class.forName("net.minecraft.network.play.client.C02PacketUseEntity$Action");
-            Object action = null;
-            for (Object value : actionType.getEnumConstants()) if ("ATTACK".equals(String.valueOf(value))) action = value;
-            Constructor<?> ctor = attackType.getConstructor(net.minecraft.entity.Entity.class, actionType);
-            Object animation = animationType.getConstructor().newInstance();
-            Object attack = ctor.newInstance(target, action);
-            synchronized (ACTION_LOCK) {
-                if (ACTIONS.get() != 0 || reservedAttack != null) { status = "BAD PACKETS"; return; }
-                reservedAttack = attack;
-                reservedAttackWritten = false;
-            }
-            // Myau Slap_Attack：C0A -> C02 -> XZ *= .6 -> sprint=false。
-            // 这里不调用 controller.attackEntity，否则会再执行一次原版减速。
-            if (!OpenMaverFeatures.callVoid(queue, "addToSendQueue", "func_147297_a", null, animation)
-                    || !OpenMaverFeatures.callVoid(queue, "addToSendQueue", "func_147297_a", null, attack)) {
-                // 保留预约直到连接/模式重置，避免部分发包失败后继续补攻击。
-                attackWindow = 0;
-                status = "SEND FAILED"; return;
-            }
-            OpenMaverFeatures.setNumber(player, "motionX", "field_70159_w",
-                    OpenMaverFeatures.number(player, "motionX", "field_70159_w") * 0.6D);
-            OpenMaverFeatures.setNumber(player, "motionZ", "field_70179_y",
-                    OpenMaverFeatures.number(player, "motionZ", "field_70179_y") * 0.6D);
-            if (!OpenMaverFeatures.callVoid(player, "setSprinting", "func_70031_b", null, Boolean.FALSE)) {
-                attackWindow = 0;
-                status = "SPRINT RESET FAILED"; return;
-            }
-            sprintHits++;
-            status = "HIT";
-        } catch (Throwable error) {
-            attackWindow = 0;
-            status = "ATTACK FAILED";
-            if (!packetWarned) { packetWarned = true; Logger.warn("Velocity", "Slap_Attack 发包失败: " + error); }
-        }
+        if (target != null) return target;
+        Object hit = read(mc(), "objectMouseOver", "field_71476_x");
+        return "ENTITY".equals(String.valueOf(read(hit, "typeOfHit", "field_72313_a"))) ? read(hit, "entityHit", "field_72308_g") : null;
     }
-
-    private static void updateSprintHit(Minecraft mc, Object player) {
-        if (OpenMaverFeatures.read(mc, "currentScreen", "field_71462_r", null) != null
-                || !OpenMaverFeatures.alive(player)
-                || Boolean.TRUE.equals(OpenMaverFeatures.call(player, "isUsingItem", "func_71039_bw", null))
-                || OpenMaverFeatures.read(player, "ridingEntity", "field_70154_o", null) != null
-                || Mouse.isButtonDown(0) || Mouse.isButtonDown(1)) {
-            status = "INPUT BUSY";
-            return;
-        }
-        // 不叠加其它模块或手动攻击，避免同 tick 多动作/重复减速。
-        for (String name : ACTION_MODULES) {
-            Module other = ModuleManager.getModule(name);
-            if (other != null && other.isEnabled()) {
-                status = "OTHER ACTION";
-                return;
-            }
-        }
-        // setSprinting(true) 到 C0B 发出之间存在一 tick 窗口。只接受原版已发出的状态，
-        // 不提前伪造 START_SPRINTING，也不手写 serverSprintState。
-        if (!Boolean.TRUE.equals(OpenMaverFeatures.call(player, "isSprinting", "func_70051_ag", null))
-                || !Boolean.TRUE.equals(OpenMaverFeatures.read(player,
-                        "serverSprintState", "field_175171_bO", null))) {
-            status = "WAIT SPRINT SYNC";
-            return;
-        }
-        Object hit = OpenMaverFeatures.read(mc, "objectMouseOver", "field_71476_x", null);
-        Object target = OpenMaverFeatures.read(hit, "entityHit", "field_72308_g", null);
-        if (!"ENTITY".equals(String.valueOf(OpenMaverFeatures.read(hit, "typeOfHit", "field_72313_a", null)))
-                || !(target instanceof EntityLivingBase) || target == player
-                || !OpenMaverFeatures.alive(target) || !crosshairWithinReach(player, target)
-                || !Boolean.TRUE.equals(OpenMaverFeatures.call(player,
-                        "canEntityBeSeen", "func_70685_l", null, target))) {
-            status = "NO TARGET";
-            return;
-        }
-        Object hurt = OpenMaverFeatures.read(target, "hurtTime", "field_70737_aN", null);
-        if (hurt instanceof Number && ((Number) hurt).intValue() > 0) {
-            status = "TARGET HURT";
-            return;
-        }
-        Object controller = OpenMaverFeatures.read(mc, "playerController", "field_71442_b", null);
-        if (controller == null) { status = "NO CONTROLLER"; return; }
-        double oldX = OpenMaverFeatures.number(player, "motionX", "field_70159_w");
-        double oldZ = OpenMaverFeatures.number(player, "motionZ", "field_70179_y");
-        if (oldX * oldX + oldZ * oldZ < 0.0009D) { status = "LOW MOTION"; return; }
-        attackWindow = 0; // 每份 S12 最多一次尝试，失败也不爆发重试。
-        // 原版 1.8 顺序：C0A -> controller.attackEntity(C02) -> 原版自身减速。
-        boolean swung = OpenMaverFeatures.callVoid(player, "swingItem", "func_71038_i", null);
-        boolean attacked = swung && OpenMaverFeatures.callVoid(controller,
-                "attackEntity", "func_78764_a", null, player, target);
-        double newX = OpenMaverFeatures.number(player, "motionX", "field_70159_w");
-        double newZ = OpenMaverFeatures.number(player, "motionZ", "field_70179_y");
-        if (attacked && Math.abs(newX - oldX * 0.6D) < 1.0E-8D
-                && Math.abs(newZ - oldZ * 0.6D) < 1.0E-8D) {
-            sprintHits++;
-            status = "HIT";
-            if (sprintHits <= 3 || sprintHits % 20 == 0) {
-                Logger.info("Velocity", "SPRINT HIT #" + sprintHits + " 原版水平减速生效（保留 60%），S12 未修改");
-            }
-        } else {
-            status = "NO SLOWDOWN";
-        }
-    }
-
-    /** 重验当前视线与 3 格射线，避免上一帧 objectMouseOver 已过期或被 Reach 扩大。 */
-    static boolean crosshairWithinReach(Object player, Object target) {
+    static boolean validTarget(Object target) {
+        if (!(target instanceof EntityLivingBase) || target == player() || !OpenMaverFeatures.alive(target) || truth(target, "isSpectator", "func_175149_v")) return false;
         AxisAlignedBB box = OpenMaverFeatures.boundingBox(target);
         if (box == null) return false;
-        double yaw = Math.toRadians(OpenMaverFeatures.number(player, "rotationYaw", "field_70177_z"));
-        double pitch = Math.toRadians(OpenMaverFeatures.number(player, "rotationPitch", "field_70125_A"));
-        double[] origin = {OpenMaverFeatures.number(player, "posX", "field_70165_t"),
-                OpenMaverFeatures.number(player, "posY", "field_70163_u") + OpenMaverFeatures.eyeHeight(player),
-                OpenMaverFeatures.number(player, "posZ", "field_70161_v")};
-        double[] direction = {-Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)};
-        double[] min = {box.minX, box.minY, box.minZ}, max = {box.maxX, box.maxY, box.maxZ};
-        double near = 0.0D, far = 3.0D;
-        for (int i = 0; i < 3; i++) {
-            if (Math.abs(direction[i]) < 1.0E-8D) {
-                if (origin[i] < min[i] || origin[i] > max[i]) return false;
-            } else {
-                double a = (min[i] - origin[i]) / direction[i], b = (max[i] - origin[i]) / direction[i];
-                near = Math.max(near, Math.min(a, b));
-                far = Math.min(far, Math.max(a, b));
-                if (near > far) return false;
-            }
-        }
-        return true;
+        Object p = player();
+        double x = number(p, "posX", "field_70165_t"), y = number(p, "posY", "field_70163_u") + OpenMaverFeatures.eyeHeight(p), z = number(p, "posZ", "field_70161_v");
+        double dx = x - Math.max(box.minX, Math.min(x, box.maxX)), dy = y - Math.max(box.minY, Math.min(y, box.maxY)), dz = z - Math.max(box.minZ, Math.min(z, box.maxZ));
+        return dx * dx + dy * dy + dz * dz <= 3.7D * 3.7D;
     }
-
-    private static Field intField(Object target, String... names) {
-        Field field = OpenMaverFeatures.findField(target, names);
-        return field != null && field.getType() == Integer.TYPE ? field : null;
-    }
-
-    private static void maintainHook(Minecraft mc, Object player) {
-        Object handler = OpenMaverFeatures.read(player, "sendQueue", "field_71174_a", null);
-        if (handler == null) handler = OpenMaverFeatures.call(mc, "getNetHandler", "func_147114_u", null);
-        if (handler != hookNetHandler) {
-            generation++;
-            attackWindow = 0;
-            detachHook("连接变化");
-            resetActions();
-            hookNetHandler = handler;
-            hookAttemptTick = clientTick - 20;
+    /** Zen 顺序：退出疾跑 -> controller.attack -> swing -> 手动 XZ*.6，Y 保持。 */
+    static boolean attack(Object target, boolean checkSprint) {
+        Object p = player(), controller = read(mc(), "playerController", "field_71442_b");
+        if (!validTarget(target) || controller == null || (checkSprint && !sprinting())) return false;
+        boolean sprint = sprinting();
+        if (sprint && !OpenMaverFeatures.callVoid(p, "setSprinting", "func_70031_b", null, Boolean.FALSE)) return false;
+        if (!OpenMaverFeatures.callVoid(controller, "attackEntity", "func_78764_a", null, p, target)) return false;
+        OpenMaverFeatures.callVoid(p, "swingItem", "func_71038_i", null);
+        if (sprint) {
+            set(p, "motionX", "field_70159_w", number(p, "motionX", "field_70159_w") * 0.6D);
+            set(p, "motionZ", "field_70179_y", number(p, "motionZ", "field_70179_y") * 0.6D);
         }
-        if (clientTick - hookAttemptTick < 20) return;
-        hookAttemptTick = clientTick;
-        if (hookPipeline != null && hookPipeline.names().contains(AttackReducePacketHook.NAME)) return;
-        detachHook("重新安装");
-        generation++;
-        attackWindow = 0;
-        resetActions();
-        if (handler == null) return;
-        try {
-            Object manager = fieldByTypeName(handler, "net.minecraft.network.NetworkManager");
-            Object channel = fieldByTypeName(manager, "io.netty.channel.Channel");
-            Object value = OpenMaverFeatures.call(channel, "pipeline", "pipeline", null);
-            if (!(value instanceof ChannelPipeline)) throw new IllegalStateException("NetworkManager.channel 不可用");
-            ChannelPipeline pipeline = (ChannelPipeline) value;
-            String base = pickBaseName(pipeline.names());
-            if (base == null) throw new IllegalStateException("缺少 packet_handler");
-            // 清掉本工程旧实例，避免把其他 handler 当成自己的实例复用。
-            if (pipeline.names().contains(AttackReducePacketHook.NAME)) pipeline.remove(AttackReducePacketHook.NAME);
-            AttackReducePacketHook hook = new AttackReducePacketHook();
-            pipeline.addBefore(base, AttackReducePacketHook.NAME, hook);
-            hookPipeline = pipeline;
-            hookInstance = hook;
-            hookInstalled = true;
-            hookWarned = false;
-            Logger.info("Velocity", "防击退包处理器已安装");
-        } catch (Throwable error) {
-            if (!hookWarned) {
-                hookWarned = true;
-                Logger.warn("Velocity", "包观察器安装失败，20 tick 后重试: " + error);
-            }
-        }
+        attacks++; status("ATTACK"); return true;
     }
-
-    private static void detachHook(String reason) {
-        AttackReducePacketHook old = hookInstance;
-        hookInstance = null;
-        if (hookPipeline != null && old != null) {
-            try { hookPipeline.remove(old); } catch (Throwable ignored) { }
+    /** Mix 使用受击瞬间的疾跑状态；Zen Keep Sprint 默认 true，每次攻击前减速。 */
+    static void attackMix(Object target, boolean wasSprinting) {
+        if (target == null) return;
+        OpenMaverFeatures.callVoid(player(), "setSprinting", "func_70031_b", null, Boolean.FALSE);
+        if (wasSprinting) {
+            set(player(), "motionX", "field_70159_w", number(player(), "motionX", "field_70159_w") * 0.6D);
+            set(player(), "motionZ", "field_70179_y", number(player(), "motionZ", "field_70179_y") * 0.6D);
         }
-        hookPipeline = null;
-        hookInstalled = false;
+        attack(target, false);
     }
-
-    static String pickBaseName(List<String> names) {
-        return names != null && names.contains("packet_handler") ? "packet_handler" : null;
+    static void setRotation(Packet packet) {
+        rotationYaw = (float) Math.toDegrees(Math.atan2(packet.x() / 8000.0D, -packet.z() / 8000.0D));
+        rotationPitch = (float) number(player(), "rotationPitch", "field_70125_A");
     }
-
-    private static Object fieldByTypeName(Object target, String name) {
-        if (target == null) return null;
-        for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
-            for (Field field : type.getDeclaredFields()) {
-                if (!field.getType().getName().equals(name)) continue;
-                try {
-                    field.setAccessible(true);
-                    Object value = field.get(target);
-                    if (value != null) return value;
-                } catch (Throwable ignored) { }
-            }
-        }
+    static AntiKBMode current() { return MODES[mode]; }
+    static Minecraft mc() { return session == null ? null : session.mc; }
+    static Object player() { return session == null ? null : session.player; }
+    static int sessionEntityId() { return session == null ? -1 : session.entityId; }
+    static boolean onGround() { return flag(player(), "onGround", "field_70122_E"); }
+    static boolean sprinting() { return truth(player(), "isSprinting", "func_70051_ag"); }
+    static boolean ownVelocity(Packet p) { return p.is("S12PacketEntityVelocity") && session != null && p.id() == session.entityId; }
+    static void status(String v) { status = v; }
+    static boolean moduleEnabled(String name) { Module m = ModuleManager.getModule(name); return m != null && m.isEnabled(); }
+    static boolean jumpResetSuspended() {
+        Module noFall = ModuleManager.getModule("NoFall"), backtrack = ModuleManager.getModule("Backtrack");
+        return noFall != null && noFall.isEnabled()
+                && (flag(noFall, "jumpLandingBoost", "jumpLandingBoost") || flag(noFall, "boostActive", "boostActive"))
+                || backtrack != null && backtrack.isEnabled()
+                && (truth(backtrack, "isActive", "isActive") || truth(backtrack, "isBacktracking", "isBacktracking"));
+    }
+    private static boolean enabled() { return moduleEnabled("Velocity"); }
+    private static boolean sameConnection(Session s) { return !s.closed && read(s.mc, "thePlayer", "field_71439_g") == s.player && read(s.mc, "theWorld", "field_71441_e") == s.world && read(s.player, "sendQueue", "field_71174_a") == s.handler; }
+    static Object read(Object o, String m, String s) { return OpenMaverFeatures.read(o, m, s, null); }
+    static double number(Object o, String m, String s) { return OpenMaverFeatures.number(o, m, s); }
+    static void set(Object o, String m, String s, double v) { OpenMaverFeatures.setNumber(o, m, s, v); }
+    static Object call(Object o, String m, String s, Object... args) { return OpenMaverFeatures.call(o, m, s, null, args); }
+    static boolean truth(Object o, String m, String s) { return Boolean.TRUE.equals(call(o, m, s)); }
+    static boolean flag(Object o, String m, String s) { return Boolean.TRUE.equals(read(o, m, s)); }
+    private static int integer(Object o, String... names) { Field f = OpenMaverFeatures.findField(o, names); try { return f == null ? 0 : f.getInt(o); } catch (Exception ignored) { return 0; } }
+    private static Method packetMethod(Object raw, Object handler) {
+        for (Method m : raw.getClass().getMethods()) if ((m.getName().equals("processPacket") || m.getName().equals("func_148833_a")) && m.getParameterTypes().length == 1 && m.getParameterTypes()[0].isInstance(handler)) { m.setAccessible(true); return m; }
         return null;
     }
-
-    public static void load(Properties values) {
-        int loadedMode;
-        try { loadedMode = Integer.parseInt(values.getProperty("velocity.mode", "2")); }
-        catch (Exception ignored) { loadedMode = MODE_SLAP_ATTACK; }
-        mode = validMode(loadedMode);
-        generation++;
-        attackWindow = 0;
-        resetActions();
-        lastDebugState = null;
-        chatDebug = Boolean.parseBoolean(values.getProperty("velocity.chatDebug", "true"));
-        slapExact = Boolean.parseBoolean(values.getProperty("velocity.slapExact", "true"));
-        slapCrosshair = Boolean.parseBoolean(values.getProperty("velocity.slapCrosshair", "true"));
-        horizontal = readPercent(values, "velocity.horizontal", 0.0D);
-        vertical = readPercent(values, "velocity.vertical", 100.0D);
+    private static boolean packetName(Object packet, String name) { for (Class<?> c = packet.getClass(); c != null; c = c.getSuperclass()) if (name.equals(c.getSimpleName())) return true; return false; }
+    private static boolean schedule(Session s, Runnable task) { return OpenMaverFeatures.callVoid(s.mc, "addScheduledTask", "func_152344_a", null, task); }
+    private static Object fieldByType(Object target, String name) {
+        if (target != null) for (Class<?> c = target.getClass(); c != null; c = c.getSuperclass()) for (Field f : c.getDeclaredFields()) if (name.equals(f.getType().getName())) try { f.setAccessible(true); return f.get(target); } catch (Exception ignored) { }
+        return null;
     }
+    static String pickBaseName(List<String> names) { return names != null && names.contains("packet_handler") ? "packet_handler" : null; }
 
-    private static double readPercent(Properties values, String key, double fallback) {
-        try { return percent(Double.parseDouble(values.getProperty(key)), fallback); }
-        catch (Exception ignored) { return fallback; }
+    public static void load(Properties p) {
+        stop(true);
+        String value = p.getProperty("velocity.zen.mode", "NoXZ");
+        mode = MODE_NOXZ;
+        for (int i = 0; i < MODE_NAMES.length; i++) if (MODE_NAMES[i].equalsIgnoreCase(value)) mode = i;
+        rotate = bool(p, "rotate", false); tryAttack = bool(p, "tryAttack", false);
+        movementOverride = bool(p, "movementOverride", false); followDirection = bool(p, "followDirection", false);
+        instantAttack = bool(p, "instantAttack", false); sprintStateCheck = bool(p, "sprintStateCheck", true);
+        rotateTicks = bounded(p, "rotateTicks", 12, 3, 20); attackAmount = bounded(p, "attackAmount", 5, 1, 20);
+        nextHookAttempt = tick;
     }
-
-    private static double percent(double value, double fallback) {
-        return Double.isNaN(value) || Double.isInfinite(value)
-                ? fallback : Math.max(0.0D, Math.min(100.0D, value));
+    private static boolean bool(Properties p, String key, boolean fallback) { return Boolean.parseBoolean(p.getProperty("velocity.zen." + key, String.valueOf(fallback))); }
+    private static int bounded(Properties p, String key, int fallback, int min, int max) {
+        try { return Math.max(min, Math.min(max, Integer.parseInt(p.getProperty("velocity.zen." + key)))); } catch (Exception ignored) { return fallback; }
     }
-
     public static String save() {
-        return "velocity.mode=" + mode + "\nvelocity.horizontal=" + horizontal + "\nvelocity.vertical=" + vertical
-                + "\nvelocity.slapExact=" + slapExact + "\nvelocity.slapCrosshair=" + slapCrosshair
-                + "\nvelocity.chatDebug=" + chatDebug + "\n";
+        return "velocity.zen.mode=" + MODE_NAMES[mode] + "\nvelocity.zen.rotate=" + rotate + "\nvelocity.zen.tryAttack=" + tryAttack
+                + "\nvelocity.zen.movementOverride=" + movementOverride + "\nvelocity.zen.followDirection=" + followDirection
+                + "\nvelocity.zen.rotateTicks=" + rotateTicks + "\nvelocity.zen.attackAmount=" + attackAmount
+                + "\nvelocity.zen.instantAttack=" + instantAttack + "\nvelocity.zen.sprintStateCheck=" + sprintStateCheck + "\n";
     }
     public static int getMode() { return mode; }
-    public static void setMode(int value) {
-        mode = validMode(value);
-        generation++;
-        attackWindow = 0;
-        resetActions();
-        status = "IDLE";
-        lastDebugState = null;
-        OpenMaverFeatures.markDirty();
-    }
-    public static long getSprintHits() { return sprintHits; }
-    private static int validMode(int value) {
-        return value >= MODE_SPRINT_HIT && value <= MODE_SLAP_ATTACK ? value : MODE_SLAP_ATTACK;
-    }
-    public static boolean getSlapExact() { return slapExact; }
-    public static boolean getChatDebug() { return chatDebug; }
-    public static void setChatDebug(boolean value) {
-        chatDebug = value;
-        lastDebugState = null;
-        OpenMaverFeatures.markDirty();
-    }
-    public static boolean getSlapCrosshair() { return slapCrosshair; }
-    public static void setSlapExact(boolean value) { slapExact = value; OpenMaverFeatures.markDirty(); }
-    public static void setSlapCrosshair(boolean value) { slapCrosshair = value; OpenMaverFeatures.markDirty(); }
+    public static void setMode(int v) { stop(true); mode = v >= 0 && v < MODES.length ? v : MODE_NOXZ; nextHookAttempt = tick; OpenMaverFeatures.markDirty(); }
+    public static String getSummary() { return MODE_NAMES[mode]; }
     public static String getStatus() { return status; }
-    public static double getHorizontal() { return horizontal; }
-    public static double getVertical() { return vertical; }
-    public static void setHorizontal(double value) {
-        horizontal = percent(value, 0.0D);
-        OpenMaverFeatures.markDirty();
-    }
-    public static void setVertical(double value) {
-        vertical = percent(value, 100.0D);
-        OpenMaverFeatures.markDirty();
-    }
-    public static boolean isPacketHookInstalled() {
-        return hookInstalled && hookPipeline != null && hookPipeline.context(AttackReducePacketHook.NAME) != null;
-    }
-    public static long getKnockbackApplied() { return KB_SEEN.get(); }
-    public static String getSummary() {
-        return mode == MODE_SLAP_ATTACK ? "SLAP ATTACK" : mode == MODE_SPRINT_HIT ? "SPRINT HIT"
-                : "SIMPLE H " + Math.round(horizontal) + "% / V " + Math.round(vertical) + "%";
-    }
+    public static long getSprintHits() { return attacks; }
+    public static long getKnockbackApplied() { return knockbacks; }
+    public static boolean isPacketHookInstalled() { Session s = session; return s != null && !s.closed && s.pipeline.context(AttackReducePacketHook.NAME) != null; }
+    public static boolean getRotate() { return rotate; }
+    public static void setRotate(boolean v) { rotate = v; OpenMaverFeatures.markDirty(); }
+    public static boolean getTryAttack() { return tryAttack; }
+    public static void setTryAttack(boolean v) { tryAttack = v; OpenMaverFeatures.markDirty(); }
+    public static boolean getMovementOverride() { return movementOverride; }
+    public static void setMovementOverride(boolean v) { movementOverride = v; OpenMaverFeatures.markDirty(); }
+    public static boolean getFollowDirection() { return followDirection; }
+    public static void setFollowDirection(boolean v) { followDirection = v; OpenMaverFeatures.markDirty(); }
+    public static int getRotateTicks() { return rotateTicks; }
+    public static void setRotateTicks(int v) { rotateTicks = Math.max(3, Math.min(20, v)); OpenMaverFeatures.markDirty(); }
+    public static int getAttackAmount() { return attackAmount; }
+    public static void setAttackAmount(int v) { attackAmount = Math.max(1, Math.min(20, v)); OpenMaverFeatures.markDirty(); }
+    public static boolean getInstantAttack() { return instantAttack; }
+    public static void setInstantAttack(boolean v) { instantAttack = v; if (!v) restoreTimer(); OpenMaverFeatures.markDirty(); }
+    public static boolean getSprintStateCheck() { return sprintStateCheck; }
+    public static void setSprintStateCheck(boolean v) { sprintStateCheck = v; OpenMaverFeatures.markDirty(); }
 }

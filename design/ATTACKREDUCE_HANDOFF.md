@@ -1,189 +1,106 @@
-# Velocity：Myau / Zen 参考移植
+# Velocity：OpenZen AntiKB 完整模式移植
 
-显示名 `Velocity`，实现类 `module.movement.AttackReduce`，开关及热键保持 `movement.attackreduce`。本轮修改前已备份工作区相关文件（包括此前未提交修改）：`/tmp/openmaver-velocity-before-reference-port.tar.gz`。
+## 来源与范围
 
-## 日志与来源
+来源是 `../OpenZen` 当前提交 `9577d2f` 中的以下文件（这些来源文件工作树干净）：
 
-用户的 2026-11-21 00:47 日志显示处理器已安装，随后发生 AntiKB、Simulation、GroundSpoof。这证明旧版直接缩放 S12 与服务端预测有差异；不是模块没有加载。
+- `src/main/java/shit/zen/modules/impl/combat/AntiKB.java`
+- `src/main/java/shit/zen/modules/impl/combat/antikb/{AntiKBMode,NoXZMode,JumpResetMode,MixMode}.java`
+- `src/main/java/shit/zen/modules/impl/combat/KillAura.java` 的攻击顺序和 Keep Sprint 默认行为
 
-本次实际读取的参考仓库：
+按用户要求，移除了 Maver 的 SPRINT HIT / SIMPLE / SLAP ATTACK 状态机、百分比缩放、动作闸门、冲刺同步窗口及对应测试。保留模块类 `module.movement.AttackReduce`、显示名 `Velocity` 和配置键 `movement.attackreduce`，避免破坏开关与热键。
 
-| 来源 | 采用部分 | 本工程对应 |
+`mc/AttackReduceFeature.java` 是 Minecraft 1.8.9 适配层；`mc/antikb/` 中三个模式实现 Zen 状态机。项目使用默认 package，目录仅组织源码。Java 8 字节码由现有 CMake 构建流程生成，再经过 MCP → SRG 重映射。
+
+## 三模式
+
+| 模式 | 触发与队列 | 释放与动作 |
 | --- | --- | --- |
-| `../OpenMyau-Fix/src/main/java/myau/module/modules/Velocity.java:279` | `Slap_Attack` 的多 tick 攻击、C0A→C02、XZ×0.6、结束冲刺 | `AttackReduceFeature.updateSlapAttack` |
-| 同文件 `:302`、`:419` | SEND 动作标记、C03 清空 `badPackets` | `noteOutbound`、`hasBadPackets` |
-| 同文件 `:397` | S12 水平幅度表及回归公式 | `calculateSlapTicks` |
-| `../OpenZen/src/main/java/shit/zen/modules/impl/combat/antikb/NoXZMode.java:267` | Aura 目标优先、准星目标回落 | `velocityAuraTarget`、`updateSlapAttack` |
-| 同文件 `:274`、`:425` | 生存/目标验证和单次攻击减速的职责分离 | 目标/玩家检查；原始 C02 后只减速一次 |
+| NoXZ（默认） | 自己的正 Y S12；地面、有效目标、疾跑时直接施加原包并安排攻击，否则挂起原包、部分入站包及 C03 | 落地可攻击时先回放击退再攻击，其余包在输入后的 Motion 阶段回放；12 tick 超时释放；位置校正后冷却 2 tick |
+| Jump Reset | 自己的 S12；除聊天/时间包外的入站暂存 | 地面 10 tick / 空中 20 tick 倒计时结束后的下一 tick 释放；空中落地提前释放；地面分支跳一次，可转向/跟随方向 |
+| Mix | 正 Y S12 及实体移动、事务、实体传送包 | 落地或连续空中 24 tick 释放；受伤跳跃、前 3 tick 方向接管、可选 Aura 双击 |
 
-OpenZen 的 `gradle.properties` 明确为 Minecraft 1.20.1，原版 NoXZ 还会挂包、等待落地、改变计时。本工程移植的是上述目标选择和攻击减速结构；不是完整 NoXZ 移植，也没有宣称实现原版 Jump Reset/Mix。
+NoXZ 的目标顺序为 Aura 已选目标 → 准星存活生物，眼睛到目标 AABB 距离 ≤ 3.7。每次攻击先退出疾跑，再调用原版 controller，随后挥手；原先疾跑则只手动执行一次 XZ×0.6，Y 保持。1.8 控制器的疾跑减速因此不重复执行。
 
-## 默认 SLAP ATTACK（mode=2）
+Mix 记录受击时的 `wasSprinting`，默认按 Zen `keepSprint=true` 处理：双击的每一次都先退出疾跑，再按快照执行 XZ×0.6，最后攻击目标。Maver Aura 没有 Keep Sprint 设置，本次固定采用 Zen 默认值；复用现有目标，不移植整个现代 Aura 的多目标、反机器人和攻击特效子系统。
 
-1. Netty 保留本地 S12 的所有字段；vanilla 将处理任务排入主线程后，模块再排入开窗任务。开窗核对模块、模式、世代、玩家/世界及处理器实例。
-2. 输入 `hypot(motionX, motionZ)` 使用 S12 原始整数，单位为 1/8000；不是先除以 8000。水平为零的包不触发额外攻击。
-3. tick START（Aura 选目标之后、原版 C03 之前）消耗一 tick 窗口并尝试一次攻击。窗口可跨多个 tick，每次需要重新满足冲刺及动作条件。
-4. 攻击顺序为 `C0APacketAnimation → C02PacketUseEntity(ATTACK) → motionXZ *= 0.6 → setSprinting(false)`。不调用 `PlayerControllerMP.attackEntity`，以免它额外执行原版减速；不修改 motionY、onGround 或 serverSprintState。
+## 依赖映射和接线
 
-默认幅度表：
-
-| 水平幅度上界 | tick |
+| OpenZen 1.20.1 | OpenMaver 1.8.9 |
 | --- | --- |
-| 500 | 3 |
-| 1000 / 2000 | 4 |
-| 3000 | 5 |
-| 4000 / 5000 | 6 |
-| 6000 / 7000 | 7 |
-| 8000 / 9000 | 8 |
-| 超过 9000 | 9 |
+| ClientboundSetEntityMotionPacket | S12PacketEntityVelocity，仍为 1/8000 单位 |
+| ServerboundMovePlayerPacket | C03PacketPlayer 及 C04/C05/C06 子类 |
+| ClientboundMoveEntityPacket | S14PacketEntity 及其子类 |
+| ClientboundPingPacket | S32PacketConfirmTransaction（旧协议的同步事务；非同构消息） |
+| ClientboundTeleportEntityPacket | S18PacketEntityTeleport |
+| ClientboundPlayerPositionPacket | S08PacketPlayerPosLook |
+| Chat / Time / HurtAnimation / Animate | S02 / S03 / S19 / S0B；NoXZ 仅放行其他实体的 S0B |
+| ReceivePacketEvent | Netty 入站 → Minecraft 主线程 → 模式 → processPacket/func_148833_a |
+| Tick / Sprint | ClientTickEvent.START，位于 Aura/AutoSprint 更新之后 |
+| Strafe / GameTick 输入 | ScaffoldMovementInput，原版输入更新后、移动计算前 |
+| Motion PRE | 输入回调末尾；tick END 另作回放兜底 |
+| RotationHandler | 输入回调写入连续 yaw/pitch 和 MoveFix；tick END 恢复相机，保留鼠标增量 |
+| ZenClient.serverTickRate | Minecraft.timer.timerSpeed / field_74278_d；恢复接管前的倍率 |
+| StuckInBlock 的蛛网观测 | 1.8 Entity.isInWeb / field_70134_J |
 
-关闭 `SLAP EXACT` 时使用 Myau 公式：`clamp(round(6.43153527E-4 * magnitude + 2.9419087136), 1, 10)`。表采用参考项目默认值，未移植它的 11 个独立 tick 滑块。
+NoXZ 原源码把 ServerboundMovePlayerPacket 分支写在 ReceivePacketEvent 中；本次将其接到真正的 Netty `write` 路径。缓存原始 C03 和 ChannelPromise，eventLoop 按 FIFO 回放；断线失败结束 promises。计时直接接到 1.8 Timer，避免只修改无消费者的静态值。
 
-攻击条件及本地适配：
+Jump Reset 的 NoFall/Backtrack 联动检查对应活动状态（NoFall boost 字段，Backtrack isActive/isBacktracking），缺失模块时自然为 false。FireballBlink/HighJump/Stuck 等依赖通过模块名查询，不引入现代 Minecraft 类。
 
-- 本地 `isSprinting/func_70051_ag` 和 `serverSprintState/field_175171_bO` 均为真；movementInput 前进或横移非零。冲刺由玩家/AutoSprint 正常提供。
-- 优先使用 Aura 已选且旧视角瞄准条件已满足的目标，否则按设置回落到准星实体。必须存活、可见、当前 3 格射线命中实际 AABB。相比 Zen 原值 3.7，本工程按 1.8 的 3 格限制；不使用其扩大距离。
-- 不要求目标 `hurtTime=0`，这与 Myau Slap_Attack 一致；原 SPRINT HIT 仍保留该限制。
-- 无 GUI、未使用物品、未骑乘、未在蛛网/水/熔岩、无手动左右键操作。搭路、箱子及 Criticals 模块启用时让位。
-- Aura 和 AutoClicker 可启用；仅本 tick 已实际发生攻击/右键/放置时让位。`velocityActionUsedThisTick` 补上 Netty 尚未观察到的主线程动作。Aura 的新转向没有就绪时不拿它的目标提前发攻击。
+## 生命周期适配
 
-## SEND 动作闸门与线程
+- 模式判断、世界和目标访问仅发生在 Minecraft 主线程。Netty 负责转交入站包、保存/释放出站包。
+- Packet 保存所属 player/world/handler。旧世界的挂起队列丢弃，同连接模式切换则回放一次。S07 重生显式识别同连接世界切换，保留紧随重生、已经排入主线程的新世界包。
+- 禁用、切模式、位置校正、重生会释放当前连接队列并恢复计时/相机。断线终止未完成的出站 promises。
+- 入站/出站队列各设 4096 包上限，达到时强制释放。安装失败每 20 tick 重试；外部移除 hook 时清队列并重装。
+- 死亡、观察者、飞行、水/熔岩、燃烧、梯子、睡眠和蛛网时释放并跳过模式处理。这一公共保护把 Zen NoXZ 的环境检查用于三模式，替换 Mix 的蛛网事件依赖。
+- 转向让位于 Scaffold/GodBridge/Aura；输入直接改 MovementInput，不持有 KeyBinding。潜行 MoveFix 保留原版 0.3 输入幅度。
+- NoXZ 正常超时先释放原始速度，余包留到 Motion；关闭/校正等终止路径立即完成剩余回放，避免队列在 reset 时丢失。
 
-`AttackReducePacketHook.write` 观察原包并直接转发，标记：C09 换槽、C0A 挥手、C02 ATTACK、C08 放置、C07 挖掘、C0D/C0E 背包动作、C16 OPEN_INVENTORY。C02 INTERACT 与 C16 REQUEST_STATS 不标记。C03 及 C04/C05/C06 子类清空已观察动作。
+这些是协议、线程和事件系统适配；游戏物理与服务器行为仍需端到端验证。
 
-主线程与 Netty 共用锁保护的动作状态。模块发送前预约自己的 C02 对象，只有观察到该 C02 及随后的 C03 才释放；此前延迟的 C03 不会放掉尚未写出的预约。部分发包失败时停止窗口、保留失败状态和预约，避免反复补攻击。重新启用、切模式、世界/连接变化会重置。
+## 参数与配置
 
-处理器按实例隔离，旧连接或旧处理器的迟到 SEND/开窗回调不影响新实例。管线外部移除后每 20 tick 重试安装。此观察点位于 Netty SEND，不等同于 Myau 的主线程 `NetworkManager.sendPacket` Mixin；本工程用自身模块的主线程动作标记补偿异步窗口，未对其它第三方模组注入 SEND 入口。
+配置版本为 20。旧 `velocity.*` / `attackreduce.*` 参数在升级时清除；模块开关/热键 `movement.attackreduce` 不变。新模式使用字符串，避免历史数值编号误映射。
 
-## 其它模式与配置
-
-| 键 | 默认值 | 含义 |
+| velocity.zen. 后缀 | 默认值 | 范围 / 生效模式 |
 | --- | --- | --- |
-| `velocity.mode` | 2 | 0=SPRINT HIT；1=SIMPLE；2=SLAP ATTACK |
-| `velocity.slapExact` | true | 使用幅度表；false 使用回归公式 |
-| `velocity.slapCrosshair` | true | Aura 无目标时回落准星；false 仅 Aura |
-| `velocity.horizontal` | 0 | SIMPLE 水平百分比 |
-| `velocity.vertical` | 100 | SIMPLE 垂直百分比 |
+| mode | NoXZ | NoXZ / Jump Reset / Mix |
+| attackAmount | 5 | 1–20，NoXZ |
+| instantAttack | false | NoXZ：等待 0.5×，累积最多 3，执行 4× |
+| sprintStateCheck | true | NoXZ |
+| rotate | false | Jump Reset / Mix |
+| followDirection | false | Jump Reset |
+| rotateTicks | 12 | 3–20，Jump Reset |
+| tryAttack | false | Mix |
+| movementOverride | false | Mix |
 
-配置版本升至 19，升级旧版本时选择 SLAP ATTACK；保留开关、键位和 SIMPLE 百分比。v19 保存后的模式选择正常往返。
+## 验证和产物
 
-SPRINT HIT（0）保留旧实现：应用 S12 后 6 tick 内最多一次 `swingItem → controller.attackEntity`，由原版减速，保留目标 hurtTime 和其它动作模块限制。SIMPLE（1）保留直接缩放本地 S12；用户现有 Grim 报错来自这条路径。S27、他人 S12、移动和事务包正常转发。
-
-GUI 显示模式、PACKET/WAITING、KB/HIT 和原因；常见状态为 `WAIT SPRINT SYNC`、`NOT MOVING`、`NO TARGET`、`OTHER ACTION`、`BAD PACKETS`、`HIT`、`EXPIRED`、`SEND FAILED`。HIT 表示客户端减速执行完成，不代表服务器接受该次行为。
-
-## 验证与回滚
-
-运行 `cmake --build build -j2` 和 `tools/attackreduce-test/run.sh`。测试使用 Minecraft 替身及真实 Netty 4.0.23.Final，验证包字段、主线程顺序、幅度阈值、重复减速、动作分类、异步预约、Aura 协作、部分失败、实例隔离、配置和重连。具体本轮回执见下一节。
-
-UNRESOLVED：尚未运行目标服务器/Grim 的端到端验证，当前产物不等同于已证实的 Grim 绕过。
-
-修改文件：`mc/AttackReduceFeature.java`、`mc/AttackReducePacketHook.java`、`mc/OpenMaverFeatures.java`、`mc/GuiOpenMaverClickGui.java`、测试目录、README 与本文件。新增测试：`tools/attackreduce-test/AttackReduceSlapTest.java`。
-
-在仓库根目录回滚本轮（还原到本轮开始前的工作区状态）：
+构建与验证命令：
 
 ```sh
-tar -xzf /tmp/openmaver-velocity-before-reference-port.tar.gz && rm -- tools/attackreduce-test/AttackReduceSlapTest.java && cmake --build build -j2
-```
-
-## 本轮执行回执
-
-VERIFIED：`cmake --build build -j2 > /tmp/openmaver-velocity-reference-build.log 2>&1 && tools/attackreduce-test/run.sh > /tmp/openmaver-velocity-reference-tests.log 2>&1` 返回 exit 0。
-
-以下是本次实际查询日志的字面输出：
-
-```text
-rg 'Test:|Exception|Assertion' /tmp/openmaver-velocity-reference-tests.log
-AttackReduceHookTest: 122 passed, 0 failed
-AttackReduceSprintHitTest: 64 passed, 0 failed
-AttackReduceSlapTest: 134 passed, 0 failed
-AttackReduceInstallTest: 5 passed, 0 failed
-```
-
-共 325 项通过。包含处理器外部移除后的即时状态变化、旧回调隔离和孤立预约清理。
-
-```text
-tail -4 /tmp/openmaver-velocity-reference-build.log
-[100%] 打包 openmaver-mc.jar（运行期注入用）
-[100%] Built target openmaver_mc_jar
-[100%] 打包 openmaver-mod.jar（可直接放入 mods/）
-[100%] Built target openmaver_mod
-```
-
-产物 `build/openmaver-mod.jar`，SHA-256：
-
-```text
-sha256sum build/openmaver-mod.jar
-1b247fa9fde6923bb165cbb4c582868dcc8bb944372737da3b89f6d3ba4df2de  build/openmaver-mod.jar
-```
-
-VERIFIED：`javap -verbose build/mc-classes-reobf/AttackReduceFeature.class` 的字节码版本切片为 `major version: 52`（Java 8）。完整日志保存在上述 `/tmp` 路径。
-
-## 2026-11-21 实战失效定位与聊天调试
-
-本轮发现的直接阻断点：`updateSlapAttack` 将 `Mouse.isButtonDown(0)` 和右键一并视为 `PLAYER BUSY`，在减速前返回。3–9 tick 窗口仍逐 tick 消耗，持续按住左键可以使整份 S12 窗口从未减速就结束。旧 `SPRINT HIT` 也有这个条件；原回归用例将 `manual click` 下速度不变视为预期行为，所以原 325 项全通过并不覆盖“战斗按住左键时应产生额外减速”的需求。
-
-本次读取当前 Prism 实例 `1.8.9(1)/minecraft/config/openmaver.properties`：`velocity.mode=2`、`autoclicker.requireHold=true`、`killaura.requirePress=true`。两个攻击模块都可能要求按住左键，而 Velocity 同时因左键按下退出。13:25:32 的实例日志确认 Velocity 已启用且包处理器安装成功；13:26:16 又启用了 AutoClicker。旧实例日志没有逐次受击的阻断状态，具体那次实战需由新调试日志核对。
-
-本轮只增加观测，保留原减速和动作条件用于对照。新增 ClickGUI `CHAT DEBUG`，默认开启，持久化键 `velocity.chatDebug`。输出两行：
-
-```text
-[Maver] Velocity before(x:0.4000 y:0.3600 z:-0.2000) after(x:0.4000 y:0.3600 z:-0.2000)
-[Maver] Velocity mode=SLAP ATTACK reason=PLAYER BUSY window=5 left=true right=false sprint=true sentSprint=true actions=0 localAction=false modules=none
-```
-
-SLAP / SPRINT HIT 的 before/after 是同一次尝试前后的本地速度，避免把后续摩擦/重力误认为模块减速。SIMPLE 则报告同一份 S12 原始值和实际缩放后的整数值 /8000。每份本地 S12 重新开始诊断；首次阻断、原因/上下文变化、每次 HIT 和窗口结束会显示，同状态连续阻断不逐 tick 刷屏。最后一条保留阻断原因并标 `expired=true`，不被 HUD 的 `EXPIRED` 覆盖。纯垂直 S12 报告 `NO HORIZONTAL KB`。
-
-全部聊天在主线程通过 `ChatComponentText` + `addChatMessage/func_145747_a` 本地显示，并同步写 `Logger`。SIMPLE 的聊天回调同样校验世代、模式、玩家、世界和 hook 实例；其它实体不输出，聊天显示失败不影响减速。
-
-修改路径：`mc/AttackReduceFeature.java`、`mc/GuiOpenMaverClickGui.java`、`tools/attackreduce-test/AttackReduceSprintHitTest.java`、`tools/attackreduce-test/AttackReduceHookTest.java`、`tools/attackreduce-test/run.sh`、`README.md`、本文件。新增 `tools/attackreduce-test/AttackReduceChatDebugTest.java` 和 `tools/attackreduce-test/net/minecraft/util/ChatComponentText.java`。
-
-回滚已有文件：`tar -xzf /tmp/openmaver-before-velocity-chat-debug.tar.gz`；两个新增文件只被测试 runner 使用，回滚 runner 后不参与构建。
-
-VERIFIED：`cmake --build build -j2 > /tmp/openmaver-velocity-chat-build.log 2>&1 && tools/attackreduce-test/run.sh > /tmp/openmaver-velocity-chat-tests.log 2>&1` 返回 exit 0。实际输出切片：
-
-```text
-AttackReduceHookTest: 122 passed, 0 failed
-AttackReduceSprintHitTest: 64 passed, 0 failed
-AttackReduceSlapTest: 134 passed, 0 failed
-AttackReduceInstallTest: 5 passed, 0 failed
-AttackReduceChatDebugTest: 25 passed, 0 failed
-```
-
-共 350 项通过。新增用例实际复现：同样的 `.4/.36/-.2` 击退，按住左键时整窗口保持不变，松开后在同一窗口变为 `.24/.36/-.12`。另覆盖 SIMPLE 原包/实际截断值、区域小数格式、显示失败、旧模式/旧世界回调、调试开关和纯垂直包。
-
-VERIFIED：读取本机 Forge 1.8.9 的真实 `deobfuscation_data-1.8.9.lzma` 映射包含 `EntityPlayerSP/func_145747_a (Lnet/minecraft/util/IChatComponent;)V` 和 `ChatComponentText` 类。构建 jar 中为 Java 8 字节码，包含 `velocity.chatDebug` 与 `func_145747_a`，未打入测试 ChatComponentText 替身。
-
-本轮 `build/openmaver-mod.jar` SHA-256：`d0433bdbe03b4e7ac99adf6b4ff81cc348cd9ecc4881e6afa86d0c10ccbc6f0a`。
-
-## 2026-11-21 用户实战回执与修复
-
-用户提供的 13:46:22 与 13:46:25 回执两次均是 `reason=WAIT SPRINT SYNC`、`sprint=false sentSprint=false`，窗口从 5 tick 到期；`left/right=false`、`actions=0`、`modules=none`。因此首轮假设的鼠标阻断与该次实战不符。实例配置 `sprint.onlyForward=true`；AutoSprint 的主线程逻辑在 `moveForward <= 0` 时直接返回。旧诊断没有记录方向输入，不能仅从回执确认是否后退/横移，还是 sneak/item 条件；本轮新增 `forward/strafe/sneak/usingItem/autoSprint/onlyForward` 字段以精确区分。
-
-修复：`SLAP ATTACK` 窗口内，完成现有 GUI、生存、物品、骑乘、环境和其它动作检查后，先确认有前进或横移输入且未潜行；若本地 `isSprinting=false`，调用本地 `setSprinting(true)` 并显示 `REQUEST SPRINT SYNC`，本 tick 不攻击。由 vanilla `EntityPlayerSP` 移动更新将本地状态变化编码成正常的 `C0BPacketEntityAction START_SPRINTING`，并更新 `serverSprintState`。后续 tick 仍等待本地及同步标志都为真才攻击；不手动发 C0B、不改同步字段、不修改 S12。这样在 Velocity 的短击退窗口中，即使 AutoSprint 关闭或 `ONLY FORWARD=true` 时玩家后退/横移，也能请求 vanilla 冲刺同步。静止、潜行、使用物品仍不会请求；后退/横移行为需要目标服务器端到端观察确认。
-
-回归新增覆盖：AutoSprint 关闭、`ONLY FORWARD=true`、后退+横移、首 tick 只请求 sprint 且速度未变、观测同步后下一 tick 减速攻击，以及潜行时不请求。原 350 项加本次 6 项，共 356 项通过。
-
-VERIFIED：本轮重新构建与回归命令：
-
-```text
 cmake --build build -j2
-[100%] Built target openmaver_mc_jar
-[100%] Built target openmaver_mod
-
 tools/attackreduce-test/run.sh
-AttackReduceHookTest: 122 passed, 0 failed
-AttackReduceSprintHitTest: 64 passed, 0 failed
-AttackReduceSlapTest: 134 passed, 0 failed
-AttackReduceInstallTest: 5 passed, 0 failed
-AttackReduceChatDebugTest: 31 passed, 0 failed
+tools/godbridge-test/run.sh
+tools/scaffold-test/run.sh
+git diff --check
 ```
 
-共 356 项通过；`git diff --check` 通过。构建 jar 字节码为 Java 8（major version 52），测试替身未打入 jar。
+行为测试使用真实 Netty 4.0.23.Final EmbeddedChannel 与 Minecraft 主线程队列替身，覆盖三模式、原包回放、C03 FIFO/promises、攻击顺序和减速次数、超时/落地、静默相机、潜行输入、Timer 恢复、配置往返、模式切换、断线、重生、旧世界隔离与队列上限。VERIFIED：`ZenAntiKBTest: 4224 passed, 0 failed`，命令 exit 0。覆盖出站 promise 取消和出站队列上限。该结果来自替身环境。
 
-修复版已安装到 `/home/zty/.local/share/PrismLauncher/instances/1.8.9(1)/minecraft/mods/OpenMaver.jar`。VERIFIED：`sha256sum build/openmaver-mod.jar '/home/zty/.local/share/PrismLauncher/instances/1.8.9(1)/minecraft/mods/OpenMaver.jar'` 两者均为 `2a44648b1f65bb464cbbb3120c1d2a3e4340598e7860355142c1dd34c54ea9ac`。覆盖前安装包备份在 `/tmp/openmaver-mod-before-velocity-sprint-fix.jar`，SHA-256 为 `e5acd1fd39a792e966d1544a482e7203947eac78834d23403ef18fa065ab3dad`；单文件回滚命令：
+Scaffold 回归有两项已有的 HUD 文本常量断言失败：要求紫色 BAR_FILL 和 196 宽，HEAD 实际为白色和 160 宽。`mc/ScaffoldHud.java` 与该测试文件均未改动，其他 86 项通过；从 HEAD 提取所读源码后重跑，也复现同样 86/88 和两项 HUD 失败。基线回执在 `/tmp/openmaver-zen-scaffold-baseline.log`；GodBridge 73 项通过。此处保留原断言，避免把 Velocity 任务扩展成 HUD 外观改动。
+
+VERIFIED：`cmake --build build -j2` 输出 `[100%] Built target openmaver_mod`，exit 0；`git diff --check` exit 0。两个 jar 均包含三模式的 Java 8 / SRG 类，未包含测试或 Minecraft stub 类。
+
+产物：`build/openmaver-mod.jar`（Forge mods）和 `build/openmaver-mc.jar`（注入集成）。UNRESOLVED：游戏内视觉、真实物理及服务器反击退效果，尚无本次实测回执。
+
+## 回滚
+
+所有修改前的已有文件保存在 `/tmp/openmaver-zen-port-backup/`，相对路径加 `.bak`。例：
 
 ```sh
-cp /tmp/openmaver-mod-before-velocity-sprint-fix.jar '/home/zty/.local/share/PrismLauncher/instances/1.8.9(1)/minecraft/mods/OpenMaver.jar'
+cp /tmp/openmaver-zen-port-backup/mc/AttackReduceFeature.java.bak mc/AttackReduceFeature.java
 ```
 
-UNRESOLVED：尚无安装此修复版后的服务器实战日志。下一次受击时重点检查是否先出现 `REQUEST SPRINT SYNC`，随后 `sentSprint=true` 并出现 `HIT`；若窗口仍以 `WAIT SPRINT SYNC` 到期，新诊断中的 `forward`、`strafe`、`sneak`、`usingItem` 可确定阻断条件。
+完整源码回滚：`python3 /tmp/openmaver-zen-port-backup/rollback.py`；它恢复备份并删除本次新增模式/测试文件。随后重新构建。备份位于临时目录，跨重启保留情况由本机管理。

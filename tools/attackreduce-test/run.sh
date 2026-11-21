@@ -2,10 +2,9 @@
 # ---------------------------------------------------------------------------
 # AttackReduce 包层测试：用真实 netty-all 4.0.23.Final（MC 1.8.9 自带版本）的
 # EmbeddedChannel 驱动 AttackReducePacketHook，验证：
-#   - 默认 SLAP ATTACK：幅度窗口、单次 .6 减速、重复攻击、动作闸门与 Aura 协作
-#   - SPRINT HIT：S12 原样、vanilla 应用后开窗、原版攻击减速、失败条件
-#   - SIMPLE 百分比缩放；他人包、关闭状态、移动/事务包正常放行
-#   - 模式及百分比持久化和输入边界
+#   - Zen NoXZ / Jump Reset / Mix 主线程状态机、原始击退回放
+#   - 输入/静默转向、时间倍率、包序、释放与断线清理
+#   - Zen 参数持久化与旧配置迁移
 #   - 真实 Netty pipeline 的安装位置、重连与自愈
 #
 # 用法：
@@ -47,13 +46,5 @@ echo "[attackreduce-test] netty: $netty_jar"
 javac -source 8 -target 8 -Xlint:-options -encoding UTF-8 -cp "$classpath" -d "$out_dir" \
     $(find "$test_src" -name '*.java')
 
-echo "[attackreduce-test] 1/5 SIMPLE 包层行为（EmbeddedChannel）"
-java -cp "$out_dir:$classpath" AttackReduceHookTest
-echo "[attackreduce-test] 2/5 SPRINT HIT 主线程时序与原版攻击"
-java -cp "$out_dir:$classpath" AttackReduceSprintHitTest
-echo "[attackreduce-test] 3/5 SLAP ATTACK 参考机制/动作闸门/Aura 协作"
-java -cp "$out_dir:$classpath" AttackReduceSlapTest
-echo "[attackreduce-test] 4/5 管线安装/重连（真实 Netty channel）"
-java -cp "$out_dir:$classpath" AttackReduceInstallTest
-echo "[attackreduce-test] 5/5 聊天调试/按键冲突/主线程隔离"
-java -cp "$out_dir:$classpath" AttackReduceChatDebugTest
+echo "[attackreduce-test] OpenZen NoXZ / Jump Reset / Mix"
+java -cp "$out_dir:$classpath" ZenAntiKBTest

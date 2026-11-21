@@ -14,6 +14,7 @@ public class S12PacketEntityVelocity {
         this.field_149414_d = (int) (z * 8000.0D);
     }
     public int getEntityID() { return field_149417_a; }
+    public void func_148833_a(net.minecraft.network.NetHandlerPlayClient handler) { handler.process(this); }
     public int getMotionX() { return field_149415_b; }
     public int getMotionY() { return field_149416_c; }
     public int getMotionZ() { return field_149414_d; }
