@@ -1,0 +1,15 @@
+import io.netty.channel.ChannelDuplexHandler;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelPromise;
+
+/** 出站直接使用 ctx.write，原包只经过一次管线，补发的 C0B 也不重入当前钩子。 */
+public final class MoveDisablerPacketHook extends ChannelDuplexHandler {
+    static final String NAME = "openmaver_movedisabler";
+
+    @Override
+    public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
+        if (!MoveDisablerFeature.captureOutbound(this, ctx, msg, promise)) {
+            ctx.write(msg, promise);
+        }
+    }
+}

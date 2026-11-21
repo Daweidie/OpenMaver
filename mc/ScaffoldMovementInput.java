@@ -28,6 +28,8 @@ public final class ScaffoldMovementInput extends MovementInputFromOptions {
     @Override
     public void updatePlayerMoveState() {
         super.updatePlayerMoveState();
+        // 容器移动必须在原版清零之后采样，再交给后续 MoveFix / Velocity。
+        InventoryMoveFeature.afterMovementInput(this);
         ScaffoldFeature.afterMovementInput(this);
         // 神桥复用同一个 hook：它的 aim 与 MoveFix 也必须落在 moveFlying() 之前。
         GodBridgeFeature.afterMovementInput(this);

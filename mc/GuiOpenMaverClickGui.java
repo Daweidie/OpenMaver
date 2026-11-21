@@ -4263,6 +4263,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                             + "  ·  KB " + AttackReduceFeature.getKnockbackApplied()
                             + " / HIT " + AttackReduceFeature.getSprintHits() + "  ·  " + AttackReduceFeature.getStatus();
                 }
+                if ("MoveDisabler".equals(module.getName())) {
+                    return "INVENTORY MOVE  ·  "
+                            + (InventoryMoveFeature.isMovementHookInstalled() ? "READY" : "WAITING");
+                }
                 return module.getConfigKey().toUpperCase(Locale.ROOT);
             }
             return "";

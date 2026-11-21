@@ -117,6 +117,10 @@
 
   // 杂项模块
   "misc": {
+    "movedisabler": {
+      "enabled": false,        // 背包/箱子界面移动，附带冲刺期间的窗口包处理
+      "key": ""                // 默认不占用按键
+    },
     "fakeplayer": {
       "enabled": false,        // 假人玩家：默认关闭（按 N 生成/移除假人）
       "key": "N"               // 绑定键位（按 N 切换）

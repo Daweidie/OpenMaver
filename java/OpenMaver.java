@@ -11,6 +11,7 @@ import module.movement.Scaffold;
 import module.movement.Scaffold2;
 import module.movement.AttackReduce;
 import module.misc.FakePlayer;
+import module.misc.MoveDisabler;
 import module.player.ChestStealer;
 import module.player.FastPlace;
 import module.render.ChestEsp;
@@ -327,6 +328,9 @@ public final class OpenMaver {
 
         // 杂项模块：FakePlayer 假人玩家（配置路径 misc.fakeplayer；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new FakePlayer());
+
+        // 杂项模块：冲刺期间的窗口操作包序（配置路径 misc.movedisabler）。
+        ModuleManager.register(new MoveDisabler());
 
         // 渲染模块：Target HUD 目标信息面板（配置路径 render.targethud；MC 侧绘制在 mc/TargetHud）
         ModuleManager.register(new TargetHud());

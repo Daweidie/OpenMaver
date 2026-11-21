@@ -1113,6 +1113,25 @@ IO 失败只记录一次并自动停用 debug。
 - 未移植 Myau 的 AutoBlock / Blink / BackTrack / Teams 等重型逻辑，以稳定、可编译、
   不高频刷包为优先。
 
+### MoveDisabler 背包/箱子界面移动
+
+- 从上一级 `MoveDisabler/MoveDisabler.java` 移植，位于 ClickGUI 的 **Misc** 分类，
+  显示为 **Move Disabler**；配置路径 `misc.movedisabler`，默认关闭、无默认热键。
+- 开启后在背包、箱子等容器界面内按实际绑定的方向键移动，支持跳跃和潜行；
+  默认是 WASD、Space、Shift。每 tick 在原版输入更新后读取物理按键，松键立即停止，
+  不修改全局 KeyBinding 状态。聊天、菜单、ClickGUI，以及聚焦的容器搜索/重命名框
+  不接管移动；窗口失焦时清空容器移动输入。保留原版容器鼠标点击与拖动物品行为。
+- 输入钩子与网络钩子独立，复用 Scaffold / GodBridge / Velocity 的输入回调位置。
+- 玩家正在冲刺时，发送 `C0E`（点击窗口）或 `C0D`（关闭窗口）会依次发出
+  `C0B STOP_SPRINTING → 原窗口包 → C0B START_SPRINTING`。保持本地冲刺状态，
+  原窗口包只发送一次；步行时和其他包均原样发送。覆盖手动操作与 Chest Stealer。
+- 网络钩子独立于 Velocity，支持离开世界卸载、重连和钩子丢失后重装；Velocity
+  暂存出站包时，窗口包先随队列保序回放，再执行冲刺包裹。该行为不保证特定反作弊版本的结果。
+- 构建后运行 `bash tools/movedisabler-test/run.sh`，使用真实 Netty 4.0.23 验证包序、
+  原包引用与 promise、禁用/重连清理、写入失败和两种模块安装顺序下的 Velocity 队列共存；
+  另用物理按键替身驱动真实共享输入钩子，覆盖容器移动、改键、松键、窗口失焦、
+  文本框聚焦、禁用、重生和普通游戏输入恢复。
+
 ### FakePlayer 假人玩家
 
 - 配置路径：`misc.fakeplayer`，默认关闭，默认键位 **N**。
