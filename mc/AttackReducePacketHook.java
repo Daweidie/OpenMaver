@@ -2,7 +2,7 @@ import io.netty.channel.ChannelDuplexHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
 
-/** Zen ReceivePacketEvent 主线程入口，以及 NoXZ 出站移动包队列。 */
+/** Zen ReceivePacketEvent 主线程入口及出站观测；队列由适配层显式接管。 */
 public final class AttackReducePacketHook extends ChannelDuplexHandler {
     static final String NAME = "openmaver_attackreduce";
     volatile ChannelHandlerContext context;

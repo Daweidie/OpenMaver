@@ -200,7 +200,7 @@ public final class OpenMaverFeatures {
     /**
      * 攻击节奏模式：
      * <ul>
-     *   <li>{@link #ATTACK_MODE_FULL_CHARGE}：按武器 1.9+ 冷却打满蓄力，单次 1.0 倍；</li>
+     *   <li>{@link #ATTACK_MODE_FULL_CHARGE}：按武器 1.9+ 冷却估算攻击间隔；</li>
      *   <li>{@link #ATTACK_MODE_FASTEST}：只按 10 tick 无敌帧节流，约 2 次/秒，
      *       单次倍率较低但近战对拼时压迫感更强；</li>
      *   <li>{@link #ATTACK_MODE_VANILLA}：原版 C0A -> C02 顺序 + 旧版节流，
@@ -213,6 +213,7 @@ public final class OpenMaverFeatures {
     private static final String[] ATTACK_MODE_KEYS = {"full", "fast", "vanilla"};
     private static final String[] ATTACK_MODE_NAMES = {"FULL CHARGE", "FASTEST", "VANILLA"};
     private static int autoclickerAttackMode = ATTACK_MODE_FULL_CHARGE;
+    private static boolean entityAttackUsedThisTick;
     private static boolean autoclickerHumanize = true;
 
     /** 旧版防击退模块（Velocity）遗留的配置键后缀，v13 迁移时搬到 attackreduce.*。 */
@@ -424,6 +425,7 @@ public final class OpenMaverFeatures {
      * 本阶段注入的 C02/C08 也出现在同一条 C03 之前，满足 Grim Post 的顺序要求。
      */
     public static void onTickStart(Minecraft mc) {
+        beginAttackTick();
         // 先重置本 tick 的鼠标动作状态。AutoClicker 必须在 vanilla 发送 C03
         // 移动包之前执行：Grim 的 Post 检查要求 C02/C08 出现在移动包之前，
         // 放到 END 阶段注入会被服务端以 “failed Post: attack/place” 拒绝。
@@ -840,14 +842,13 @@ public final class OpenMaverFeatures {
             OpenMaverDebug.noticeOnce("autoclicker.leftCounter",
                     "cannot reset leftClickCounter; clicks may be throttled by vanilla");
         }
-        // 现代服务端（1.19.2+）收到任何挥击动画都会清空 AttackStrengthTicker
-        // （MC-255058）。1.8 的 clickMouse 顺序是 C0A -> C02，导致 C02 结算时
-        // 蓄力永远是 0，只能打出 0.2~0.4 倍伤害。FULL CHARGE / FASTEST 模式下改为先发
-        // C02、再补 C0A，保证攻击吃到完整蓄力。
-        boolean attacked = autoclickerAttackMode != ATTACK_MODE_VANILLA
-                && target instanceof EntityLivingBase
-                && attackEntityFirst(mc, player, target);
-        if (!attacked) {
+        // 冷却设置只决定何时点击；1.8 协议始终保持 C0A -> C02。
+        if (target instanceof EntityLivingBase) {
+            if (!attackEntity18(mc, player, target)) {
+                restoreCriticalsSprint(player, criticalsStopSprintSent);
+                return false;
+            }
+        } else {
             call(mc, "clickMouse", "func_147116_af", null);
         }
         restoreCriticalsSprint(player, criticalsStopSprintSent);
@@ -862,27 +863,50 @@ public final class OpenMaverFeatures {
         return true;
     }
 
-    /**
-     * 先发 C02 再发 C0A。
-     *
-     * <p>1.8 的 {@code clickMouse()} 顺序是 {@code swingItem()} -> {@code attackEntity()}。
-     * 在 1.19.2+ 服务端上，任何 swing 动画都会重置攻击蓄力（MC-255058），
-     * 于是紧随其后的 C02 只能按 0 蓄力结算（约 0.2~0.4 倍伤害）。
-     * 反过来发送可以让 C02 吃到完整蓄力，代价是不符合 Grim 1.8 的
-     * {@code PacketOrderB}（ANIMATION -> INTERACT_ENTITY），所以只在
-     * FULL CHARGE / FASTEST 模式下使用，VANILLA 模式仍走原版顺序。
-     */
-    private static boolean attackEntityFirst(Minecraft mc, Object player, Object target) {
+    static void beginAttackTick() { entityAttackUsedThisTick = false; }
+    static boolean hasEntityAttackThisTick() { return entityAttackUsedThisTick; }
+
+    /** 统一 1.8 实体攻击：C0B（必要时）-> C0A -> C02，单 tick 共享攻击名额。 */
+    static boolean attackEntity18(Minecraft mc, Object player, Object target) {
         Object controller = read(mc, "playerController", "field_71442_b", null);
-        if (controller == null || player == null || target == null) {
+        if (controller == null || player == null || target == null || entityAttackUsedThisTick) {
             return false;
         }
+        if (!syncSprintBeforeAttack(player)
+                || !callVoid(player, "swingItem", "func_71038_i", null)) return false;
         boolean sent = callVoid(controller, "attackEntity", "func_78764_a", "a",
                 player, target);
         if (sent) {
-            callVoid(player, "swingItem", "func_71038_i", null);
+            entityAttackUsedThisTick = true;
+            // Velocity 在 suppressVanillaDuplicateAttack 之后运行，也要抑制同 tick 的原版补刀。
+            writeIntField(mc, "leftClickCounter", "field_71429_W", 2);
         }
         return sent;
+    }
+
+    /** AutoSprint 在原版 onUpdateWalkingPlayer 之前变更状态，攻击前先同步给服务端。 */
+    static boolean syncSprintBeforeAttack(Object player) {
+        Field state = findField(player, new String[] {"serverSprintState", "field_175171_bO"});
+        if (state == null) return false;
+        try {
+            boolean sprinting = Boolean.TRUE.equals(call(player, "isSprinting", "func_70051_ag", null));
+            if (state.getBoolean(player) == sprinting) return true;
+            if (!ensureCriticalsEntityAction()) return false;
+            Object packet = criticalsEntityActionConstructor.newInstance(player,
+                    sprinting ? criticalsStartSprintAction : criticalsStopSprintAction);
+            if (!sendCriticalsPacket(player, packet)) return false;
+            state.setBoolean(player, sprinting);
+            return true;
+        } catch (Throwable error) {
+            OpenMaverDebug.noticeOnce("attack.sprint", "Sprint sync failed: " + error);
+            return false;
+        }
+    }
+
+    private static void rememberSprintState(Object player, boolean sprinting) {
+        Field state = findField(player, new String[] {"serverSprintState", "field_175171_bO"});
+        try { if (state != null) state.setBoolean(player, sprinting); }
+        catch (IllegalAccessException ignored) { }
     }
 
     /**
@@ -1381,9 +1405,9 @@ public final class OpenMaverFeatures {
                 return;
             }
             writeIntField(mc, "leftClickCounter", "field_71429_W", 0);
-            if (!((autoclickerAttackMode != ATTACK_MODE_VANILLA)
-                    && attackEntityFirst(mc, player, target))) {
-                call(mc, "clickMouse", "func_147116_af", null);
+            if (!attackEntity18(mc, player, target)) {
+                restoreCriticalsSprint(player, stopSprintSent);
+                return;
             }
             restoreCriticalsSprint(player, stopSprintSent);
             autoclickerClickedThisTick = true;
@@ -1406,8 +1430,9 @@ public final class OpenMaverFeatures {
         }
 
         if (source == CRITICALS_ATTACK_KILLAURA) {
-            if (attackEntityFirst(mc, player, target)) {
-                restoreCriticalsSprint(player, stopSprintSent);
+            boolean attacked = attackEntity18(mc, player, target);
+            restoreCriticalsSprint(player, stopSprintSent);
+            if (attacked) {
                 killAuraNextAttackNanos = now + nextKillAuraIntervalNanos();
                 Object name = call(target, "getName", "func_70005_c_", null);
                 OpenMaverDebug.attack(name == null ? String.valueOf(target) : String.valueOf(name),
@@ -1744,6 +1769,7 @@ public final class OpenMaverFeatures {
             Object packet = criticalsEntityActionConstructor.newInstance(
                     player, criticalsStopSprintAction);
             boolean packetSent = sendCriticalsPacket(player, packet);
+            if (packetSent) rememberSprintState(player, false);
             boolean stateChanged = callVoid(player, "setSprinting", "func_70031_b", null,
                     Boolean.FALSE);
             if (!packetSent && !stateChanged) {
@@ -1772,7 +1798,7 @@ public final class OpenMaverFeatures {
             if (ensureCriticalsEntityAction()) {
                 Object packet = criticalsEntityActionConstructor.newInstance(
                         player, criticalsStartSprintAction);
-                sendCriticalsPacket(player, packet);
+                if (sendCriticalsPacket(player, packet)) rememberSprintState(player, true);
             }
             callVoid(player, "setSprinting", "func_70031_b", null, Boolean.TRUE);
         } catch (Throwable error) {
@@ -2201,7 +2227,7 @@ public final class OpenMaverFeatures {
         if (criticalsAttackDeferred) {
             return;
         }
-        boolean attacked = attackEntityFirst(mc, player, target);
+        boolean attacked = attackEntity18(mc, player, target);
         restoreCriticalsSprint(player, stopSprintSent);
         if (!attacked) {
             OpenMaverDebug.noticeOnce("killaura.attack",
@@ -4499,8 +4525,10 @@ public final class OpenMaverFeatures {
         if ("field_82175_bq".equals(srg)) return new String[] {mcp, srg, "ar"};
         if ("field_110158_av".equals(srg)) return new String[] {mcp, srg, "as"};
         if ("field_71158_b".equals(srg)) return new String[] {mcp, srg, "b"};
+        if ("field_78902_a".equals(srg)) return new String[] {mcp, srg, "a"};
         if ("field_78900_b".equals(srg)) return new String[] {mcp, srg, "b"};
         if ("field_78901_c".equals(srg)) return new String[] {mcp, srg, "c"};
+        if ("field_78899_d".equals(srg)) return new String[] {mcp, srg, "d"};
         if ("field_77994_a".equals(srg)) return new String[] {mcp, srg, "b"};
         if ("field_71460_t".equals(srg)) return new String[] {mcp, srg, "o"};
         if ("field_71476_x".equals(srg)) return new String[] {mcp, srg, "s"};

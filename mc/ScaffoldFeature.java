@@ -1202,7 +1202,7 @@ public final class ScaffoldFeature {
             float originalForward = (float) OpenMaverFeatures.number(
                     input, "moveForward", "field_78900_b");
             float originalStrafe = (float) OpenMaverFeatures.number(
-                    input, "moveStrafe", "field_78901_c");
+                    input, "moveStrafe", "field_78902_a");
             float forward = originalForward;
             float strafe = originalStrafe;
 
@@ -1236,7 +1236,7 @@ public final class ScaffoldFeature {
             }
             if (forward != originalForward || strafe != originalStrafe) {
                 setNumber(input, "moveForward", "field_78900_b", forward);
-                setNumber(input, "moveStrafe", "field_78901_c", strafe);
+                setNumber(input, "moveStrafe", "field_78902_a", strafe);
             }
 
             if (!aimApplied) {
@@ -1306,10 +1306,10 @@ public final class ScaffoldFeature {
         if (input != null) {
             setNumber(hook, "moveForward", "field_78900_b",
                     OpenMaverFeatures.number(input, "moveForward", "field_78900_b"));
-            setNumber(hook, "moveStrafe", "field_78901_c",
-                    OpenMaverFeatures.number(input, "moveStrafe", "field_78901_c"));
-            setBoolean(hook, "jump", "field_78903_e", Boolean.TRUE.equals(
-                    OpenMaverFeatures.read(input, "jump", "field_78903_e", Boolean.class)));
+            setNumber(hook, "moveStrafe", "field_78902_a",
+                    OpenMaverFeatures.number(input, "moveStrafe", "field_78902_a"));
+            setBoolean(hook, "jump", "field_78901_c", Boolean.TRUE.equals(
+                    OpenMaverFeatures.read(input, "jump", "field_78901_c", Boolean.class)));
             setBoolean(hook, "sneak", "field_78899_d", Boolean.TRUE.equals(
                     OpenMaverFeatures.read(input, "sneak", "field_78899_d", Boolean.class)));
         }
@@ -2027,7 +2027,7 @@ public final class ScaffoldFeature {
                 "moveForward", "field_78900_b");
         float strafe = (float) OpenMaverFeatures.number(
                 OpenMaverFeatures.read(player, "movementInput", "field_71158_b", null),
-                "moveStrafe", "field_78901_c");
+                "moveStrafe", "field_78902_a");
         return forward != 0.0F || strafe != 0.0F;
     }
 

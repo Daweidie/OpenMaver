@@ -23,6 +23,7 @@ public final class AttackReduceFeature {
     private static int mode = MODE_NOXZ;
     private static boolean rotate, tryAttack, movementOverride, followDirection, instantAttack;
     private static boolean sprintStateCheck = true;
+    private static boolean debugChat;
     private static int rotateTicks = 12, attackAmount = 5;
     private static final AntiKBMode[] MODES = {new NoXZMode(), new JumpResetMode(), new MixMode()};
     private static volatile Session session;
@@ -36,6 +37,9 @@ public final class AttackReduceFeature {
     static Float rotationYaw;
     private static float rotationPitch;
     private static String status = "IDLE";
+    // 包回放只在 scheduled-task / tick 准备阶段同步执行，避免在 action 与 C03 之间发 C0F。
+    private static boolean replayAllowed;
+    private static final Deque<Packet> deferredReplays = new ArrayDeque<Packet>();
     static final int MAX_PENDING = 4096;
     private AttackReduceFeature() { }
 
@@ -74,7 +78,9 @@ public final class AttackReduceFeature {
         int z() { return integer(raw, "motionZ", "field_149414_d"); }
         void handle() {
             if (!sameConnection(owner)) return;
-            process();
+            if (replayAllowed) process();
+            // Minecraft.addScheduledTask 在主线程会立即执行，不能用它推迟 action 阶段的回放。
+            else deferredReplays.add(this);
         }
         void process() {
             try { process.invoke(raw, owner.handler); }
@@ -88,7 +94,23 @@ public final class AttackReduceFeature {
         void cancel() { cancelled = true; }
     }
 
-    public static void onTickStart(Minecraft mc) {
+    /** 在箱子点击、Aura 和 AutoClicker 之前准备连接并回放到期包。 */
+    public static void beforeTick(Minecraft mc) {
+        boolean previous = replayAllowed;
+        replayAllowed = true;
+        try {
+            drainDeferredReplays();
+            prepareTick(mc);
+            // 调试行在 Netty 线程入队，这里回到主线程写聊天框。
+            VelocityDebug.flush(mc);
+        }
+        finally { replayAllowed = previous; }
+    }
+    private static void drainDeferredReplays() {
+        Packet packet;
+        while ((packet = deferredReplays.poll()) != null) packet.handle();
+    }
+    private static void prepareTick(Minecraft mc) {
         tick++;
         restoreCamera();
         Object player = read(mc, "thePlayer", "field_71439_g");
@@ -122,6 +144,11 @@ public final class AttackReduceFeature {
         if (s == null) return;
         ensureMovementHook(s);
         current().onTick();
+    }
+    /** 目标与 AutoSprint 更新后执行攻击；此阶段的包回放留到下次 scheduled-task。 */
+    public static void onTickStart(Minecraft mc) {
+        Session s = session;
+        if (s == null || !enabled() || !sameConnection(s)) return;
         current().onSprint();
     }
     public static void onTickEnd(Minecraft mc) {
@@ -142,33 +169,43 @@ public final class AttackReduceFeature {
         final Packet packet = new Packet(raw, s, process);
         return schedule(s, new Runnable() {
             public void run() {
-                if (!sameConnection(s)) {
-                    // S07 会在同一网络连接中更换 player/world；其后的批量包属于新世界。
-                    if (s.worldTransition && s.pipeline.channel().isOpen()
-                            && read(read(s.mc, "thePlayer", "field_71439_g"), "sendQueue", "field_71174_a") == s.handler) packet.process();
-                    return;
-                }
-                if (session != s || !enabled()) { packet.handle(); return; }
-                if (packet.is("S08PacketPlayerPosLook") || packet.is("S07PacketRespawn") || packet.is("S40PacketDisconnect")) {
-                    current().release(); current().onMotion(); current().onEnable(); restoreTimer(); rotationYaw = null;
-                    if (packet.is("S08PacketPlayerPosLook")) current().onCorrection();
-                    if (packet.is("S07PacketRespawn")) s.worldTransition = true;
-                    packet.handle(); return;
-                }
-                if (ownVelocity(packet)) knockbacks++;
-                if (ignored()) { current().release(); current().onMotion(); packet.handle(); return; }
-                ReceivePacketEvent event = new ReceivePacketEvent(packet);
-                current().onReceivePacket(event);
-                if (!event.cancelled) packet.handle();
-                if (current().pendingCount() >= MAX_PENDING) { current().release(); current().onMotion(); status("QUEUE LIMIT"); }
+                boolean previous = replayAllowed;
+                replayAllowed = true;
+                try {
+                    drainDeferredReplays();
+                    if (!sameConnection(s)) {
+                        // S07 会在同一网络连接中更换 player/world；其后的批量包属于新世界。
+                        if (s.worldTransition && s.pipeline.channel().isOpen()
+                                && read(read(s.mc, "thePlayer", "field_71439_g"), "sendQueue", "field_71174_a") == s.handler) packet.process();
+                        return;
+                    }
+                    if (session != s || !enabled()) { packet.handle(); return; }
+                    if (packet.is("S08PacketPlayerPosLook") || packet.is("S07PacketRespawn") || packet.is("S40PacketDisconnect")) {
+                        current().release(); current().onMotion(); current().onEnable(); restoreTimer(); rotationYaw = null;
+                        if (packet.is("S08PacketPlayerPosLook")) current().onCorrection();
+                        if (packet.is("S07PacketRespawn")) s.worldTransition = true;
+                        packet.handle(); return;
+                    }
+                    // 新击退是新的物理边界：先按序应用旧队列，避免旧 S12 最后覆盖新 S12。
+                    if (ownVelocity(packet) && current().isSuspending) {
+                        current().release(); current().onMotion(); current().onEnable();
+                    }
+                    if (ownVelocity(packet)) knockbacks++;
+                    if (ignored()) { current().release(); current().onMotion(); packet.handle(); return; }
+                    ReceivePacketEvent event = new ReceivePacketEvent(packet);
+                    current().onReceivePacket(event);
+                    if (!event.cancelled) packet.handle();
+                    if (current().pendingCount() >= MAX_PENDING) { current().release(); current().onMotion(); status("QUEUE LIMIT"); }
+                } finally { replayAllowed = previous; }
             }
         });
     }
-    /** NoXZ movePacketQueue 接到真正的 SEND 路径；保留 promise 与 FIFO。 */
+    /** 挂起移动时保留整个出站包序，避免 action/ack 越过先前的 C03。 */
     static boolean captureOutbound(AttackReducePacketHook source, ChannelHandlerContext ctx, Object packet, ChannelPromise promise) {
         final Session s = session;
-        if (s == null || s.hook != source || s.closed || !packetName(packet, "C03PacketPlayer")) return false;
+        if (s == null || s.hook != source || s.closed) return false;
         synchronized (s.moves) {
+            VelocityDebug.outbound(packet, s.holdMoves, s.moves.size());
             if (!s.holdMoves) return false;
             s.moves.add(new Move(ctx, packet, promise));
             if (s.moves.size() >= MAX_PENDING && !s.releaseScheduled) {
@@ -178,22 +215,32 @@ public final class AttackReduceFeature {
             return true;
         }
     }
-    static void holdMoves() { Session s = session; if (s != null) s.holdMoves = true; }
+    static void holdMoves() {
+        final Session s = session;
+        if (s == null) return;
+        ChannelHandlerContext ctx = s.hook.context;
+        if (ctx == null) return;
+        // 与 flushMoves 使用同一个 eventLoop；连续击退时旧 flush 不会清掉新的 hold。
+        ctx.channel().eventLoop().execute(new Runnable() {
+            public void run() { synchronized (s.moves) { if (!s.closed) s.holdMoves = true; } }
+        });
+    }
     static void sendMovePackets() { flushMoves(session); }
     private static void flushMoves(final Session s) {
         if (s == null) return;
         Runnable flush = new Runnable() {
             public void run() {
                 synchronized (s.moves) {
-                    Move move; ChannelHandlerContext last = null;
+                    Move move; ChannelHandlerContext last = null; int sent = 0;
                     while ((move = s.moves.poll()) != null) {
                         if (move.promise.isDone()) continue;
                         if (s.closed || !move.ctx.channel().isOpen()) move.promise.tryFailure(new IllegalStateException("Velocity connection closed"));
-                        else try { move.ctx.write(move.packet, move.promise); last = move.ctx; }
+                        else try { move.ctx.write(move.packet, move.promise); last = move.ctx; sent++; }
                         catch (Exception error) { move.promise.tryFailure(error); }
                     }
                     if (last != null) last.flush();
                     s.holdMoves = false; s.releaseScheduled = false;
+                    VelocityDebug.flushed(sent);
                 }
             }
         };
@@ -269,6 +316,11 @@ public final class AttackReduceFeature {
         set(owner, "timerSpeed", "field_74278_d", multiplier);
     }
     static void restoreTimer() { if (timerOwner != null) set(timerOwner, "timerSpeed", "field_74278_d", timerBefore); timerOwner = null; }
+    /** 当前客户端 tick 倍率；调试输出用，读不到时返回 0。 */
+    static double timerSpeed() {
+        Object owner = read(mc(), "timer", "field_71428_T");
+        return owner == null ? 0.0D : number(owner, "timerSpeed", "field_74278_d");
+    }
     static boolean ignored() {
         Object p = player(), abilities = read(p, "capabilities", "field_71075_bZ");
         return p == null || !OpenMaverFeatures.alive(p) || truth(p, "isSpectator", "func_175149_v")
@@ -290,31 +342,21 @@ public final class AttackReduceFeature {
         Object p = player();
         double x = number(p, "posX", "field_70165_t"), y = number(p, "posY", "field_70163_u") + OpenMaverFeatures.eyeHeight(p), z = number(p, "posZ", "field_70161_v");
         double dx = x - Math.max(box.minX, Math.min(x, box.maxX)), dy = y - Math.max(box.minY, Math.min(y, box.maxY)), dz = z - Math.max(box.minZ, Math.min(z, box.maxZ));
-        return dx * dx + dy * dy + dz * dz <= 3.7D * 3.7D;
+        return dx * dx + dy * dy + dz * dz <= 3.0D * 3.0D
+                && truth(p, "canEntityBeSeen", "func_70685_l", target);
     }
-    /** Zen 顺序：退出疾跑 -> controller.attack -> swing -> 手动 XZ*.6，Y 保持。 */
+    /** 1.8.9：同步疾跑 -> swing -> controller.attack；减速只由原版攻击结果决定。 */
     static boolean attack(Object target, boolean checkSprint) {
         Object p = player(), controller = read(mc(), "playerController", "field_71442_b");
         if (!validTarget(target) || controller == null || (checkSprint && !sprinting())) return false;
-        boolean sprint = sprinting();
-        if (sprint && !OpenMaverFeatures.callVoid(p, "setSprinting", "func_70031_b", null, Boolean.FALSE)) return false;
-        if (!OpenMaverFeatures.callVoid(controller, "attackEntity", "func_78764_a", null, p, target)) return false;
-        OpenMaverFeatures.callVoid(p, "swingItem", "func_71038_i", null);
-        if (sprint) {
-            set(p, "motionX", "field_70159_w", number(p, "motionX", "field_70159_w") * 0.6D);
-            set(p, "motionZ", "field_70179_y", number(p, "motionZ", "field_70179_y") * 0.6D);
-        }
+        if (read(mc(), "currentScreen", "field_71462_r") != null
+                || truth(p, "isUsingItem", "func_71039_bw")) return false;
+        if (!OpenMaverFeatures.attackEntity18(mc(), p, target)) return false;
         attacks++; status("ATTACK"); return true;
     }
-    /** Mix 使用受击瞬间的疾跑状态；Zen Keep Sprint 默认 true，每次攻击前减速。 */
-    static void attackMix(Object target, boolean wasSprinting) {
-        if (target == null) return;
-        OpenMaverFeatures.callVoid(player(), "setSprinting", "func_70031_b", null, Boolean.FALSE);
-        if (wasSprinting) {
-            set(player(), "motionX", "field_70159_w", number(player(), "motionX", "field_70159_w") * 0.6D);
-            set(player(), "motionZ", "field_70179_y", number(player(), "motionZ", "field_70179_y") * 0.6D);
-        }
-        attack(target, false);
+    /** Mix 复用同一条 1.8 攻击路径，使用执行时的真实疾跑状态。 */
+    static boolean attackMix(Object target) {
+        return attack(target, false);
     }
     static void setRotation(Packet packet) {
         rotationYaw = (float) Math.toDegrees(Math.atan2(packet.x() / 8000.0D, -packet.z() / 8000.0D));
@@ -324,6 +366,12 @@ public final class AttackReduceFeature {
     static Minecraft mc() { return session == null ? null : session.mc; }
     static Object player() { return session == null ? null : session.player; }
     static int sessionEntityId() { return session == null ? -1 : session.entityId; }
+    /** 当前挂起、尚未写出的出站包数量（调试输出用）。 */
+    static int queuedMoves() {
+        Session s = session;
+        if (s == null) return 0;
+        synchronized (s.moves) { return s.moves.size(); }
+    }
     static boolean onGround() { return flag(player(), "onGround", "field_70122_E"); }
     static boolean sprinting() { return truth(player(), "isSprinting", "func_70051_ag"); }
     static boolean ownVelocity(Packet p) { return p.is("S12PacketEntityVelocity") && session != null && p.id() == session.entityId; }
@@ -342,7 +390,7 @@ public final class AttackReduceFeature {
     static double number(Object o, String m, String s) { return OpenMaverFeatures.number(o, m, s); }
     static void set(Object o, String m, String s, double v) { OpenMaverFeatures.setNumber(o, m, s, v); }
     static Object call(Object o, String m, String s, Object... args) { return OpenMaverFeatures.call(o, m, s, null, args); }
-    static boolean truth(Object o, String m, String s) { return Boolean.TRUE.equals(call(o, m, s)); }
+    static boolean truth(Object o, String m, String s, Object... args) { return Boolean.TRUE.equals(call(o, m, s, args)); }
     static boolean flag(Object o, String m, String s) { return Boolean.TRUE.equals(read(o, m, s)); }
     private static int integer(Object o, String... names) { Field f = OpenMaverFeatures.findField(o, names); try { return f == null ? 0 : f.getInt(o); } catch (Exception ignored) { return 0; } }
     private static Method packetMethod(Object raw, Object handler) {
@@ -351,7 +399,7 @@ public final class AttackReduceFeature {
     }
     private static boolean packetName(Object packet, String name) { for (Class<?> c = packet.getClass(); c != null; c = c.getSuperclass()) if (name.equals(c.getSimpleName())) return true; return false; }
     private static boolean schedule(Session s, Runnable task) { return OpenMaverFeatures.callVoid(s.mc, "addScheduledTask", "func_152344_a", null, task); }
-    private static Object fieldByType(Object target, String name) {
+    static Object fieldByType(Object target, String name) {
         if (target != null) for (Class<?> c = target.getClass(); c != null; c = c.getSuperclass()) for (Field f : c.getDeclaredFields()) if (name.equals(f.getType().getName())) try { f.setAccessible(true); return f.get(target); } catch (Exception ignored) { }
         return null;
     }
@@ -366,6 +414,8 @@ public final class AttackReduceFeature {
         movementOverride = bool(p, "movementOverride", false); followDirection = bool(p, "followDirection", false);
         instantAttack = bool(p, "instantAttack", false); sprintStateCheck = bool(p, "sprintStateCheck", true);
         rotateTicks = bounded(p, "rotateTicks", 12, 3, 20); attackAmount = bounded(p, "attackAmount", 5, 1, 20);
+        debugChat = bool(p, "debug", false);
+        VelocityDebug.setEnabled(debugChat);
         nextHookAttempt = tick;
     }
     private static boolean bool(Properties p, String key, boolean fallback) { return Boolean.parseBoolean(p.getProperty("velocity.zen." + key, String.valueOf(fallback))); }
@@ -376,7 +426,8 @@ public final class AttackReduceFeature {
         return "velocity.zen.mode=" + MODE_NAMES[mode] + "\nvelocity.zen.rotate=" + rotate + "\nvelocity.zen.tryAttack=" + tryAttack
                 + "\nvelocity.zen.movementOverride=" + movementOverride + "\nvelocity.zen.followDirection=" + followDirection
                 + "\nvelocity.zen.rotateTicks=" + rotateTicks + "\nvelocity.zen.attackAmount=" + attackAmount
-                + "\nvelocity.zen.instantAttack=" + instantAttack + "\nvelocity.zen.sprintStateCheck=" + sprintStateCheck + "\n";
+                + "\nvelocity.zen.instantAttack=" + instantAttack + "\nvelocity.zen.sprintStateCheck=" + sprintStateCheck + "\n"
+                + "velocity.zen.debug=" + debugChat + "\n";
     }
     public static int getMode() { return mode; }
     public static void setMode(int v) { stop(true); mode = v >= 0 && v < MODES.length ? v : MODE_NOXZ; nextHookAttempt = tick; OpenMaverFeatures.markDirty(); }
@@ -401,4 +452,10 @@ public final class AttackReduceFeature {
     public static void setInstantAttack(boolean v) { instantAttack = v; if (!v) restoreTimer(); OpenMaverFeatures.markDirty(); }
     public static boolean getSprintStateCheck() { return sprintStateCheck; }
     public static void setSprintStateCheck(boolean v) { sprintStateCheck = v; OpenMaverFeatures.markDirty(); }
+    public static boolean getDebugChat() { return debugChat; }
+    public static void setDebugChat(boolean v) {
+        debugChat = v; VelocityDebug.setEnabled(v);
+        status(v ? "DEBUG ON" : "DEBUG OFF");
+        OpenMaverFeatures.markDirty();
+    }
 }

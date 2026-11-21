@@ -2,15 +2,19 @@
 # ---------------------------------------------------------------------------
 # AttackReduce 包层测试：用真实 netty-all 4.0.23.Final（MC 1.8.9 自带版本）的
 # EmbeddedChannel 驱动 AttackReducePacketHook，验证：
-#   - Zen NoXZ / Jump Reset / Mix 主线程状态机、原始击退回放
+#   - NoXZ 击退零额外延迟/落地补刀；Jump Reset / Mix 原始击退回放
 #   - 输入/静默转向、时间倍率、包序、释放与断线清理
 #   - Zen 参数持久化与旧配置迁移
 #   - 真实 Netty pipeline 的安装位置、重连与自愈
+#   - 最终 SRG jar 的 MovementInput 字段名/类型对照真实 1.8.9 + Forge
 #
 # 用法：
 #   tools/attackreduce-test/run.sh
 # 环境变量：
 #   NETTY_JAR  指定 netty-all 4.0.23.Final 的路径（默认在 PrismLauncher 里找）
+#   PRISM_ROOT  指定含 1.8.9 客户端、Forge 和 Netty 的 PrismLauncher 根目录
+# 运行期字段校验也可独立执行并通过 --minecraft-jar / --forge-jar 指定路径：
+#   python3 tools/attackreduce-test/check_runtime_fields.py --help
 #
 # 前置：先构建一次（需要 build/mc-classes、build/mcstubs-classes、build/java-classes）
 #   cmake --build build -j
@@ -48,3 +52,5 @@ javac -source 8 -target 8 -Xlint:-options -encoding UTF-8 -cp "$classpath" -d "$
 
 echo "[attackreduce-test] OpenZen NoXZ / Jump Reset / Mix"
 java -cp "$out_dir:$classpath" ZenAntiKBTest
+
+python3 "$test_src/check_runtime_fields.py"

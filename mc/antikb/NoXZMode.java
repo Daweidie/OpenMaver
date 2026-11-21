@@ -1,75 +1,76 @@
 import net.minecraft.util.MovementInput;
 
-/** OpenZen NoXZMode：击退挂起 -> 落地攻击 -> Motion PRE 回放其余入站包。 */
+/** NoXZ：击退立即应用，仅等待落地后的攻击机会，不缓存入站或出站包。 */
 final class NoXZMode extends AntiKBMode {
+    private static final int MAX_LANDING_TICKS = 12;
     private Object attackTarget;
-    private int attacksRemaining, flagCooldown, suspendTicks, hitCounter;
-    private boolean shouldJump, shouldFlushMotion, isInstantAttacking;
-    private float instantAttackProgress;
-    private AttackReduceFeature.Packet knockbackPacket;
+    private int attacksRemaining, flagCooldown, landingTicks, hitCounter;
+    private boolean shouldJump, waitingForLanding;
 
     @Override void onEnable() {
         super.onEnable(); attackTarget = null;
-        attacksRemaining = flagCooldown = suspendTicks = hitCounter = 0;
-        shouldJump = shouldFlushMotion = isInstantAttacking = false;
-        instantAttackProgress = 0; knockbackPacket = null; AttackReduceFeature.restoreTimer();
+        attacksRemaining = flagCooldown = landingTicks = hitCounter = 0;
+        shouldJump = waitingForLanding = false; AttackReduceFeature.restoreTimer();
     }
     @Override void onCorrection() { flagCooldown = 2; }
     @Override void onReceivePacket(AttackReduceFeature.ReceivePacketEvent event) {
-        if (flagCooldown > 0) return;
         AttackReduceFeature.Packet packet = event.packet;
-        if (isSuspending) { if (!isAllowedPacket(packet)) delay(event); return; }
         if (!AttackReduceFeature.ownVelocity(packet)) return;
+        // 新速度是新的物理边界；即使 Y <= 0，也不能继续上一次受击的补刀。
+        clearAttacks(); shouldJump = false;
+        if (flagCooldown > 0) { VelocityDebug.knockbackIn(packet, "PASS COOLDOWN"); return; }
         if (packet.x() != 0 || packet.z() != 0) hitCounter = 2;
-        if (packet.y() <= 0) return;
+        if (packet.y() <= 0) { VelocityDebug.knockbackIn(packet, false); return; }
         shouldJump = true;
         Object target = AttackReduceFeature.attackTarget();
-        if (AttackReduceFeature.onGround() && AttackReduceFeature.validTarget(target) && AttackReduceFeature.sprinting()) {
+        boolean ground = AttackReduceFeature.onGround();
+        boolean hasTarget = AttackReduceFeature.validTarget(target);
+        boolean sprinting = AttackReduceFeature.sprinting();
+        boolean ready = ground && hasTarget && sprinting;
+        // 地面和空中都不取消 S12：服务端从发包当拍就开始预测击退。
+        // 空中只保留落地补刀意图，不能用挂起/回放延后物理或挤出移动包簇。
+        String tag = ready ? "PASS READY" : !ground ? "PASS AIR / LANDING WAIT"
+                : !hasTarget ? "PASS NO TARGET" : !sprinting ? "PASS NOT SPRINTING" : "PASS";
+        VelocityDebug.knockbackIn(packet, tag);
+        if (ready) {
             attackTarget = target; attacksRemaining = AttackReduceFeature.getAttackAmount();
             AttackReduceFeature.status("READY");
+        } else if (!ground) {
+            waitingForLanding = true; AttackReduceFeature.status("LANDING WAIT");
         } else {
-            isSuspending = true; suspendTicks = 0; knockbackPacket = packet;
-            AttackReduceFeature.holdMoves(); event.cancel(); AttackReduceFeature.status("ALINK WAIT");
+            AttackReduceFeature.status("PASS GROUND");
         }
     }
     @Override void onTick() {
         if (hitCounter > 0) hitCounter--;
-        if (AttackReduceFeature.ignored()) { attackTarget = null; attacksRemaining = 0; release(); return; }
-        if (flagCooldown > 0) { flagCooldown--; attackTarget = null; attacksRemaining = 0; return; }
-        if (isSuspending) {
-            suspendTicks++;
-            boolean instant = AttackReduceFeature.getInstantAttack();
-            if (instant && instantAttackProgress < 3.0F) {
-                AttackReduceFeature.timer(0.5F);
-                instantAttackProgress = Math.min(3.0F, instantAttackProgress + 0.5F);
-            } else if (!instant) AttackReduceFeature.restoreTimer();
+        if (AttackReduceFeature.ignored()) { release(); return; }
+        if (flagCooldown > 0) { flagCooldown--; clearAttacks(); return; }
+        if (waitingForLanding) {
+            landingTicks++;
             boolean ground = AttackReduceFeature.onGround();
-            if (!ground && suspendTicks < 12) return;
-            AttackReduceFeature.restoreTimer();
+            if (!ground && landingTicks < MAX_LANDING_TICKS) return;
             Object target = AttackReduceFeature.attackTarget();
-            if (ground && AttackReduceFeature.validTarget(target) && AttackReduceFeature.sprinting()) {
-                attackTarget = target; attacksRemaining = AttackReduceFeature.getAttackAmount();
-                AttackReduceFeature.sendMovePackets(); applyKnockbackPacket();
-                isSuspending = false; suspendTicks = 0; shouldFlushMotion = true;
-                if (instant && instantAttackProgress > 0) {
-                    attacksRemaining = (int) instantAttackProgress; isInstantAttacking = true;
-                    AttackReduceFeature.timer(4.0F);
-                } else doAttackSequence();
+            // AutoSprint 在准备阶段之后更新；实际疾跑检查放到 onSprint 的攻击入口。
+            if (ground && AttackReduceFeature.validTarget(target)) {
+                attackTarget = target;
+                // 保留旧 Instant Attack 配置的补刀数量，每正常 tick 最多一次，不改 Timer。
+                attacksRemaining = AttackReduceFeature.getAttackAmount()
+                        + (AttackReduceFeature.getInstantAttack() ? Math.min(3, landingTicks / 2) : 0);
+                waitingForLanding = false; landingTicks = 0;
+                AttackReduceFeature.status("LANDING READY");
             } else {
-                release();
-                if (ground) OpenMaverFeatures.callVoid(AttackReduceFeature.player(), "setSprinting", "func_70031_b", null, Boolean.FALSE);
+                clearAttacks();
+                AttackReduceFeature.status(ground ? "PASS NO TARGET" : "PASS AIR TIMEOUT");
             }
             return;
         }
-        if (isInstantAttacking) {
-            instantAttackProgress -= 1.0F;
-            if (instantAttackProgress <= 0) { instantAttackProgress = 0; isInstantAttacking = false; AttackReduceFeature.restoreTimer(); }
-            else AttackReduceFeature.timer(4.0F);
-        }
+    }
+    @Override void onSprint() {
         if (attacksRemaining > 0 && attackTarget != null) doAttackSequence();
     }
     private void doAttackSequence() {
         if (!AttackReduceFeature.validTarget(attackTarget)) { attackTarget = null; attacksRemaining = 0; return; }
+        if (OpenMaverFeatures.hasEntityAttackThisTick()) return;
         attacksRemaining--;
         if (!AttackReduceFeature.attack(attackTarget, AttackReduceFeature.getSprintStateCheck())) AttackReduceFeature.status("NOT SPRINTING / ATTACK FAILED");
         if (attacksRemaining == 0) attackTarget = null;
@@ -82,19 +83,11 @@ final class NoXZMode extends AntiKBMode {
                     && !Boolean.TRUE.equals(AttackReduceFeature.call(AttackReduceFeature.player(), "isPotionActive", "func_82165_m", Integer.valueOf(8)))) input.jump = true;
         }
     }
-    @Override void onMotion() { if (shouldFlushMotion) { shouldFlushMotion = false; flushPackets(); } }
-    private void applyKnockbackPacket() { if (knockbackPacket != null) { knockbackPacket.handle(); knockbackPacket = null; } }
-    @Override int pendingCount() { return super.pendingCount() + (knockbackPacket == null ? 0 : 1); }
     @Override void release() {
-        AttackReduceFeature.sendMovePackets(); applyKnockbackPacket();
-        isSuspending = false; shouldFlushMotion = !packetQueue.isEmpty();
-        suspendTicks = 0; instantAttackProgress = 0; isInstantAttacking = false;
+        clearAttacks(); shouldJump = false; hitCounter = 0;
         AttackReduceFeature.restoreTimer(); AttackReduceFeature.status("RELEASED");
     }
-    private boolean isAllowedPacket(AttackReduceFeature.Packet p) {
-        return p.is("S12PacketEntityVelocity") || p.is("S06PacketUpdateHealth") || p.is("S08PacketPlayerPosLook")
-                || p.is("S29PacketSoundEffect") || p.is("S02PacketChat") || p.is("S42PacketCombatEvent")
-                || p.is("S2EPacketCloseWindow") || p.is("S19PacketEntityStatus") || p.is("S45PacketTitle") || p.is("S3EPacketTeams") || p.is("S40PacketDisconnect")
-                || (p.is("S0BPacketAnimation") && p.id() != AttackReduceFeature.sessionEntityId());
+    private void clearAttacks() {
+        attackTarget = null; attacksRemaining = landingTicks = 0; waitingForLanding = false;
     }
 }

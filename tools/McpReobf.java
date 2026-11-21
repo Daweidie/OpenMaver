@@ -163,9 +163,11 @@ public final class McpReobf {
         f(MOP, "typeOfHit", "field_72313_a");
         f(MOP, "entityHit", "field_72308_g");
         m(MIFO, "updatePlayerMoveState", "func_78898_a");
+        // Forge 1.8.9: beu/a:F = strafe, beu/c:Z = jump.
+        // field_78903_e belongs to MovementInputFromOptions.gameSettings, not jump.
         f(MINPUT, "moveForward", "field_78900_b");
-        f(MINPUT, "moveStrafe", "field_78901_c");
-        f(MINPUT, "jump", "field_78903_e");
+        f(MINPUT, "moveStrafe", "field_78902_a");
+        f(MINPUT, "jump", "field_78901_c");
         f(MINPUT, "sneak", "field_78899_d");
 
         SUPER.put("GuiOpenMaverClickGui", GS);

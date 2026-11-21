@@ -3,20 +3,21 @@ import net.minecraft.util.MovementInput;
 /** OpenZen MixMode：选择性入站队列、受伤跳跃、反向输入与 Aura 双击。 */
 final class MixMode extends AntiKBMode {
     private AttackReduceFeature.Packet knockbackPacket;
-    private boolean shouldAttack, wasSprinting;
-    private int airTicks, sprintTick = -1;
+    private boolean shouldAttack;
+    private int airTicks, attacksRemaining, sprintTick = -1;
     @Override void onEnable() {
-        super.onEnable(); knockbackPacket = null; shouldAttack = wasSprinting = false;
-        airTicks = 0; sprintTick = -1; AttackReduceFeature.rotationYaw = null;
+        super.onEnable(); knockbackPacket = null; shouldAttack = false;
+        airTicks = attacksRemaining = 0; sprintTick = -1; AttackReduceFeature.rotationYaw = null;
     }
     @Override void onReceivePacket(AttackReduceFeature.ReceivePacketEvent event) {
         AttackReduceFeature.Packet packet = event.packet;
         if (AttackReduceFeature.ownVelocity(packet)) {
+            attacksRemaining = 0; shouldAttack = false;
             knockbackPacket = null; AttackReduceFeature.rotationYaw = null;
             if (packet.y() > 0) {
                 sprintTick = 0;
                 if (AttackReduceFeature.getTryAttack() && OpenMaverFeatures.velocityAuraTarget() != null) {
-                    shouldAttack = true; wasSprinting = AttackReduceFeature.sprinting();
+                    shouldAttack = true;
                 }
                 else if (AttackReduceFeature.getRotate()) AttackReduceFeature.setRotation(packet);
                 knockbackPacket = packet; isSuspending = true; delay(event); AttackReduceFeature.status("MIX WAIT");
@@ -34,9 +35,12 @@ final class MixMode extends AntiKBMode {
             Object target = OpenMaverFeatures.velocityAuraTarget();
             if (target != null) {
                 shouldAttack = false;
-                AttackReduceFeature.attackMix(target, wasSprinting); AttackReduceFeature.attackMix(target, wasSprinting);
+                attacksRemaining = 2;
             }
         }
+        Object target = OpenMaverFeatures.velocityAuraTarget();
+        if (target == null || AttackReduceFeature.number(p, "hurtTime", "field_70737_aN") <= 0) attacksRemaining = 0;
+        else if (attacksRemaining > 0 && AttackReduceFeature.attackMix(target)) attacksRemaining--;
         if (sprintTick >= 0) sprintTick++;
     }
     @Override void onMotion() {

@@ -929,6 +929,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             public double get() { return AttackReduceFeature.getMovementOverride() ? 1 : 0; }
             public void set(double value) { AttackReduceFeature.setMovementOverride(value > 0.5D); }
         }));
+        entry.settings.add(Setting.check("DEBUG CHAT", new Binding() {
+            public double get() { return AttackReduceFeature.getDebugChat() ? 1 : 0; }
+            public void set(double value) { AttackReduceFeature.setDebugChat(value > 0.5D); }
+        }));
     }
 
     private void addKillAuraSettings(Entry entry) {

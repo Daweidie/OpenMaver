@@ -496,7 +496,7 @@ public final class GodBridgeFeature {
             float originalForward = (float) OpenMaverFeatures.number(
                     input, "moveForward", "field_78900_b");
             float originalStrafe = (float) OpenMaverFeatures.number(
-                    input, "moveStrafe", "field_78901_c");
+                    input, "moveStrafe", "field_78902_a");
             float forward = originalForward;
             float strafe = originalStrafe;
 
@@ -525,7 +525,7 @@ public final class GodBridgeFeature {
             }
             if (forward != originalForward || strafe != originalStrafe) {
                 OpenMaverFeatures.setNumber(input, "moveForward", "field_78900_b", forward);
-                OpenMaverFeatures.setNumber(input, "moveStrafe", "field_78901_c", strafe);
+                OpenMaverFeatures.setNumber(input, "moveStrafe", "field_78902_a", strafe);
             }
 
             float writeYaw = OpenMaverFeatures.continuousYaw(playerYaw(player), aimYaw);
@@ -587,10 +587,10 @@ public final class GodBridgeFeature {
         if (input != null) {
             OpenMaverFeatures.setNumber(hook, "moveForward", "field_78900_b",
                     OpenMaverFeatures.number(input, "moveForward", "field_78900_b"));
-            OpenMaverFeatures.setNumber(hook, "moveStrafe", "field_78901_c",
-                    OpenMaverFeatures.number(input, "moveStrafe", "field_78901_c"));
-            setBoolean(hook, "jump", "field_78903_e", Boolean.TRUE.equals(
-                    OpenMaverFeatures.read(input, "jump", "field_78903_e", Boolean.class)));
+            OpenMaverFeatures.setNumber(hook, "moveStrafe", "field_78902_a",
+                    OpenMaverFeatures.number(input, "moveStrafe", "field_78902_a"));
+            setBoolean(hook, "jump", "field_78901_c", Boolean.TRUE.equals(
+                    OpenMaverFeatures.read(input, "jump", "field_78901_c", Boolean.class)));
             setBoolean(hook, "sneak", "field_78899_d", Boolean.TRUE.equals(
                     OpenMaverFeatures.read(input, "sneak", "field_78899_d", Boolean.class)));
         }

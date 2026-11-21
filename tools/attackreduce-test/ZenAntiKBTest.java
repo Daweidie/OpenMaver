@@ -13,6 +13,7 @@ import net.minecraft.network.NetworkManager;
 import net.minecraft.network.play.client.C02PacketUseEntity;
 import net.minecraft.network.play.client.C03PacketPlayer;
 import net.minecraft.network.play.client.C0APacketAnimation;
+import net.minecraft.network.play.client.C0FPacketConfirmTransaction;
 import net.minecraft.network.play.server.S12PacketEntityVelocity;
 import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.util.MovementInput;
@@ -31,7 +32,8 @@ public final class ZenAntiKBTest {
     public static class Player extends EntityPlayer {
         public NetHandlerPlayClient sendQueue;
         public MovementInput movementInput = new MovementInput();
-        public boolean onGround = true, sprinting = true, isInWeb, water, lava, burning, ladder, sleeping, jumpBoost, alive = true;
+        public boolean onGround = true, sprinting = true, serverSprintState = true, isInWeb, water, lava, burning, ladder, sleeping, jumpBoost, alive = true;
+        public boolean usingItem, swingFails;
         public int hurtTime = 10;
         EmbeddedChannel channel;
         public boolean func_70051_ag() { return sprinting; }
@@ -45,10 +47,15 @@ public final class ZenAntiKBTest {
         public boolean func_82165_m(int id) { return id == 8 && jumpBoost; }
         public boolean isPotionActive(int id) { return func_82165_m(id); }
         public float getEyeHeight() { return 1.62F; }
-        public void swingItem() { channel.writeOutbound(new C0APacketAnimation()); }
+        public boolean isUsingItem() { return usingItem; }
+        public void swingItem() {
+            if (swingFails) throw new IllegalStateException("simulated swing failure");
+            channel.writeOutbound(new C0APacketAnimation());
+        }
     }
     public static class Target extends EntityLivingBase {
         public boolean alive = true;
+        public boolean acceptsDamage = true;
         public AxisAlignedBB box = new AxisAlignedBB(-.3, 0, 2.2, .3, 1.8, 2.8);
         public AxisAlignedBB getEntityBoundingBox() { return box; }
         public boolean isEntityAlive() { return alive; }
@@ -59,8 +66,11 @@ public final class ZenAntiKBTest {
         public void attackEntity(Player p, EntityLivingBase target) {
             attacks++; sawSprinting |= p.sprinting;
             p.channel.writeOutbound(new C02PacketUseEntity(target, C02PacketUseEntity.Action.ATTACK));
-            // 实际 1.8.9 控制器会在疾跑攻击时减速；Zen 在调用前退出疾跑。
-            if (p.sprinting) { p.motionX *= .6; p.motionZ *= .6; p.sprinting = false; }
+            // 来自真实 1.8.9 EntityPlayer.attackTargetEntityWithCurrentItem：
+            // 仅当伤害被接受且 knockback > 0 时减速、结束疾跑。
+            if (p.sprinting && ((Target) target).acceptsDamage) {
+                p.motionX *= .6; p.motionZ *= .6; p.sprinting = false;
+            }
         }
     }
     public static class PacketStub {
@@ -118,12 +128,16 @@ public final class ZenAntiKBTest {
                         player.motionZ = v.getMotionZ() / 8000.0;
                     }
                 }
+                if (p instanceof S32PacketConfirmTransaction) channel.writeOutbound(new C0FPacketConfirmTransaction());
             };
             mc.thePlayer = player; mc.theWorld = world; mc.playerController = controller;
             hit.typeOfHit = MovingObjectPosition.MovingObjectType.ENTITY; hit.entityHit = target; mc.objectMouseOver = hit;
             AttackReduceFeature.setMode(mode); start();
         }
-        void start() { AttackReduceFeature.onTickStart(mc); channel.runPendingTasks(); }
+        void start() {
+            drain(); OpenMaverFeatures.beginAttackTick(); LegacySoundFeature.onTick(mc);
+            AttackReduceFeature.beforeTick(mc); AttackReduceFeature.onTickStart(mc); channel.runPendingTasks();
+        }
         void input() {
             player.movementInput.moveForward = 0; player.movementInput.moveStrafe = 0;
             player.movementInput.jump = false;
@@ -133,13 +147,17 @@ public final class ZenAntiKBTest {
         void tick() { start(); input(); end(); }
         void drain() { Runnable task; while ((task = mc.tasks.poll()) != null) task.run(); channel.runPendingTasks(); }
         void receive(Object packet) { channel.writeInbound(packet); drain(); }
+        void holdOutbound() { AttackReduceFeature.holdMoves(); channel.runPendingTasks(); }
         S12PacketEntityVelocity velocity() { return new S12PacketEntityVelocity(7, .4, .36, -.2); }
-        public void close() { MODULE.setEnabled(false); AttackReduceFeature.onTickStart(mc); channel.runPendingTasks(); channel.finish(); }
+        public void close() {
+            MODULE.setEnabled(false); AttackReduceFeature.beforeTick(mc); channel.runPendingTasks();
+            mc.thePlayer = null; LegacySoundFeature.onTick(mc); channel.finish();
+        }
     }
 
     public static void main(String[] args) throws Exception {
         ModuleManager.register(MODULE); ModuleManager.register(AURA);
-        settings(); noXZ(); jumpReset(); mix(); lifecycle(); threadIsolation();
+        settings(); noXZ(); jumpReset(); mix(); lifecycle(); threadIsolation(); debugChat(); Protocol18Test.run();
         System.out.println("ZenAntiKBTest: " + passed + " passed, 0 failed");
     }
     static void settings() throws Exception {
@@ -161,6 +179,46 @@ public final class ZenAntiKBTest {
         AttackReduceFeature.load(saved); check("integer settings clamped", AttackReduceFeature.getAttackAmount() == 20 && AttackReduceFeature.getRotateTicks() == 3);
         saved.setProperty("velocity.zen.mode", "bad"); saved.setProperty("velocity.zen.attackAmount", "NaN");
         AttackReduceFeature.load(saved); check("invalid settings use Zen defaults", AttackReduceFeature.getMode() == 0 && AttackReduceFeature.getAttackAmount() == 5);
+        Properties debug = new Properties(); debug.setProperty("velocity.zen.debug", "true");
+        AttackReduceFeature.load(debug);
+        check("debug chat option loads", AttackReduceFeature.getDebugChat());
+        check("debug chat option saves", AttackReduceFeature.save().contains("velocity.zen.debug=true"));
+        AttackReduceFeature.setDebugChat(false);
+        check("debug chat option clears", !AttackReduceFeature.getDebugChat());
+    }
+    static boolean has(List<String> lines, String needle) {
+        for (String line : lines) if (line.contains(needle)) return true;
+        return false;
+    }
+    static boolean hasOut(List<String> lines, String needle) {
+        for (String line : lines) if (line.startsWith("OUT ") && line.contains(needle)) return true;
+        return false;
+    }
+    /** NoXZ 调试通道必须说明立即直通，不再产生挂起/回放文本。 */
+    static void debugChat() throws Exception {
+        try (Fixture f = new Fixture(0)) {
+            AttackReduceFeature.setDebugChat(true); VelocityDebug.drain();
+            check("debug chat toggles VelocityDebug", VelocityDebug.isEnabled());
+            f.player.onGround = false;
+            S12PacketEntityVelocity v = f.velocity(); f.receive(v);
+            C03PacketPlayer move = new C03PacketPlayer(2);
+            f.channel.pipeline().write(move, f.channel.newPromise()); f.channel.pipeline().flush();
+            f.channel.runPendingTasks();
+            List<String> first = VelocityDebug.history();
+            check("debug prints immediate airborne knockback and timer", has(first, "KB in PASS AIR")
+                    && has(first, "落点") && has(first, "timer=1.00"));
+            check("debug prints outgoing sent packet", has(first, "OUT SEND"));
+            check("debug omits bogus coordinates for positionless C03", !hasOut(first, "(0.00, 0.00, 0.00)"));
+            for (int i = 0; i < 12; i++) f.tick();
+            List<String> after = VelocityDebug.history();
+            check("NoXZ debug never claims suspension or replay", !has(after, "SUSPEND")
+                    && !has(after, "KB release") && !has(after, "OUT HOLD") && !has(after, "FLUSH"));
+            f.player.onGround = true; f.player.sprinting = false; f.receive(f.velocity());
+            check("debug preserves grounded not-sprinting reason", has(VelocityDebug.history(), "PASS NOT SPRINTING"));
+        } finally {
+            AttackReduceFeature.setDebugChat(false); VelocityDebug.drain();
+            check("debug chat off clears queue", !VelocityDebug.isEnabled() && VelocityDebug.drain().isEmpty());
+        }
     }
     static void noXZ() throws Exception {
         try (Fixture f = new Fixture(0)) {
@@ -169,36 +227,55 @@ public final class ZenAntiKBTest {
             S12PacketEntityVelocity v = f.velocity(); f.receive(v);
             check("NoXZ ground applies original velocity before attacking", f.applied.size() == 1 && f.applied.get(0) == v && near(f.player.motionX, .4) && f.controller.attacks == 0);
             f.tick();
-            check("Zen controller plus manual reduction exactly once", f.controller.attacks == 1 && !f.controller.sawSprinting
+            check("native sprint attack performs reduction exactly once", f.controller.attacks == 1 && f.controller.sawSprinting
                     && near(f.player.motionX, .24) && near(f.player.motionZ, -.12) && near(f.player.motionY, .36));
-            check("Zen attack precedes swing", f.channel.readOutbound() instanceof C02PacketUseEntity && f.channel.readOutbound() instanceof C0APacketAnimation);
+            check("1.8 swing precedes attack", f.channel.readOutbound() instanceof C0APacketAnimation && f.channel.readOutbound() instanceof C02PacketUseEntity);
             f.tick(); check("sprint state check consumes failed attempt without attacking", f.controller.attacks == 1);
             for (int i = 0; i < 3; i++) { f.player.sprinting = true; f.tick(); }
             f.player.sprinting = true; f.tick(); check("default sequence has five attempts", f.controller.attacks == 4);
             check("S12 fields are never scaled", v.getMotionX() == 3200 && v.getMotionY() == 2880 && v.getMotionZ() == -1600);
         }
         try (Fixture f = new Fixture(0)) {
+            f.player.sprinting = false;
+            S12PacketEntityVelocity pass = f.velocity(); f.receive(pass);
+            check("grounded knockback that cannot attack passes straight through", f.applied.size() == 1 && f.applied.get(0) == pass);
+        }
+        try (Fixture f = new Fixture(0)) {
             f.player.onGround = false;
             S12PacketEntityVelocity v = f.velocity(); f.receive(v);
             S32PacketConfirmTransaction ack = new S32PacketConfirmTransaction(); f.receive(ack);
             S06PacketUpdateHealth health = new S06PacketUpdateHealth(); f.receive(health);
-            check("NoXZ holds initial velocity and transactions but permits health", f.applied.size() == 1 && f.applied.get(0) == health);
+            check("airborne NoXZ immediately applies velocity and subsequent packets in order", f.applied.size() == 3
+                    && f.applied.get(0) == v && f.applied.get(1) == ack && f.applied.get(2) == health
+                    && near(f.player.motionX, .4) && near(f.player.motionY, .36));
+            check("airborne transaction is acknowledged immediately", f.channel.readOutbound() instanceof C0FPacketConfirmTransaction);
             C03PacketPlayer first = new C03PacketPlayer(1), second = new C03PacketPlayer(2);
             ChannelPromise a = f.channel.newPromise(), b = f.channel.newPromise();
             f.channel.pipeline().write(first, a); f.channel.pipeline().write(second, b); f.channel.pipeline().flush();
-            check("NoXZ really holds outgoing movement and promises", f.channel.readOutbound() == null && !a.isDone() && !b.isDone());
-            for (int i = 0; i < 11; i++) f.tick();
-            check("NoXZ does not release before timeout", !f.applied.contains(v));
-            f.tick();
-            check("NoXZ twelve tick timeout replays originals in order", f.applied.size() == 3 && f.applied.get(1) == v && f.applied.get(2) == ack && near(f.player.motionY, .36));
-            check("movement FIFO and promises completed on release", f.channel.readOutbound() == first && f.channel.readOutbound() == second && a.isSuccess() && b.isSuccess());
+            check("airborne movement and promises pass immediately", f.channel.readOutbound() == first
+                    && f.channel.readOutbound() == second && a.isSuccess() && b.isSuccess());
+            for (int i = 0; i < 20; i++) {
+                f.tick();
+                C03PacketPlayer move = new C03PacketPlayer(i + 3);
+                ChannelPromise promise = f.channel.newPromise(); f.channel.pipeline().write(move, promise); f.channel.pipeline().flush();
+                check("airborne tick " + i + " sends exactly its current move", f.channel.readOutbound() == move
+                        && f.channel.readOutbound() == null && promise.isSuccess());
+                check("airborne tick " + i + " retains no packets or attacks", AttackReduceFeature.current().pendingCount() == 0
+                        && !AttackReduceFeature.current().isSuspending && AttackReduceFeature.queuedMoves() == 0
+                        && f.controller.attacks == 0);
+            }
+            check("airborne timeout never reapplies velocity", f.applied.size() == 3 && near(f.player.motionY, .36));
+            f.player.onGround = true; f.tick();
+            check("expired landing opportunity does not attack later", f.controller.attacks == 0);
         }
         try (Fixture f = new Fixture(0)) {
             f.player.onGround = false; S12PacketEntityVelocity v = f.velocity(); f.receive(v);
             S32PacketConfirmTransaction ack = new S32PacketConfirmTransaction(); f.receive(ack);
-            f.player.onGround = true; f.start();
-            check("landing applies knockback then attacks before delayed entity state", f.applied.size() == 1 && f.applied.get(0) == v && f.controller.attacks == 1 && near(f.player.motionX, .24));
-            f.input(); f.end(); check("next motion phase flushes remaining queue", f.applied.get(1) == ack);
+            f.tick(); check("airborne landing intent does not attack early", f.controller.attacks == 0);
+            // 让正常物理已更新的速度区别于 S12，落地时不得重新覆盖。
+            f.player.motionX = .2; f.player.motionY = -.1; f.player.onGround = true; f.start();
+            check("landing attacks current physics without reapplying velocity", f.applied.size() == 2 && f.applied.get(0) == v
+                    && f.applied.get(1) == ack && f.controller.attacks == 1 && near(f.player.motionX, .12) && near(f.player.motionY, -.1));
         }
         try (Fixture f = new Fixture(0)) {
             f.mc.objectMouseOver = null; f.receive(f.velocity()); f.tick();
@@ -209,11 +286,11 @@ public final class ZenAntiKBTest {
             S19PacketEntityStatus status = new S19PacketEntityStatus();
             S0BPacketAnimation other = new S0BPacketAnimation(8), self = new S0BPacketAnimation(7);
             f.receive(status); f.receive(other); f.receive(self);
-            check("NoXZ permits hurt status and other entity animation only", f.applied.size() == 2
-                    && f.applied.get(0) == status && f.applied.get(1) == other);
+            check("NoXZ passes hurt status and all animations immediately", f.applied.size() == 4
+                    && f.applied.get(1) == status && f.applied.get(2) == other && f.applied.get(3) == self);
             for (int i = 0; i < 12; i++) f.start();
-            check("NoXZ timeout applies knockback before motion queue flush", f.applied.size() == 3 && !f.applied.contains(self));
-            f.input(); f.end(); check("NoXZ motion phase releases self animation", f.applied.get(3) == self);
+            check("NoXZ timeout never replays earlier packets", f.applied.size() == 4);
+            f.input(); f.end(); f.start(); check("NoXZ replay is not repeated by motion callbacks", f.applied.size() == 4);
         }
         try (Fixture f = new Fixture(0)) {
             f.mc.objectMouseOver = null; f.receive(f.velocity());
@@ -231,13 +308,14 @@ public final class ZenAntiKBTest {
         }
         try (Fixture f = new Fixture(0)) {
             f.player.onGround = false; AttackReduceFeature.setInstantAttack(true); f.mc.timer.timerSpeed = 1.25F;
-            f.receive(f.velocity()); f.tick(); check("instant attack half speed is wired to actual timer", near(f.mc.timer.timerSpeed, .5));
+            f.receive(f.velocity()); f.tick(); check("instant attack never touches the tick timer", near(f.mc.timer.timerSpeed, 1.25));
             for (int i = 0; i < 5; i++) f.tick();
-            f.tick(); check("instant attack stays slowed after progress cap until release", near(f.mc.timer.timerSpeed, .5));
-            f.player.onGround = true; f.start(); check("instant attack landing uses four speed", near(f.mc.timer.timerSpeed, 4));
+            f.player.onGround = true; f.start();
+            check("instant attack landing keeps the original timer", near(f.mc.timer.timerSpeed, 1.25));
             f.end();
             for (int i = 0; i < 3; i++) { f.player.sprinting = true; f.tick(); }
-            check("instant attack consumes accumulated attacks and restores prior speed", f.controller.attacks == 3 && near(f.mc.timer.timerSpeed, 1.25));
+            for (int i = 0; i < 7; i++) { f.player.sprinting = true; f.tick(); }
+            check("instant attack caps landing bonus at three normal-tick attacks", f.controller.attacks == 8 && near(f.mc.timer.timerSpeed, 1.25));
         }
         try (Fixture f = new Fixture(0)) {
             AURA.setEnabled(true); field(OpenMaverFeatures.class, "killAuraTarget", f.target);
@@ -259,6 +337,36 @@ public final class ZenAntiKBTest {
             f.receive(new S12PacketEntityVelocity(7, 0, .36, 0)); f.tick();
             check("Zen positive-Y trigger also handles vertical-only motion", f.controller.attacks == 1 && near(f.player.motionY, .36));
         }
+        try (Fixture f = new Fixture(0)) {
+            f.player.onGround = false; f.receive(f.velocity());
+            f.receive(new S12PacketEntityVelocity(7, .1, -.1, .2));
+            f.player.onGround = true; f.tick();
+            check("new nonpositive impulse clears old landing attack and jump", f.controller.attacks == 0
+                    && !f.player.movementInput.jump && near(f.player.motionX, .1) && near(f.player.motionY, -.1));
+        }
+        try (Fixture f = new Fixture(0)) {
+            f.player.onGround = false; f.receive(f.velocity()); f.tick();
+            f.mc.objectMouseOver = null; f.player.onGround = true; f.tick();
+            check("landing without target leaves sprint and velocity untouched", f.controller.attacks == 0
+                    && f.player.sprinting && near(f.player.motionX, .4));
+            f.mc.objectMouseOver = f.hit; f.tick();
+            check("failed landing opportunity does not arm a later target", f.controller.attacks == 0);
+        }
+        try (Fixture f = new Fixture(0)) {
+            f.player.onGround = false; f.receive(f.velocity()); f.player.water = true; f.tick();
+            f.player.water = false; f.player.onGround = true; f.tick();
+            check("ignored environment clears pending landing attack", f.controller.attacks == 0);
+        }
+        for (boolean instant : new boolean[] {false, true})
+            for (boolean sprint : new boolean[] {false, true})
+                for (boolean target : new boolean[] {false, true}) try (Fixture f = new Fixture(0)) {
+                    AttackReduceFeature.setInstantAttack(instant); f.player.sprinting = sprint;
+                    f.mc.objectMouseOver = target ? f.hit : null; f.player.onGround = false;
+                    S12PacketEntityVelocity v = f.velocity(); f.receive(v);
+                    check("airborne S12 passes for all Instant/sprint/target settings", f.applied.size() == 1
+                            && f.applied.get(0) == v && near(f.player.motionX, .4) && near(f.player.motionY, .36)
+                            && !AttackReduceFeature.current().isSuspending && AttackReduceFeature.current().pendingCount() == 0);
+                }
     }
     static void jumpReset() {
         try (Fixture f = new Fixture(1)) {
@@ -306,7 +414,7 @@ public final class ZenAntiKBTest {
             f.receive(move); f.receive(ack); f.receive(teleport); f.receive(keepalive);
             check("Mix queues entity movement / transaction / teleport only", f.applied.size() == 1 && f.applied.get(0) == keepalive);
             for (int i = 0; i < 23; i++) f.tick(); check("Mix waits through twenty-three air ticks", !f.applied.contains(v));
-            f.tick(); check("Mix twenty-four air ticks flushes FIFO", f.applied.size() == 5 && f.applied.get(1) == v && f.applied.get(2) == move && f.applied.get(3) == ack && f.applied.get(4) == teleport);
+            f.tick(); f.start(); check("Mix motion release replays FIFO before next actions", f.applied.size() == 5 && f.applied.get(1) == v && f.applied.get(2) == move && f.applied.get(3) == ack && f.applied.get(4) == teleport);
             check("Mix hurt-time auto jump active", f.player.movementInput.jump);
         }
         try (Fixture f = new Fixture(2)) {
@@ -320,40 +428,43 @@ public final class ZenAntiKBTest {
             field(OpenMaverFeatures.class, "killAuraTarget", f.target);
             f.player.motionX = .4; f.player.motionZ = -.2; f.player.motionY = .1; f.receive(f.velocity());
             f.player.sprinting = false; f.start();
-            check("Mix Try Attack invokes two Aura-target attacks with captured sprint", f.controller.attacks == 2
-                    && !f.controller.sawSprinting && near(f.player.motionX, .144) && near(f.player.motionZ, -.072) && near(f.player.motionY, .1));
+            check("Mix uses current nonsprint state without manual damping", f.controller.attacks == 1
+                    && !f.controller.sawSprinting && near(f.player.motionX, .4) && near(f.player.motionZ, -.2) && near(f.player.motionY, .1));
             f.input(); f.end();
+            f.start(); check("Mix second attack uses next tick budget", f.controller.attacks == 2);
         }
         try (Fixture f = new Fixture(2)) {
             AttackReduceFeature.setTryAttack(true); AURA.setEnabled(true); field(OpenMaverFeatures.class, "killAuraTarget", f.target);
             f.player.motionX = .4; f.player.sprinting = false; f.receive(f.velocity()); f.player.sprinting = true; f.start();
-            check("Mix nonsprint receipt skips Keep Sprint scaling on both attacks", f.controller.attacks == 2 && near(f.player.motionX, .4));
+            check("Mix native attack uses execution-time sprint state", f.controller.attacks == 1 && near(f.player.motionX, .24));
         }
     }
     static void lifecycle() throws Exception {
-        try (Fixture f = new Fixture(0)) {
+        try (Fixture f = new Fixture(1)) {
             f.player.onGround = false; f.receive(f.velocity());
-            AttackReduceFeature.setMode(1); f.channel.runPendingTasks();
+            AttackReduceFeature.setMode(0); f.start();
             check("mode switch replays pending original instead of dropping it", f.applied.size() == 1 && near(f.player.motionX, .4));
             f.start(); check("mode switch reattaches hook", AttackReduceFeature.isPacketHookInstalled());
         }
-        try (Fixture f = new Fixture(0)) {
+        try (Fixture f = new Fixture(1)) {
             f.player.onGround = false; AttackReduceFeature.setInstantAttack(true); f.receive(f.velocity()); f.tick();
             MODULE.setEnabled(false); f.tick();
             check("disable flushes pending velocity and restores timer", f.applied.size() == 1 && near(f.mc.timer.timerSpeed, 1) && !AttackReduceFeature.isPacketHookInstalled());
         }
-        try (Fixture f = new Fixture(0)) {
+        try (Fixture f = new Fixture(1)) {
             f.player.onGround = false; f.receive(f.velocity()); f.mc.theWorld = new Object(); f.tick();
             check("new world drops old world queue", f.applied.isEmpty() && near(f.player.motionX, 0));
         }
-        try (Fixture f = new Fixture(0)) {
+        try (Fixture f = new Fixture(1)) {
             f.player.onGround = false; f.receive(f.velocity());
+            f.holdOutbound();
             ChannelPromise promise = f.channel.newPromise(); f.channel.pipeline().write(new C03PacketPlayer(1), promise);
             f.channel.close(); f.channel.runPendingTasks(); f.drain();
             check("disconnect fails held promise instead of leaving it pending", promise.isDone() && !promise.isSuccess());
         }
-        try (Fixture f = new Fixture(0)) {
+        try (Fixture f = new Fixture(1)) {
             f.player.onGround = false; f.receive(f.velocity());
+            f.holdOutbound();
             ChannelPromise cancelled = f.channel.newPromise(), next = f.channel.newPromise();
             f.channel.pipeline().write(new C03PacketPlayer(1), cancelled); cancelled.cancel(false);
             C03PacketPlayer following = new C03PacketPlayer(2); f.channel.pipeline().write(following, next);
@@ -361,13 +472,14 @@ public final class ZenAntiKBTest {
             check("cancelled movement promise does not block remaining FIFO", cancelled.isCancelled() && next.isSuccess()
                     && f.channel.readOutbound() == following && f.channel.readOutbound() == null);
         }
-        try (Fixture f = new Fixture(0)) {
+        try (Fixture f = new Fixture(1)) {
             f.player.onGround = false; f.receive(f.velocity());
+            f.holdOutbound();
             ChannelPromise last = null;
             for (int i = 0; i < AttackReduceFeature.MAX_PENDING; i++) {
                 last = f.channel.newPromise(); f.channel.pipeline().write(new C03PacketPlayer(i), last);
             }
-            f.drain(); int count = 0; while (f.channel.readOutbound() != null) count++;
+            f.drain(); f.start(); int count = 0; while (f.channel.readOutbound() != null) count++;
             check("outgoing queue cap releases all moves and pending knockback", count == AttackReduceFeature.MAX_PENDING
                     && last.isSuccess() && f.applied.size() == 1 && !AttackReduceFeature.current().isSuspending);
         }
@@ -387,10 +499,20 @@ public final class ZenAntiKBTest {
             check("same-connection respawn preserves packets already queued for new world", f.applied.size() == 2 && f.applied.get(1) == following);
             f.start(); f.receive(new S00PacketKeepAlive()); check("respawn hook rebinds to new world", f.applied.size() == 3 && AttackReduceFeature.isPacketHookInstalled());
         }
-        try (Fixture f = new Fixture(0)) {
+        try (Fixture f = new Fixture(1)) {
             f.player.onGround = false; f.receive(f.velocity());
             for (int i = 0; i < AttackReduceFeature.MAX_PENDING; i++) f.receive(new S32PacketConfirmTransaction());
             check("packet count cap forces release without losing packets", f.applied.size() == AttackReduceFeature.MAX_PENDING + 1 && !AttackReduceFeature.current().isSuspending);
+        }
+        for (int exit = 0; exit < 4; exit++) try (Fixture f = new Fixture(0)) {
+            f.player.onGround = false; S12PacketEntityVelocity v = f.velocity(); f.receive(v);
+            if (exit == 0) { MODULE.setEnabled(false); f.tick(); MODULE.setEnabled(true); }
+            else if (exit == 1) { AttackReduceFeature.setMode(1); f.tick(); AttackReduceFeature.setMode(0); }
+            else if (exit == 2) f.mc.theWorld = new Object();
+            else f.receive(new S08PacketPlayerPosLook());
+            f.player.onGround = true; f.tick();
+            check("NoXZ lifecycle clears landing intent without replay: " + exit, f.controller.attacks == 0
+                    && f.applied.get(0) == v && f.applied.stream().filter(p -> p == v).count() == 1);
         }
     }
     static void threadIsolation() throws Exception {
@@ -400,7 +522,7 @@ public final class ZenAntiKBTest {
             f.drain(); check("SRG processPacket runs on main thread", near(f.player.motionX, .4));
         }
         try (Fixture f = new Fixture(1)) {
-            f.channel.writeInbound(f.velocity()); AttackReduceFeature.setMode(2); f.drain();
+            f.channel.writeInbound(f.velocity()); AttackReduceFeature.setMode(2); f.start();
             check("queued main-thread task survives mode switch exactly once", f.applied.size() == 1 && near(f.player.motionX, .4));
         }
         try (Fixture f = new Fixture(1)) {
