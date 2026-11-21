@@ -91,7 +91,7 @@ debug.enabled=false
 | Aim yaw/pitch 单 tick 上限 | 18°/12° | 35°/20° | 配置值/≥60° |
 | AutoClicker 上限 | 8 CPS | 12 CPS | 20 CPS |
 | 最小点击间隔 | 115ms | 75ms | 45ms |
-| FastPlace | 不改 timer | 最低 2 tick | 按配置，可 0 |
+| FastPlace | 不改 timer | 最快 2 tick + 2/3 tick 抖动 | 按配置，可 0 |
 | Scaffold 放置 | C03 携带 aim + 延迟 1 tick | 同左 | 同左（Myau 全量） |
 | Placement 自动旋转 | 强制 legit（旧路径） | 强制 legit（旧路径） | 允许 |
 | Scaffold C05 | 不再发送 | 不再发送 | 不再发送 |

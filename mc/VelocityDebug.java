@@ -136,6 +136,17 @@ final class VelocityDebug {
         return trace;
     }
 
+    /** 区分收到重置意图与真正执行的动作；速度为动作后的实值，不代表服务端命中确认。 */
+    static void resetAction(String action) {
+        if (!enabled) return;
+        Object player = AttackReduceFeature.player();
+        if (player == null) return;
+        emit("RESET " + action + " ground=" + AttackReduceFeature.onGround()
+                + " v=(" + fmt2(AttackReduceFeature.number(player, "motionX", "field_70159_w"))
+                + ", " + fmt2(AttackReduceFeature.number(player, "motionY", "field_70181_x"))
+                + ", " + fmt2(AttackReduceFeature.number(player, "motionZ", "field_70179_y")) + ")", true);
+    }
+
     /** 挂起期间的进度：实际位置 vs 服务端预计位置。 */
     static void suspendTick(Trace trace, int ticks) {
         if (!enabled || trace == null) return;

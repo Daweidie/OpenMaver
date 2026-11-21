@@ -20,7 +20,56 @@ final class Protocol18Test {
         return packets;
     }
     static void run() throws Exception {
-        nativeAttack(); autoClickerModes(); criticalSprint(); replayBoundaries(); outboundFifo(); repeatedVelocity(); sounds();
+        nativeAttack(); airResetPhysics(); autoClickerModes(); criticalSprint(); replayBoundaries(); outboundFifo(); repeatedVelocity(); sounds();
+    }
+    /** 重现 22:15:28/30/32 日志中逐次降低的空中 S12；Y 始终遵循原包与重力。 */
+    static void airResetPhysics() {
+        double[][] velocities = {
+            {-.09, .28, -.39}, {-.08, .20, -.35}, {-.07, .12, -.32}, {-.07, .04, -.29},
+            {-.09, .36, -.39}, {-.08, .28, -.36}, {-.07, .19, -.32}, {-.07, .11, -.29},
+            {-.14, .28, -.50}, {-.12, .20, -.46}, {-.11, .12, -.42}
+        };
+        for (boolean target : new boolean[] {false, true}) for (boolean damage : new boolean[] {false, true})
+            try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
+                f.player.onGround = false; f.target.acceptsDamage = damage;
+                f.mc.objectMouseOver = target ? f.hit : null;
+                f.player.rotationYaw = 25; f.mc.timer.timerSpeed = .8F;
+                for (double[] velocity : velocities) {
+                    f.start();
+                    S12PacketEntityVelocity packet = new S12PacketEntityVelocity(7, velocity[0], velocity[1], velocity[2]);
+                    f.receive(packet);
+                    double x = packet.getMotionX() / 8000.0, y = packet.getMotionY() / 8000.0, z = packet.getMotionZ() / 8000.0;
+                    check("logged air velocity immediately applies before any input", near(f.player.motionX, x)
+                            && near(f.player.motionY, y) && near(f.player.motionZ, z));
+                    f.input();
+                    double damping = target && damage ? .6 : 1;
+                    check("logged air reset preserves Y and only native accepted damage reduces XZ", f.player.jumpCalls == 0
+                            && !f.player.onGround && !f.player.movementInput.jump && near(f.player.motionY, y)
+                            && near(f.player.motionX, x * damping) && near(f.player.motionZ, z * damping));
+                    check("logged air reset never changes camera, timer or packet flow", near(f.player.rotationYaw, 25)
+                            && near(f.mc.timer.timerSpeed, .8) && !AttackReduceFeature.current().isSuspending
+                            && AttackReduceFeature.current().pendingCount() == 0 && AttackReduceFeature.queuedMoves() == 0);
+                    // 1.8.9 空中 moveEntity 使用本 tick 的 Y，之后才施加重力/阻力。
+                    double beforeY = f.player.posY;
+                    f.player.posY += f.player.motionY;
+                    f.player.motionY = (f.player.motionY - .08) * .9800000190734863;
+                    f.end();
+                    check("logged air trajectory has no extra 0.42 rise", near(f.player.posY - beforeY, y)
+                            && near(f.player.motionY, (y - .08) * .9800000190734863));
+                }
+            }
+        try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
+            f.player.onGround = false; f.player.sprinting = f.player.serverSprintState = false;
+            f.receive(f.velocity()); f.input();
+            C03PacketPlayer movement = new C03PacketPlayer(1); f.channel.writeOutbound(movement);
+            List<Object> wire = outbound(f);
+            check("JumpReset air path sends sprint -> animation -> attack -> movement", wire.size() == 4
+                    && wire.get(0) instanceof C0BPacketEntityAction
+                    && ((C0BPacketEntityAction) wire.get(0)).action == C0BPacketEntityAction.Action.START_SPRINTING
+                    && wire.get(1) instanceof C0APacketAnimation && wire.get(2) instanceof C02PacketUseEntity && wire.get(3) == movement);
+            check("JumpReset air wire action leaves vertical velocity and ground intact", near(f.player.motionY, .36)
+                    && !f.player.onGround && f.player.jumpCalls == 0 && f.controller.attacks == 1);
+        }
     }
     static void autoClickerModes() throws Exception {
         java.lang.reflect.Method click = OpenMaverFeatures.class.getDeclaredMethod("tryAutoLeftClick", net.minecraft.client.Minecraft.class, long.class);

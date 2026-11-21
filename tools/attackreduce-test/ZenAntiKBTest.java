@@ -33,8 +33,8 @@ public final class ZenAntiKBTest {
         public NetHandlerPlayClient sendQueue;
         public MovementInput movementInput = new MovementInput();
         public boolean onGround = true, sprinting = true, serverSprintState = true, isInWeb, water, lava, burning, ladder, sleeping, jumpBoost, alive = true;
-        public boolean usingItem, swingFails;
-        public int hurtTime = 10;
+        public boolean usingItem, swingFails, isAirBorne;
+        public int hurtTime = 10, jumpCalls;
         EmbeddedChannel channel;
         public boolean func_70051_ag() { return sprinting; }
         public void func_70031_b(boolean v) { sprinting = v; }
@@ -48,6 +48,17 @@ public final class ZenAntiKBTest {
         public boolean isPotionActive(int id) { return func_82165_m(id); }
         public float getEyeHeight() { return 1.62F; }
         public boolean isUsingItem() { return usingItem; }
+        // 1.8.9 EntityLivingBase.jump：原版方法本身没有 onGround 限制。
+        protected void func_70664_aZ() {
+            jumpCalls++;
+            motionY = (double) .42F + (jumpBoost ? (double) .1F : 0);
+            if (sprinting) {
+                float yaw = rotationYaw * .017453292F;
+                motionX -= (double) ((float) Math.sin(yaw) * .2F);
+                motionZ += (double) ((float) Math.cos(yaw) * .2F);
+            }
+            isAirBorne = true;
+        }
         public void swingItem() {
             if (swingFails) throw new IllegalStateException("simulated swing failure");
             channel.writeOutbound(new C0APacketAnimation());
@@ -157,14 +168,14 @@ public final class ZenAntiKBTest {
 
     public static void main(String[] args) throws Exception {
         ModuleManager.register(MODULE); ModuleManager.register(AURA);
-        settings(); noXZ(); jumpReset(); sprintReset(); mix(); lifecycle(); threadIsolation(); debugChat(); Protocol18Test.run();
+        settings(); noXZ(); jumpReset(); mix(); lifecycle(); threadIsolation(); debugChat(); Protocol18Test.run();
         System.out.println("ZenAntiKBTest: " + passed + " passed, 0 failed");
     }
     static void settings() throws Exception {
         Properties old = new Properties(); old.setProperty("velocity.mode", "2"); old.setProperty("velocity.horizontal", "0");
         AttackReduceFeature.load(old);
-        check("old numeric mode uses Sprint Reset default", AttackReduceFeature.getMode() == AttackReduceFeature.MODE_SPRINT_RESET);
-        check("four modes with Sprint Reset default", AttackReduceFeature.MODE_NAMES.length == 4 && "Sprint Reset".equals(AttackReduceFeature.getSummary()));
+        check("old numeric mode uses JumpReset default", AttackReduceFeature.getMode() == AttackReduceFeature.MODE_JUMP_RESET);
+        check("three modes with JumpReset default", AttackReduceFeature.MODE_NAMES.length == 3 && "JumpReset".equals(AttackReduceFeature.getSummary()));
         check("Zen default settings", AttackReduceFeature.getAttackAmount() == 5 && AttackReduceFeature.getChance() == 100 && AttackReduceFeature.getAccuracy() == 100
                 && AttackReduceFeature.getWaterCheck() && !AttackReduceFeature.getOnlyWhenTargeting()
                 && AttackReduceFeature.getSprintStateCheck() && !AttackReduceFeature.getRotate() && !AttackReduceFeature.getInstantAttack());
@@ -179,7 +190,7 @@ public final class ZenAntiKBTest {
         saved.setProperty("velocity.zen.attackAmount", "999"); saved.setProperty("velocity.zen.chance", "-1"); saved.setProperty("velocity.zen.accuracy", "999");
         AttackReduceFeature.load(saved); check("integer settings clamped", AttackReduceFeature.getAttackAmount() == 20 && AttackReduceFeature.getChance() == 0 && AttackReduceFeature.getAccuracy() == 100);
         saved.setProperty("velocity.zen.mode", "bad"); saved.setProperty("velocity.zen.attackAmount", "NaN");
-        AttackReduceFeature.load(saved); check("invalid settings use Zen defaults", AttackReduceFeature.getMode() == AttackReduceFeature.MODE_SPRINT_RESET && AttackReduceFeature.getAttackAmount() == 5);
+        AttackReduceFeature.load(saved); check("invalid settings use Zen defaults", AttackReduceFeature.getMode() == AttackReduceFeature.MODE_JUMP_RESET && AttackReduceFeature.getAttackAmount() == 5);
         Properties debug = new Properties(); debug.setProperty("velocity.zen.debug", "true");
         AttackReduceFeature.load(debug);
         check("debug chat option loads", AttackReduceFeature.getDebugChat());
@@ -190,11 +201,16 @@ public final class ZenAntiKBTest {
             Properties p = new Properties(); p.setProperty("velocity.zen.mode", name); AttackReduceFeature.load(p);
             check("explicit saved mode is preserved: " + name, name.equals(AttackReduceFeature.getSummary()));
         }
-        Properties legacy = new Properties(); legacy.setProperty("velocity.zen.mode", "Jump Reset");
-        legacy.setProperty("velocity.zen.followDirection", "true"); legacy.setProperty("velocity.zen.rotateTicks", "20");
-        AttackReduceFeature.load(legacy);
-        check("legacy Jump Reset keeps mode but retires delay and rotation controls", AttackReduceFeature.getMode() == AttackReduceFeature.MODE_JUMP_RESET
-                && !AttackReduceFeature.save().contains("followDirection") && !AttackReduceFeature.save().contains("rotateTicks"));
+        for (String name : new String[] {"Sprint Reset", "Jump Reset", "jumpreset"}) {
+            Properties legacy = new Properties(); legacy.setProperty("velocity.zen.mode", name);
+            legacy.setProperty("velocity.zen.followDirection", "true"); legacy.setProperty("velocity.zen.rotateTicks", "20");
+            AttackReduceFeature.load(legacy);
+            check("legacy reset mode normalizes to JumpReset: " + name, AttackReduceFeature.getMode() == AttackReduceFeature.MODE_JUMP_RESET
+                    && AttackReduceFeature.save().startsWith("velocity.zen.mode=JumpReset\n")
+                    && !AttackReduceFeature.save().contains("followDirection") && !AttackReduceFeature.save().contains("rotateTicks"));
+        }
+        AttackReduceFeature.setMode(3);
+        check("removed mode index falls back to JumpReset", AttackReduceFeature.getMode() == AttackReduceFeature.MODE_JUMP_RESET);
     }
     static boolean has(List<String> lines, String needle) {
         for (String line : lines) if (line.contains(needle)) return true;
@@ -379,97 +395,128 @@ public final class ZenAntiKBTest {
                 }
     }
     static void jumpReset() throws Exception {
-        try (Fixture f = new Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
-            f.player.sprinting = false;
+        int mode = AttackReduceFeature.MODE_JUMP_RESET;
+        try (Fixture f = new Fixture(mode)) {
+            f.player.onGround = false; f.player.sprinting = false;
             S12PacketEntityVelocity v = f.velocity(); f.receive(v);
+            check("air reset applies original velocity before acting", f.applied.size() == 1 && f.applied.get(0) == v
+                    && near(f.player.motionX, .4) && near(f.player.motionY, .36) && near(f.player.motionZ, -.2) && f.player.jumpCalls == 0);
+            f.start(); f.input();
+            check("air hit uses one native sprint attack and preserves vertical velocity", f.player.jumpCalls == 0
+                    && f.controller.attacks == 1 && f.controller.sawSprinting && !f.player.movementInput.jump
+                    && f.player.movementInput.moveForward == 1 && !f.player.onGround
+                    && near(f.player.motionX, .24) && near(f.player.motionY, .36) && near(f.player.motionZ, -.12));
+            f.input(); f.tick();
+            check("air reset repeated input and hurt time never repeat attack or jump", f.player.jumpCalls == 0 && f.controller.attacks == 1
+                    && !f.player.movementInput.jump && f.player.movementInput.moveForward == 1);
+            f.tick();
+            check("air reset returns owned sprint and input after two ticks", !f.player.sprinting
+                    && !f.player.movementInput.jump && f.player.movementInput.moveForward == 0 && f.player.jumpCalls == 0);
+            f.player.onGround = true; f.tick();
+            check("completed air reset never jumps on landing", f.player.jumpCalls == 0 && !f.player.movementInput.jump);
+        }
+        try (Fixture f = new Fixture(mode)) {
+            f.player.onGround = false; S12PacketEntityVelocity v = f.velocity(); f.receive(v);
+            check("air hit is immediate in reset mode " + mode, f.applied.contains(v));
+            f.player.onGround = true; f.tick();
+            check("air hit cannot arm a delayed landing jump " + mode, !f.player.movementInput.jump && f.player.movementInput.moveForward == 0);
+        }
+        for (boolean airborne : new boolean[] {false, true}) try (Fixture f = new Fixture(mode)) {
+            f.player.onGround = !airborne;
+            AttackReduceFeature.setChance(0); f.receive(f.velocity()); f.tick();
+            check("zero chance never resets; air=" + airborne, !f.player.movementInput.jump
+                    && f.player.movementInput.moveForward == 0 && f.applied.size() == 1 && f.player.jumpCalls == 0);
+        }
+        try (Fixture f = new Fixture(mode)) {
+            AttackReduceFeature.setOnlyWhenTargeting(true); f.mc.objectMouseOver = null;
+            f.receive(f.velocity()); f.input();
+            check("Only When Targeting rejects missing target " + mode, !f.player.movementInput.jump);
+            f.mc.objectMouseOver = f.hit; f.receive(f.velocity()); f.input();
+            check("Only When Targeting accepts visible reachable target " + mode, f.player.movementInput.jump);
+            f.target.alive = false; f.input();
+            check("target death cancels active reset " + mode, !f.player.movementInput.jump && f.player.movementInput.moveForward == 0);
+            f.target.alive = true; f.target.box = new AxisAlignedBB(20, 0, 20, 21, 2, 21);
+            f.receive(f.velocity()); f.input();
+            check("Only When Targeting rejects out-of-range target " + mode, !f.player.movementInput.jump);
+        }
+        try (Fixture f = new Fixture(mode)) {
+            f.mc.objectMouseOver = null; f.receive(f.velocity()); f.input();
+            check("target check disabled allows missing target " + mode, f.player.movementInput.jump);
+        }
+        try (Fixture f = new Fixture(mode)) {
+            f.player.water = true; f.receive(f.velocity()); f.input();
+            check("Water Check enabled skips reset but keeps velocity " + mode, !f.player.movementInput.jump && near(f.player.motionX, .4));
+            AttackReduceFeature.setWaterCheck(false); f.receive(f.velocity()); f.input();
+            check("Water Check can be disabled " + mode, f.player.movementInput.jump);
+        }
+        try (Fixture f = new Fixture(mode)) {
+            AttackReduceFeature.setAccuracy(0); f.receive(f.velocity()); f.input();
+            check("zero accuracy delays input only " + mode, !f.player.movementInput.jump && f.applied.size() == 1 && near(f.player.motionY, .36));
+            int jumps = 0;
+            for (int i = 0; i < 4; i++) { f.tick(); if (f.player.movementInput.jump) jumps++; }
+            check("inaccurate reset still produces exactly one jump within two ticks " + mode, jumps == 1);
+        }
+        try (Fixture f = new Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
+            f.player.sprinting = false; f.player.rotationYaw = 25; f.mc.timer.timerSpeed = .8F;
+            S12PacketEntityVelocity v = f.velocity(); f.receive(v); f.input();
+            check("JumpReset starts forward sprint plus one jump", f.player.sprinting && f.player.movementInput.jump
+                    && f.player.movementInput.moveForward == 1 && f.player.movementInput.moveStrafe == 0);
             S32PacketConfirmTransaction ack = new S32PacketConfirmTransaction(); f.receive(ack);
             S02PacketChat chat = new S02PacketChat(); S03PacketTimeUpdate time = new S03PacketTimeUpdate();
             f.receive(chat); f.receive(time);
-            check("Jump Reset immediately applies velocity and every following packet in FIFO", f.applied.size() == 4
-                    && f.applied.get(0) == v && f.applied.get(1) == ack && near(f.player.motionX, .4)
+            check("JumpReset immediately applies velocity and following packets in FIFO", f.applied.size() == 4
+                    && f.applied.get(0) == v && f.applied.get(1) == ack && f.applied.get(2) == chat && f.applied.get(3) == time
                     && !AttackReduceFeature.current().isSuspending && AttackReduceFeature.current().pendingCount() == 0);
-            f.input();
-            check("Jump Reset emits one jump without forcing movement or sprint", f.player.movementInput.jump
-                    && f.player.movementInput.moveForward == 0 && !f.player.sprinting);
-            f.input(); check("repeated same-tick input never forces second jump", !f.player.movementInput.jump);
-            for (int i = 0; i < 24; i++) f.tick();
-            check("Jump Reset never repeats while hurt time stays positive", !f.player.movementInput.jump && f.controller.attacks == 0
-                    && f.applied.size() == 4 && near(f.player.motionX, .4));
-        }
-        for (int mode : new int[] {AttackReduceFeature.MODE_JUMP_RESET, AttackReduceFeature.MODE_SPRINT_RESET}) {
-            try (Fixture f = new Fixture(mode)) {
-                f.player.onGround = false; S12PacketEntityVelocity v = f.velocity(); f.receive(v);
-                check("air hit is immediate in reset mode " + mode, f.applied.contains(v));
-                f.player.onGround = true; f.tick();
-                check("air hit cannot arm a delayed landing jump " + mode, !f.player.movementInput.jump && f.player.movementInput.moveForward == 0);
-            }
-            try (Fixture f = new Fixture(mode)) {
-                AttackReduceFeature.setChance(0); f.receive(f.velocity()); f.tick();
-                check("zero chance never resets " + mode, !f.player.movementInput.jump && f.player.movementInput.moveForward == 0 && f.applied.size() == 1);
-            }
-            try (Fixture f = new Fixture(mode)) {
-                AttackReduceFeature.setOnlyWhenTargeting(true); f.mc.objectMouseOver = null;
-                f.receive(f.velocity()); f.input();
-                check("Only When Targeting rejects missing target " + mode, !f.player.movementInput.jump);
-                f.mc.objectMouseOver = f.hit; f.receive(f.velocity()); f.input();
-                check("Only When Targeting accepts visible reachable target " + mode, f.player.movementInput.jump);
-                f.target.alive = false; f.input();
-                check("target death cancels active reset " + mode, !f.player.movementInput.jump && f.player.movementInput.moveForward == 0);
-                f.target.alive = true; f.target.box = new AxisAlignedBB(20, 0, 20, 21, 2, 21);
-                f.receive(f.velocity()); f.input();
-                check("Only When Targeting rejects out-of-range target " + mode, !f.player.movementInput.jump);
-            }
-            try (Fixture f = new Fixture(mode)) {
-                f.mc.objectMouseOver = null; f.receive(f.velocity()); f.input();
-                check("target check disabled allows missing target " + mode, f.player.movementInput.jump);
-            }
-            try (Fixture f = new Fixture(mode)) {
-                f.player.water = true; f.receive(f.velocity()); f.input();
-                check("Water Check enabled skips reset but keeps velocity " + mode, !f.player.movementInput.jump && near(f.player.motionX, .4));
-                AttackReduceFeature.setWaterCheck(false); f.receive(f.velocity()); f.input();
-                check("Water Check can be disabled " + mode, f.player.movementInput.jump);
-            }
-            try (Fixture f = new Fixture(mode)) {
-                AttackReduceFeature.setAccuracy(0); f.receive(f.velocity()); f.input();
-                check("zero accuracy delays input only " + mode, !f.player.movementInput.jump && f.applied.size() == 1 && near(f.player.motionY, .36));
-                int jumps = 0;
-                for (int i = 0; i < 4; i++) { f.tick(); if (f.player.movementInput.jump) jumps++; }
-                check("inaccurate reset still produces exactly one jump within two ticks " + mode, jumps == 1);
-            }
-        }
-    }
-    static void sprintReset() throws Exception {
-        try (Fixture f = new Fixture(AttackReduceFeature.MODE_SPRINT_RESET)) {
-            f.player.sprinting = false; f.player.rotationYaw = 25; f.mc.timer.timerSpeed = .8F;
-            S12PacketEntityVelocity v = f.velocity(); f.receive(v); f.input();
-            check("Sprint Reset starts forward sprint plus one jump", f.player.sprinting && f.player.movementInput.jump
-                    && f.player.movementInput.moveForward == 1 && f.player.movementInput.moveStrafe == 0);
-            check("Sprint Reset preserves original motion camera and timer", near(f.player.motionX, .4) && near(f.player.motionY, .36)
+            check("JumpReset immediately sends transaction reply", f.channel.readOutbound() instanceof C0FPacketConfirmTransaction);
+            check("JumpReset preserves original motion camera and timer", near(f.player.motionX, .4) && near(f.player.motionY, .36)
                     && near(f.player.motionZ, -.2) && near(f.player.rotationYaw, 25) && near(f.mc.timer.timerSpeed, .8));
             C03PacketPlayer move = new C03PacketPlayer(1); f.channel.writeOutbound(move);
-            check("Sprint Reset does not hold outbound movement", f.channel.readOutbound() == move && AttackReduceFeature.queuedMoves() == 0);
+            check("JumpReset does not hold outbound movement", f.channel.readOutbound() == move && AttackReduceFeature.queuedMoves() == 0);
             f.input(); check("repeated callbacks do not repeat jump or consume sprint ticks", !f.player.movementInput.jump && f.player.movementInput.moveForward == 1);
             f.tick(); check("forward sprint lasts second tick without jump", f.player.sprinting && !f.player.movementInput.jump && f.player.movementInput.moveForward == 1);
             f.tick(); check("pulse expires after two ticks and returns sprint and input", !f.player.sprinting && !f.player.movementInput.jump && f.player.movementInput.moveForward == 0);
+            for (int i = 0; i < 24; i++) f.tick();
+            check("JumpReset never repeats while hurt time stays positive", !f.player.movementInput.jump && !f.player.sprinting
+                    && f.player.movementInput.moveForward == 0 && f.controller.attacks == 0 && f.applied.size() == 4 && near(f.player.motionX, .4));
         }
-        try (Fixture f = new Fixture(AttackReduceFeature.MODE_SPRINT_RESET)) {
+        try (Fixture f = new Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
             f.receive(f.velocity()); f.input(); f.tick(); f.tick();
             check("pre-existing sprint remains active after reset", f.player.sprinting);
         }
-        try (Fixture f = new Fixture(AttackReduceFeature.MODE_SPRINT_RESET)) {
+        try (Fixture f = new Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
             f.player.sprinting = false; f.receive(f.velocity());
             f.player.movementInput.moveForward = -1; f.player.movementInput.moveStrafe = 1; f.player.movementInput.jump = true;
             AttackReduceFeature.afterMovementInput(f.player.movementInput);
-            AttackReduceFeature.setMode(AttackReduceFeature.MODE_JUMP_RESET);
+            AttackReduceFeature.setMode(AttackReduceFeature.MODE_NOXZ);
             check("cleanup returns original movement and held manual jump", f.player.movementInput.moveForward == -1
                     && f.player.movementInput.moveStrafe == 1 && f.player.movementInput.jump && !f.player.sprinting);
         }
-        try (Fixture f = new Fixture(AttackReduceFeature.MODE_SPRINT_RESET)) {
+        try (Fixture f = new Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
             AttackReduceFeature.setAccuracy(0); f.receive(f.velocity()); f.player.onGround = false; f.tick();
-            f.player.onGround = true; f.tick();
-            check("delayed input that loses ground never jumps on later landing", !f.player.movementInput.jump && f.player.movementInput.moveForward == 0);
+            f.tick();
+            check("ground hit that leaves ground before delayed input uses air attack", f.player.jumpCalls == 0
+                    && f.controller.attacks == 1 && near(f.player.motionY, .36));
+            f.player.onGround = true; f.tick(); f.tick();
+            check("delayed air reset never repeats on later landing", f.player.jumpCalls == 0 && f.controller.attacks == 1
+                    && !f.player.movementInput.jump && f.player.movementInput.moveForward == 0);
         }
-        for (int exit = 0; exit < 9; exit++) try (Fixture f = new Fixture(AttackReduceFeature.MODE_SPRINT_RESET)) {
+        try (Fixture f = new Fixture(mode)) {
+            f.player.onGround = false; f.player.jumpBoost = true; f.player.rotationYaw = 90;
+            AttackReduceFeature.setAccuracy(0); f.receive(f.velocity()); f.input();
+            check("air accuracy delay leaves native motion untouched", f.player.jumpCalls == 0 && near(f.player.motionY, .36));
+            for (int i = 0; i < 4; i++) f.tick();
+            check("air reset with jump boost never applies a second jump or sprint jump impulse", f.player.jumpCalls == 0
+                    && f.controller.attacks == 1 && near(f.player.motionY, .36)
+                    && near(f.player.motionX, .24) && near(f.player.motionZ, -.12));
+        }
+        try (Fixture f = new Fixture(mode)) {
+            f.player.onGround = false; AttackReduceFeature.setOnlyWhenTargeting(true);
+            f.receive(f.velocity()); f.target.alive = false; f.input();
+            check("air reset rechecks target before attacking", f.player.jumpCalls == 0
+                    && f.controller.attacks == 0 && !f.player.movementInput.jump);
+        }
+        for (boolean airborne : new boolean[] {false, true}) for (int exit = 0; exit < 9; exit++) try (Fixture f = new Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
+            f.player.onGround = !airborne;
             f.player.sprinting = false; f.receive(f.velocity()); f.input();
             if (exit == 0) { MODULE.setEnabled(false); f.start(); }
             else if (exit == 1) AttackReduceFeature.setMode(AttackReduceFeature.MODE_NOXZ);
@@ -480,10 +527,11 @@ public final class ZenAntiKBTest {
             else if (exit == 6) { f.player.water = true; f.start(); }
             else if (exit == 7) { f.player.alive = false; f.start(); }
             else { f.channel.close(); f.drain(); }
-            check("active Sprint Reset cleanup restores input and owned sprint: " + exit, !f.player.sprinting
+            check("active JumpReset cleanup restores input and owned sprint: " + exit + "; air=" + airborne, !f.player.sprinting
                     && f.player.movementInput.moveForward == 0 && !f.player.movementInput.jump);
         }
-        for (int skip = 0; skip < 7; skip++) try (Fixture f = new Fixture(AttackReduceFeature.MODE_SPRINT_RESET)) {
+        for (boolean airborne : new boolean[] {false, true}) for (int skip = 0; skip < 7; skip++) try (Fixture f = new Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
+            f.player.onGround = !airborne;
             if (skip == 0) f.mc.currentScreen = new Object();
             else if (skip == 1) f.player.usingItem = true;
             else if (skip == 2) f.player.lava = true;
@@ -492,26 +540,86 @@ public final class ZenAntiKBTest {
             S12PacketEntityVelocity v = skip == 5 ? new S12PacketEntityVelocity(99, .4, .36, -.2)
                     : skip == 6 ? new S12PacketEntityVelocity(7, .4, 0, -.2) : f.velocity();
             f.receive(v); f.input();
-            check("reset environment and non-hit guards: " + skip, !f.player.movementInput.jump && f.player.movementInput.moveForward == 0 && f.applied.size() == 1);
+            check("reset environment and non-hit guards: " + skip + "; air=" + airborne, !f.player.movementInput.jump
+                    && f.player.movementInput.moveForward == 0 && f.applied.size() == 1 && f.player.jumpCalls == 0);
         }
-        try (Fixture f = new Fixture(AttackReduceFeature.MODE_SPRINT_RESET)) {
+        try (Fixture f = new Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
             f.receive(f.velocity()); f.player.movementInput.sneak = true; f.input();
             check("sneak cancels pending reset", !f.player.movementInput.jump && f.player.movementInput.moveForward == 0);
         }
-        try (Fixture f = new Fixture(AttackReduceFeature.MODE_SPRINT_RESET)) {
+        try (Fixture f = new Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
             f.receive(f.velocity()); f.receive(new S12PacketEntityVelocity(7, .1, 0, 0)); f.input();
             check("new non-positive velocity invalidates old jump", !f.player.movementInput.jump && near(f.player.motionX, .1));
         }
-        try (Fixture f = new Fixture(AttackReduceFeature.MODE_SPRINT_RESET)) {
+        for (boolean airborne : new boolean[] {false, true}) try (Fixture f = new Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
+            f.player.onGround = !airborne;
             f.receive(f.velocity()); for (int i = 0; i < 6; i++) f.start(); f.input();
-            check("missing input callbacks expire reset rather than jump later", !f.player.movementInput.jump && f.player.movementInput.moveForward == 0);
+            check("missing input callbacks expire reset rather than jump later; air=" + airborne,
+                    !f.player.movementInput.jump && f.player.movementInput.moveForward == 0 && f.player.jumpCalls == 0);
         }
-        try (Fixture f = new Fixture(AttackReduceFeature.MODE_SPRINT_RESET)) {
+        try (Fixture f = new Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
             f.player.sprinting = false; f.receive(f.velocity()); f.input();
             f.receive(new S12PacketEntityVelocity(7, .2, .3, .1)); f.input(); f.tick(); f.tick();
             check("consecutive hits replace intent without motion replay or stuck sprint", f.applied.size() == 2 && near(f.player.motionX, .2)
                     && !f.player.sprinting && f.player.movementInput.moveForward == 0);
         }
+        try (Fixture f = new Fixture(mode)) {
+            f.player.onGround = false; f.player.sprinting = false;
+            f.receive(f.velocity()); f.receive(new S12PacketEntityVelocity(7, .2, .3, .1)); f.input();
+            check("consecutive airborne packets replace pending reset", f.player.jumpCalls == 0 && f.controller.attacks == 1
+                    && f.applied.size() == 2 && near(f.player.motionX, .12) && near(f.player.motionY, .3) && near(f.player.motionZ, .06));
+            f.receive(f.velocity()); f.input(); f.tick(); f.tick();
+            check("new air hit gets one new attack without retaining owned sprint", f.player.jumpCalls == 0 && f.controller.attacks == 2
+                    && f.applied.size() == 3 && !f.player.sprinting && f.player.movementInput.moveForward == 0);
+        }
+        try (Fixture f = new Fixture(mode)) {
+            f.player.onGround = false; f.player.sprinting = false; f.mc.objectMouseOver = null;
+            f.receive(f.velocity()); f.input();
+            check("air without target only changes movement input, never motion", f.controller.attacks == 0
+                    && f.player.jumpCalls == 0 && !f.player.movementInput.jump && f.player.movementInput.moveForward == 1
+                    && near(f.player.motionX, .4) && near(f.player.motionY, .36) && near(f.player.motionZ, -.2)
+                    && "AIR MOVE / NO TARGET".equals(AttackReduceFeature.getStatus()));
+            f.tick(); f.tick();
+            check("air without target still releases owned sprint", !f.player.sprinting && f.player.movementInput.moveForward == 0);
+        }
+        try (Fixture f = new Fixture(mode)) {
+            f.player.onGround = false; f.target.acceptsDamage = false;
+            f.receive(f.velocity()); f.input(); f.input(); f.tick();
+            check("damage rejection never fabricates air knockback reduction", f.controller.attacks == 1 && f.player.jumpCalls == 0
+                    && near(f.player.motionX, .4) && near(f.player.motionY, .36) && near(f.player.motionZ, -.2));
+        }
+        try (Fixture f = new Fixture(mode)) {
+            f.player.onGround = false; f.player.swingFails = true;
+            f.receive(f.velocity()); f.input(); f.input();
+            check("failed air attack never writes velocity or sends C02", f.controller.attacks == 0 && f.player.jumpCalls == 0
+                    && near(f.player.motionX, .4) && near(f.player.motionY, .36) && near(f.player.motionZ, -.2)
+                    && !f.player.movementInput.jump && "AIR MOVE / ATTACK FAILED".equals(AttackReduceFeature.getStatus()));
+        }
+        try (Fixture f = new Fixture(mode)) {
+            f.player.onGround = false; f.receive(f.velocity());
+            check("other module can consume current attack budget", AttackReduceFeature.attack(f.target, true));
+            f.input(); f.input();
+            check("air reset shares same-tick budget without manual reduction", f.controller.attacks == 1
+                    && near(f.player.motionX, .24) && near(f.player.motionY, .36) && f.player.jumpCalls == 0);
+            f.tick(); f.tick(); f.tick();
+            check("pending air attack uses next input tick exactly once", f.controller.attacks == 2
+                    && near(f.player.motionX, .144) && near(f.player.motionY, .36) && f.player.jumpCalls == 0);
+        }
+        for (int stop = 0; stop < 3; stop++) try (Fixture f = new Fixture(mode)) {
+            f.player.onGround = false; f.receive(f.velocity()); AttackReduceFeature.attack(f.target, true); f.input();
+            if (stop == 0) f.receive(new S08PacketPlayerPosLook());
+            else if (stop == 1) f.player.onGround = true;
+            else f.target.alive = false;
+            f.tick(); f.tick();
+            check("correction, landing or lost target clears deferred air attack: " + stop,
+                    f.controller.attacks == 1 && f.player.jumpCalls == 0 && !f.player.movementInput.jump);
+        }
+        try (Fixture f = new Fixture(mode)) {
+            f.player.onGround = false; AttackReduceFeature.setDebugChat(true); VelocityDebug.drain();
+            f.receive(f.velocity()); f.input();
+            check("debug distinguishes air ready from executed attack with unchanged Y", has(VelocityDebug.history(), "KB in PASS AIR RESET READY")
+                    && has(VelocityDebug.history(), "RESET AIR ATTACK ground=false v=(0.24, 0.36, -0.12)"));
+        } finally { AttackReduceFeature.setDebugChat(false); VelocityDebug.drain(); }
     }
     static void mix() throws Exception {
         try (Fixture f = new Fixture(AttackReduceFeature.MODE_MIX)) {

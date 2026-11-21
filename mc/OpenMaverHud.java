@@ -478,7 +478,7 @@ public final class OpenMaverHud {
             return OpenMaverFeatures.getCriticalsModeName();
         }
         if ("FastPlace".equals(name)) {
-            return OpenMaverFeatures.getFastPlaceDelayTicks() + "t";
+            return OpenMaverFeatures.getFastPlaceStatus();
         }
         if ("Scaffold".equals(name)) {
             int blocks = ScaffoldFeature.getBlockCount();

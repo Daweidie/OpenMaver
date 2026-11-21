@@ -18,16 +18,16 @@ import java.util.Properties;
 
 /** Velocity 的 1.8.9 适配层；输入式重置与 OpenZen 状态机位于 antikb/。 */
 public final class AttackReduceFeature {
-    public static final int MODE_NOXZ = 0, MODE_JUMP_RESET = 1, MODE_MIX = 2, MODE_SPRINT_RESET = 3;
-    public static final String[] MODE_NAMES = {"NoXZ", "Jump Reset", "Mix", "Sprint Reset"};
-    private static int mode = MODE_SPRINT_RESET;
+    public static final int MODE_NOXZ = 0, MODE_JUMP_RESET = 1, MODE_MIX = 2;
+    public static final String[] MODE_NAMES = {"NoXZ", "JumpReset", "Mix"};
+    private static int mode = MODE_JUMP_RESET;
     private static boolean rotate, tryAttack, movementOverride, instantAttack;
     private static boolean onlyWhenTargeting, waterCheck = true;
     private static int chance = 100, accuracy = 100;
     private static boolean sprintStateCheck = true;
     private static boolean debugChat;
     private static int attackAmount = 5;
-    private static final AntiKBMode[] MODES = {new NoXZMode(), new JumpResetMode(false), new MixMode(), new JumpResetMode(true)};
+    private static final AntiKBMode[] MODES = {new NoXZMode(), new JumpResetMode(), new MixMode()};
     private static volatile Session session;
     private static long knockbacks, attacks;
     private static int tick, nextHookAttempt;
@@ -378,7 +378,7 @@ public final class AttackReduceFeature {
     static boolean onGround() { return flag(player(), "onGround", "field_70122_E"); }
     static boolean sprinting() { return truth(player(), "isSprinting", "func_70051_ag"); }
     static int tickId() { return tick; }
-    private static boolean isResetMode() { return mode == MODE_JUMP_RESET || mode == MODE_SPRINT_RESET; }
+    private static boolean isResetMode() { return mode == MODE_JUMP_RESET; }
     static boolean ownVelocity(Packet p) { return p.is("S12PacketEntityVelocity") && session != null && p.id() == session.entityId; }
     static void status(String v) { status = v; }
     static boolean moduleEnabled(String name) { Module m = ModuleManager.getModule(name); return m != null && m.isEnabled(); }
@@ -412,8 +412,8 @@ public final class AttackReduceFeature {
 
     public static void load(Properties p) {
         stop(true);
-        String value = p.getProperty("velocity.zen.mode", "Sprint Reset");
-        mode = MODE_SPRINT_RESET;
+        String value = p.getProperty("velocity.zen.mode", MODE_NAMES[MODE_JUMP_RESET]);
+        mode = MODE_JUMP_RESET;
         for (int i = 0; i < MODE_NAMES.length; i++) if (MODE_NAMES[i].equalsIgnoreCase(value)) mode = i;
         rotate = bool(p, "rotate", false); tryAttack = bool(p, "tryAttack", false);
         movementOverride = bool(p, "movementOverride", false);
@@ -438,7 +438,7 @@ public final class AttackReduceFeature {
                 + "velocity.zen.debug=" + debugChat + "\n";
     }
     public static int getMode() { return mode; }
-    public static void setMode(int v) { stop(true); mode = v >= 0 && v < MODES.length ? v : MODE_SPRINT_RESET; nextHookAttempt = tick; OpenMaverFeatures.markDirty(); }
+    public static void setMode(int v) { stop(true); mode = v >= 0 && v < MODES.length ? v : MODE_JUMP_RESET; nextHookAttempt = tick; OpenMaverFeatures.markDirty(); }
     public static String getSummary() { return MODE_NAMES[mode]; }
     public static String getStatus() { return status; }
     public static long getSprintHits() { return attacks; }

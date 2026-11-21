@@ -787,6 +787,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             public double get() { return OpenMaverFeatures.getFastPlaceDelayTicks(); }
             public void set(double value) { OpenMaverFeatures.setFastPlaceDelayTicks((int) Math.round(value)); }
         }));
+        entry.settings.add(Setting.check("JITTER", new Binding() {
+            public double get() { return OpenMaverFeatures.isFastPlaceJitter() ? 1.0D : 0.0D; }
+            public void set(double value) { OpenMaverFeatures.setFastPlaceJitter(value > 0.5D); }
+        }));
         entry.settings.add(Setting.check("ONLY BLOCKS", new Binding() {
             public double get() { return OpenMaverFeatures.isFastPlaceOnlyBlocks() ? 1.0D : 0.0D; }
             public void set(double value) { OpenMaverFeatures.setFastPlaceOnlyBlocks(value > 0.5D); }

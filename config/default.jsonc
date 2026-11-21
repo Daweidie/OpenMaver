@@ -67,7 +67,7 @@
   // 玩家相关模块
   "player": {
     "fastplace": {
-      "enabled": false,        // 快速右键：默认关闭
+      "enabled": false,        // 快速右键：默认关闭（DELAY / JITTER 在 ClickGUI 里调）
       "key": "F"               // 绑定键位（按 F 切换）
     },
     "cheststealer": {

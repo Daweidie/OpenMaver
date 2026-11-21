@@ -1,10 +1,16 @@
-# Velocity：输入式 Sprint / Jump Reset 与 OpenZen AntiKB 适配
+# Velocity：JumpReset 与 OpenZen AntiKB 适配
 
 ## 当前状态（2026-11-21，路线 A）
 
 NoXZ 已放弃地面与空中的击退挂起。收到 S12 的主线程任务立即应用原包，不取消入站、不暂停出站；仅保留受击跳跃与最多等待 12 tick 的落地补刀意图。落地使用当前运动速度，绝不重新施加收到时的 S12。新击退（包括非正 Y）、位置校正、忽略环境、禁用、切模式及换世界都会清理旧攻击意图。`Instant Attack` 只增加最多 3 次正常 tick 补刀，不改变 Timer。跳过无目标的落地机会也不再强制关闭疾跑。
 
-Sprint Reset 为新配置默认，Jump Reset 已移除 10–20 tick 入站挂起；两个模式只接管输入，Mix 仍保留选择性入站队列。下方实测章节保留旧挂起实现的数据，供解释此次取舍；目前未取得新版本的服务器端到端测试回执。NoXZ 的正常调试行应为 `KB in PASS AIR / LANDING WAIT`、`PASS READY`、`PASS NOT SPRINTING`、`PASS NO TARGET`，不应再产生 `SUSPEND` / `OUT HOLD` / `FLUSH` / `KB release`。
+JumpReset 为新配置默认，保留原 Sprint Reset 的前进疾跑与地面单次跳跃行为；原仅跳跃的 Jump Reset 模式已删除。空中受击仅接管前进疾跑输入，并对有效 Aura/准星目标尝试一次原版疾跑攻击减速，始终保留原包 Y；所有 S12 立即直通。Mix 仍保留选择性入站队列。下方实测章节保留旧挂起实现的数据；当前空中路径已根据 22:15 游戏日志修正，尚未取得修正后的服务器端到端测试回执。NoXZ 的正常调试行应为 `KB in PASS AIR / LANDING WAIT`、`PASS READY`、`PASS NOT SPRINTING`、`PASS NO TARGET`，不应再产生 `SUSPEND` / `OUT HOLD` / `FLUSH` / `KB release`。
+
+上一版直接调用空中 `jump()` 的方案已删除。方法本身没有 onGround 检查，并不表示原版空中移动允许再次起跳：它会重置 Y 为 `0.42F` 并叠加疾跑前冲。VERIFIED：用户日志 22:15:28.203 的 S12 位置 Y=62.79，22:15:28.212 的出站位置 Y=63.21（+0.42）；随后出现 AntiKB `o: .241509` 和 Simulation 报告。CANDIDATE：后续逐步降低的 S12 与回拉是校正反馈，日志未记录其服务端来源。旧测试把调用成功视为预期，没有约束空中原版物理，故曾通过但与端到端结果不符。
+
+修正后的空中路径不调用 `jump()`，不写运动速度或 onGround，不设置自动 jump 输入；水平变化仅来自 `AttackReduceFeature.attack(target, true)` 的原版 controller 攻击。伤害被拒绝、无目标或攻击失败时不补写减速。每次受击最多一次攻击尝试，和 AutoClicker/Aura 共用每 tick 攻击名额；忙时仅在 2 tick 输入窗口内等待。目标失效、落地、位置校正、到期、禁用或换世界都清理未完成动作；地面已离地的延迟意图进入空中路径，不补跳。原始 S12 与后续包仍立即直通，Chance/Accuracy、环境检查和输入/疾跑恢复继续生效。
+
+新增 `RESET JUMPRESET` / `RESET AIR ATTACK` / `RESET AIR MOVE / NO TARGET` 动作日志，区别于 `PASS ... READY` 的意图日志；速度为动作后的本地实值，`AIR ATTACK` 仅表示攻击入口执行成功，并非服务端命中确认。协议回归以日志中的 11 组空中速度（按显示精度取值）覆盖有/无目标、伤害接受/拒绝，验证 Y 与重力轨迹、原版 XZ 分支、包序和共用攻击名额。UNRESOLVED：修正后的游戏内及服务器端到端效果。
 
 ## 来源与范围
 
@@ -16,15 +22,14 @@ Sprint Reset 为新配置默认，Jump Reset 已移除 10–20 tick 入站挂起
 
 按用户要求，移除了 Maver 的 SPRINT HIT / SIMPLE / SLAP ATTACK 状态机、百分比缩放、动作闸门、冲刺同步窗口及对应测试。保留模块类 `module.movement.AttackReduce`、显示名 `Velocity` 和配置键 `movement.attackreduce`，避免破坏开关与热键。
 
-`mc/AttackReduceFeature.java` 是 Minecraft 1.8.9 适配层；`mc/antikb/` 中保留 NoXZ / Mix 状态机，并用 `JumpResetMode(boolean sprintReset)` 实现两个输入模式。项目使用默认 package，目录仅组织源码。Java 8 字节码由现有 CMake 构建流程生成，再经过 MCP → SRG 重映射。
+`mc/AttackReduceFeature.java` 是 Minecraft 1.8.9 适配层；`mc/antikb/` 中保留 NoXZ / Mix 状态机，并用 `JumpResetMode()` 实现地面输入重置与空中原版攻击。项目使用默认 package，目录仅组织源码。Java 8 字节码由现有 CMake 构建流程生成，再经过 MCP → SRG 重映射。
 
-## 四模式
+## 三模式
 
 | 模式 | 触发与队列 | 释放与动作 |
 | --- | --- | --- |
-| Sprint Reset（新配置默认） | 自己的地面正 Y、非零水平 S12；所有包立即直通 | 下一次有效输入向前疾跑 2 tick，单次跳跃；按 Chance/Accuracy 决定是否触发及 0–2 tick 输入延迟 |
+| JumpReset（新配置默认） | 自己的正 Y、非零水平 S12，地面/空中均可；所有包立即直通 | 下一次有效输入向前疾跑 2 tick；地面单次跳跃输入，空中单次原版疾跑攻击（须有有效目标），不重置 Y；按 Chance/Accuracy 决定是否触发及 0–2 tick 输入延迟 |
 | NoXZ | 所有包立即直通；自己的正 Y S12 触发地面攻击或空中落地补刀意图 | 落地用当前速度攻击，最多等 12 tick 后放弃意图；每 tick 最多一次实体攻击；位置校正后冷却 2 tick |
-| Jump Reset | 同 Sprint Reset；所有包立即直通 | 仅单次跳跃，不接管前进或疾跑 |
 | Mix | 正 Y S12 及实体移动、事务、实体传送包 | 落地或连续空中 24 tick 释放；受伤跳跃、前 3 tick 方向接管、可选 Aura 双击 |
 
 NoXZ 的目标顺序为 Aura 已选目标 → 准星存活生物，眼睛到可见目标 AABB 距离 ≤ 3.0。攻击前同步客户端当前疾跑状态与 serverSprintState，然后先挥手、再调用原版 controller。仅由原版攻击结果决定减速，适配层不手动写 XZ，也不提前退出疾跑。
@@ -52,7 +57,7 @@ Mix 的可选双击保留两个攻击意图，分配到两个空闲 tick，复�
 
 NoXZ 原源码把 ServerboundMovePlayerPacket 分支写在 ReceivePacketEvent 中；早期适配曾接到 Netty `write` 路径并缓存完整出站流。当前 NoXZ 已不调用 hold/flush；适配层仍保留 FIFO 与 ChannelPromise 清理接口，独立测试显式启用队列以覆盖断线、取消和上限行为。hold/flush 均在同一 eventLoop 上执行。
 
-两个 Reset 模式的 NoFall/Backtrack 联动检查对应活动状态（NoFall boost 字段，Backtrack isActive/isBacktracking），缺失模块时自然为 false。FireballBlink/HighJump/Stuck 等依赖通过模块名查询，不引入现代 Minecraft 类。
+JumpReset 的 NoFall/Backtrack 联动检查对应活动状态（NoFall boost 字段，Backtrack isActive/isBacktracking），缺失模块时自然为 false。FireballBlink/HighJump/Stuck 等依赖通过模块名查询，不引入现代 Minecraft 类。
 
 ## 生命周期适配
 
@@ -60,7 +65,7 @@ NoXZ 原源码把 ServerboundMovePlayerPacket 分支写在 ReceivePacketEvent �
 - Packet 保存所属 player/world/handler。旧世界的挂起队列丢弃，同连接模式切换则回放一次。S07 重生显式识别同连接世界切换，保留紧随重生、已经排入主线程的新世界包。
 - 禁用、切模式、位置校正、重生会释放当前连接队列并恢复计时/相机。断线终止未完成的出站 promises。
 - 入站/出站队列各设 4096 包上限，达到时强制释放。安装失败每 20 tick 重试；外部移除 hook 时清队列并重装。
-- 死亡、观察者、飞行、水/熔岩、燃烧、梯子、睡眠和蛛网时释放并跳过模式处理。Reset 模式的 Water Check=false 可单独放开水中检查，其余环境保护保持。这一公共保护把 Zen NoXZ 的环境检查用于所有模式，替换 Mix 的蛛网事件依赖。
+- 死亡、观察者、飞行、水/熔岩、燃烧、梯子、睡眠和蛛网时释放并跳过模式处理。JumpReset 模式的 Water Check=false 可单独放开水中检查，其余环境保护保持。这一公共保护把 Zen NoXZ 的环境检查用于所有模式，替换 Mix 的蛛网事件依赖。
 - 转向让位于 Scaffold/GodBridge/Aura；输入直接改 MovementInput，不持有 KeyBinding。潜行 MoveFix 保留原版 0.3 输入幅度。
 - Mix 的 Motion/GUI 禁用/切模式等较晚路径将入站回放转交到下一次准备阶段；新的入站任务也先排空旧回放。此处使用显式队列，因为 Minecraft.addScheduledTask 在主线程会立即执行。旧连接/世界校验同时覆盖该队列。NoXZ 超时只丢弃攻击意图，不涉及包回放。
 - 新的本地 S12 到达时，先释放旧挂起队列，再重置该次模式状态并处理新 S12，避免旧击退最后覆盖新击退。
@@ -110,11 +115,11 @@ ClickGUI 的 Velocity 展开项新增 `DEBUG CHAT`（配置键 `velocity.zen.deb
 
 | velocity.zen. 后缀 | 默认值 | 范围 / 生效模式 |
 | --- | --- | --- |
-| mode | Sprint Reset | Sprint Reset / Jump Reset / NoXZ / Mix；保留显式保存模式 |
-| chance | 100 | 0–100%，两个 Reset 模式，每次有效受击的触发概率 |
-| accuracy | 100 | 0–100%，两个 Reset 模式，准时响应概率；失准只延后输入 1–2 tick |
-| onlyWhenTargeting | false | 两个 Reset 模式；执行时仍须有存活、可见、3.0 格内的 Aura/准星目标 |
-| waterCheck | true | 两个 Reset 模式；关闭只放开水中检查 |
+| mode | JumpReset | JumpReset / NoXZ / Mix；旧 Sprint Reset / Jump Reset 均迁移到 JumpReset |
+| chance | 100 | 0–100%，JumpReset，每次有效受击的触发概率 |
+| accuracy | 100 | 0–100%，JumpReset，准时响应概率；失准只延后输入 1–2 tick |
+| onlyWhenTargeting | false | JumpReset；为 true 时整体要求有效目标；空中攻击始终需要存活、可见、3.0 格内的 Aura/准星目标 |
+| waterCheck | true | JumpReset；关闭只放开水中检查 |
 | attackAmount | 5 | 1–20，NoXZ |
 | instantAttack | false | NoXZ：等待落地每 2 tick 累积 +1 次，最多 +3；正常 tick 执行，不改 Timer |
 | sprintStateCheck | true | NoXZ |
@@ -161,7 +166,7 @@ cp /tmp/openmaver-protocol18-backup/mc/AttackReduceFeature.java.bak mc/AttackRed
 ROLLBACK：`python3 /tmp/openmaver-protocol18-backup/rollback.py`，将备份的 `.bak` 恢复到对应源码、测试、文档和 jar 路径，并删除本次新增文件；回滚后需重新构建以更新编译目录。更早的三模式移植备份仍在 `/tmp/openmaver-zen-port-backup/`。备份位于临时目录，跨重启保留情况由本机管理。
 
 
-## 2026-11-21 Sprint / Jump Reset 输入式重写
+## 2026-11-21 Sprint / Jump Reset 输入式重写（历史记录，现已合并为 JumpReset）
 
 参考 `/home/zty/Downloads/script.lua` 的短按跳跃、GUI 暂停和随机反应思路；受击入口使用本地 S12，不移植脚本的左键循环、Sleep、右键格挡或系统按键注入。
 

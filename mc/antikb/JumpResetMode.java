@@ -1,18 +1,15 @@
 import java.util.concurrent.ThreadLocalRandom;
 import net.minecraft.util.MovementInput;
 
-/** 输入式重置：原始击退始终直通，只短暂接管输入，不缓存包或改写速度。 */
+/** 原始击退直通；地面使用跳跃输入，空中仅通过原版疾跑攻击产生水平减速。 */
 final class JumpResetMode extends AntiKBMode {
     private static final int SPRINT_TICKS = 2;
-    private final boolean sprintReset;
-    private boolean pendingJump, sprintOwned;
+    private boolean pendingReset, pendingAirborne, airReset, sprintOwned;
     private int readyTick, expiresTick, sprintUntilTick;
-    private Object sprintPlayer;
+    private Object sprintPlayer, airTarget;
     private MovementInput overriddenInput;
     private float forwardBefore, strafeBefore;
     private boolean jumpBefore, wroteMovement, wroteJump;
-
-    JumpResetMode(boolean sprintReset) { this.sprintReset = sprintReset; }
 
     @Override void onEnable() { clear(); super.onEnable(); }
     @Override void onDisable() { clear(); super.onDisable(); }
@@ -25,15 +22,16 @@ final class JumpResetMode extends AntiKBMode {
         clear();
         String tag = "PASS RESET SKIPPED";
         if (packet.y() > 0 && (packet.x() != 0 || packet.z() != 0)
-                && AttackReduceFeature.onGround() && !blocked()
+                && !blocked()
                 && ThreadLocalRandom.current().nextInt(100) < AttackReduceFeature.getChance()) {
             // Accuracy 为准时响应的概率；失准只推迟输入 1–2 tick，绝不推迟 S12。
             int delay = ThreadLocalRandom.current().nextInt(100) < AttackReduceFeature.getAccuracy()
                     ? 0 : ThreadLocalRandom.current().nextInt(1, 3);
             readyTick = AttackReduceFeature.tickId() + delay;
             expiresTick = readyTick + 3;
-            pendingJump = true;
-            tag = sprintReset ? "PASS SPRINT RESET READY" : "PASS JUMP RESET READY";
+            pendingReset = true;
+            pendingAirborne = !AttackReduceFeature.onGround();
+            tag = pendingAirborne ? "PASS AIR RESET READY" : "PASS JUMPRESET READY";
         }
         AttackReduceFeature.status(tag);
         VelocityDebug.knockbackIn(packet, tag);
@@ -41,28 +39,29 @@ final class JumpResetMode extends AntiKBMode {
 
     @Override void onTick() {
         restoreInput();
-        if (blocked() || pendingJump && (!AttackReduceFeature.onGround()
-                || AttackReduceFeature.tickId() >= expiresTick)) { clear(); return; }
+        if (blocked() || invalidReset() || airReset && AttackReduceFeature.onGround()) { clear(); return; }
+        if (pendingReset && !AttackReduceFeature.onGround()) pendingAirborne = true;
         if (sprintPlayer != null && AttackReduceFeature.tickId() >= sprintUntilTick) {
-            restoreSprint(); AttackReduceFeature.status("RESET DONE");
+            clear(); AttackReduceFeature.status("RESET DONE");
         }
     }
 
     @Override void onStrafe(MovementInput input) {
-        if (blocked() || input.sneak) { clear(); return; }
+        if (blocked() || input.sneak || invalidReset() || airReset && AttackReduceFeature.onGround()) { clear(); return; }
+        if (pendingReset && !AttackReduceFeature.onGround()) pendingAirborne = true;
         int tick = AttackReduceFeature.tickId();
-        boolean jump = pendingJump && tick >= readyTick;
-        if (jump) {
-            pendingJump = false;
-            if (!AttackReduceFeature.onGround() || tick >= expiresTick) { clear(); return; }
-            if (sprintReset) {
-                sprintPlayer = AttackReduceFeature.player();
-                sprintOwned = !AttackReduceFeature.sprinting();
-                sprintUntilTick = tick + SPRINT_TICKS;
-            }
+        boolean reset = pendingReset && tick >= readyTick;
+        boolean jump = reset && AttackReduceFeature.onGround();
+        if (reset) {
+            pendingReset = pendingAirborne = false;
+            sprintPlayer = AttackReduceFeature.player();
+            sprintOwned = !AttackReduceFeature.sprinting();
+            sprintUntilTick = tick + SPRINT_TICKS;
+            airReset = !jump;
+            airTarget = airReset ? AttackReduceFeature.attackTarget() : null;
         }
         boolean sprint = sprintPlayer != null && tick < sprintUntilTick;
-        if (!jump && !sprint) return;
+        if (!reset && !sprint) return;
         overriddenInput = input;
         forwardBefore = input.moveForward; strafeBefore = input.moveStrafe; jumpBefore = input.jump;
         wroteMovement = sprint; wroteJump = jump;
@@ -71,7 +70,34 @@ final class JumpResetMode extends AntiKBMode {
             OpenMaverFeatures.callVoid(sprintPlayer, "setSprinting", "func_70031_b", null, Boolean.TRUE);
         }
         if (jump) input.jump = true;
-        AttackReduceFeature.status(sprint ? "SPRINT RESET" : "JUMP RESET");
+        if (reset) {
+            String action = !airReset ? "JUMPRESET" : airTarget == null ? "AIR MOVE / NO TARGET" : "AIR MOVE";
+            AttackReduceFeature.status(action); VelocityDebug.resetAction(action);
+        }
+        tryAirAttack();
+    }
+
+    private void tryAirAttack() {
+        if (airTarget == null) return;
+        if (!AttackReduceFeature.validTarget(airTarget)) {
+            airTarget = null;
+            AttackReduceFeature.status("AIR MOVE / NO TARGET");
+            VelocityDebug.resetAction("AIR MOVE / NO TARGET"); return;
+        }
+        // 和 AutoClicker/Aura 共用名额；忙时仅在当前 2 tick 输入窗口内等待。
+        if (OpenMaverFeatures.hasEntityAttackThisTick()) {
+            AttackReduceFeature.status("AIR ATTACK WAIT"); return;
+        }
+        Object target = airTarget;
+        airTarget = null; // 至多一次攻击尝试；失败也不补写速度或反复攻击。
+        boolean attacked = AttackReduceFeature.attack(target, true);
+        String action = attacked ? "AIR ATTACK" : "AIR MOVE / ATTACK FAILED";
+        AttackReduceFeature.status(action); VelocityDebug.resetAction(action);
+    }
+
+    private boolean invalidReset() {
+        return pendingReset && (AttackReduceFeature.tickId() >= expiresTick
+                || pendingAirborne && AttackReduceFeature.onGround());
     }
 
     private boolean blocked() {
@@ -101,6 +127,7 @@ final class JumpResetMode extends AntiKBMode {
     }
 
     private void clear() {
-        restoreInput(); restoreSprint(); pendingJump = false; readyTick = expiresTick = 0;
+        restoreInput(); restoreSprint(); pendingReset = pendingAirborne = airReset = false;
+        airTarget = null; readyTick = expiresTick = 0;
     }
 }
