@@ -26,6 +26,8 @@ import module.Module;
 public final class ChestStealer extends Module {
 
     public ChestStealer() {
-        super("Chest Stealer");
+        // 显式给出配置路径：模块名里的空格不能带进 key，否则
+        // default.jsonc 里的 player.cheststealer 永远读不到。
+        super("Chest Stealer", "player.cheststealer");
     }
 }

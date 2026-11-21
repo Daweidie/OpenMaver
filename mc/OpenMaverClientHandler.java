@@ -93,6 +93,9 @@ public final class OpenMaverClientHandler {
                 MoveDisablerFeature.onTick(mc);
                 // 先处理到期入站队列（含 S32 -> C0F），再产生本 tick 的 action。
                 AttackReduceFeature.beforeTick(mc);
+                // 背包整理：同样要在 C03 之前发 windowClick（C0E）。
+                // 只在当前窗口就是玩家背包时动手，开着箱子时会自行让位给下面的 ChestFeature。
+                InventoryManagerFeature.onTickStart(mc);
                 // 箱子：windowClick（C0E）必须排在本 tick 的 C03 之前。
                 // 放在 tick END 时，服务端的 transaction ack（C0F）总会落在
                 // 「END 的 C0E」和「下一个 C03」之间，Grim 的 Post 检查会稳定打出

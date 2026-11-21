@@ -517,6 +517,9 @@ public final class OpenMaverHud {
         if ("Chest Stealer".equals(name)) {
             return ChestFeature.getTakeFilterName();
         }
+        if ("Inventory Manager".equals(name)) {
+            return InventoryManagerFeature.getSummary();
+        }
         if ("Grim Bypass".equals(name)) {
             return OpenMaverFeatures.getBypassProfileName();
         }

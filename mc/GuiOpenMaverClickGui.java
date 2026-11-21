@@ -438,6 +438,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 addChestEspSettings(entry);
             } else if ("Chest Stealer".equals(module.getName())) {
                 addChestStealerSettings(entry);
+            } else if ("Inventory Manager".equals(module.getName())) {
+                addInventoryManagerSettings(entry);
             }
             entries.add(entry);
         }
@@ -703,6 +705,57 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         entry.settings.add(Setting.check("AUTO SWEEP", new Binding() {
             public double get() { return ChestFeature.isAutoSweep() ? 1.0D : 0.0D; }
             public void set(double value) { ChestFeature.setAutoSweep(value > 0.5D); }
+        }));
+    }
+
+    private void addInventoryManagerSettings(Entry entry) {
+        entry.settings.add(Setting.check("AUTO ARMOR", new Binding() {
+            public double get() { return InventoryManagerFeature.isAutoArmor() ? 1.0D : 0.0D; }
+            public void set(double value) { InventoryManagerFeature.setAutoArmor(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("AUTO SORT", new Binding() {
+            public double get() { return InventoryManagerFeature.isAutoSort() ? 1.0D : 0.0D; }
+            public void set(double value) { InventoryManagerFeature.setAutoSort(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("DROP EXTRAS", new Binding() {
+            public double get() { return InventoryManagerFeature.isDropExtras() ? 1.0D : 0.0D; }
+            public void set(double value) { InventoryManagerFeature.setDropExtras(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("DROP TOOLS", new Binding() {
+            public double get() { return InventoryManagerFeature.isDropTools() ? 1.0D : 0.0D; }
+            public void set(double value) { InventoryManagerFeature.setDropTools(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("KEEP WEAPONS", 1.0F, 4.0F, 1.0F, 0, "", new Binding() {
+            public double get() { return InventoryManagerFeature.getKeepWeapons(); }
+            public void set(double value) { InventoryManagerFeature.setKeepWeapons((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("KEEP ARMOR", 0.0F, 3.0F, 1.0F, 0, "", new Binding() {
+            public double get() { return InventoryManagerFeature.getSpareArmor(); }
+            public void set(double value) { InventoryManagerFeature.setSpareArmor((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("KEEP TOOLS", 1.0F, 3.0F, 1.0F, 0, "", new Binding() {
+            public double get() { return InventoryManagerFeature.getKeepTools(); }
+            public void set(double value) { InventoryManagerFeature.setKeepTools((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.check("HUMANIZE", new Binding() {
+            public double get() { return InventoryManagerFeature.isHumanize() ? 1.0D : 0.0D; }
+            public void set(double value) { InventoryManagerFeature.setHumanize(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("CLICK GAP", 1.0F, 10.0F, 1.0F, 0, "t", new Binding() {
+            public double get() { return InventoryManagerFeature.getClickGapTicks(); }
+            public void set(double value) { InventoryManagerFeature.setClickGapTicks((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("CLICK MS", 20.0F, 800.0F, 10.0F, 0, " ms", new Binding() {
+            public double get() { return InventoryManagerFeature.getActionDelayMinMs(); }
+            public void set(double value) { InventoryManagerFeature.setActionDelayMinMs((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("CLICK MS+", 20.0F, 1200.0F, 10.0F, 0, " ms", new Binding() {
+            public double get() { return InventoryManagerFeature.getActionDelayMaxMs(); }
+            public void set(double value) { InventoryManagerFeature.setActionDelayMaxMs((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("IDLE", 5.0F, 200.0F, 5.0F, 0, "t", new Binding() {
+            public double get() { return InventoryManagerFeature.getSortIntervalTicks(); }
+            public void set(double value) { InventoryManagerFeature.setSortIntervalTicks((int) Math.round(value)); }
         }));
     }
 
@@ -4266,6 +4319,12 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 if ("MoveDisabler".equals(module.getName())) {
                     return "INVENTORY MOVE  ·  "
                             + (InventoryMoveFeature.isMovementHookInstalled() ? "READY" : "WAITING");
+                }
+                if ("Inventory Manager".equals(module.getName())) {
+                    return (InventoryManagerFeature.isAutoArmor() ? "ARMOR" : "NO ARMOR")
+                            + (InventoryManagerFeature.isAutoSort() ? "  ·  SORT" : "")
+                            + (InventoryManagerFeature.isDropExtras() ? "  ·  DROP" : "")
+                            + "  ·  " + InventoryManagerFeature.getSummary();
                 }
                 return module.getConfigKey().toUpperCase(Locale.ROOT);
             }

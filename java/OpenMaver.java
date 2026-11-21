@@ -14,6 +14,7 @@ import module.misc.FakePlayer;
 import module.misc.MoveDisabler;
 import module.player.ChestStealer;
 import module.player.FastPlace;
+import module.player.InventoryManager;
 import module.render.ChestEsp;
 import module.render.Cps;
 import module.render.Fps;
@@ -325,6 +326,10 @@ public final class OpenMaver {
         // 玩家模块：Chest Stealer 快速开箱 / 整理 / 存入（配置路径 player.cheststealer；
         // MC 侧逻辑在 mc/ChestFeature）
         ModuleManager.register(new ChestStealer());
+
+        // 玩家模块：自动整理背包 / 自动穿盔甲 / 丢多余装备（配置路径 player.inventorymanager；
+        // MC 侧逻辑在 mc/InventoryManagerFeature，规则与计划在 mc/InventoryRules、mc/InventoryPlanner）
+        ModuleManager.register(new InventoryManager());
 
         // 杂项模块：FakePlayer 假人玩家（配置路径 misc.fakeplayer；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new FakePlayer());

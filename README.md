@@ -3,7 +3,7 @@
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
 > 说明：本仓库包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接）
-> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Scaffold2 教材搭路辅助、GodBridge 神桥、AttackReduce、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、FPS / CPS 统计）
+> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Scaffold2 教材搭路辅助、GodBridge 神桥、AttackReduce、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、Inventory Manager 自动整理背包 / 自动穿甲、FPS / CPS 统计）
 > 以及 `legit / balanced / aggressive` 三档 Grim 对测 profile。
 > 请仅在你拥有或获得明确授权的服务器上进行测试。
 
@@ -40,6 +40,7 @@ OpenMaver/
 │       ├── movement/AttackReduce.java # 防击退开关（MC 侧逻辑在 AttackReduceFeature）
 │       ├── player/FastPlace.java  # 快速右键开关（MC 侧逻辑在 OpenMaverFeatures）
 │       ├── player/ChestStealer.java # 开箱搬运 / 整理 / 存入开关（MC 侧逻辑在 mc/ChestFeature）
+│       ├── player/InventoryManager.java # 自动整理背包 / 穿盔甲 / 丢多余开关（MC 侧在 mc/InventoryManagerFeature）
 │       ├── render/ChestEsp.java   # 箱子透视开关（MC 侧绘制在 mc/ChestFeature）
 │       ├── render/TargetHud.java  # 目标信息面板开关（MC 侧绘制在 mc/TargetHud）
 │       ├── render/PlayerXray.java # 玩家透视开关（MC 侧绘制在 OpenMaverFeatures）
@@ -55,6 +56,9 @@ OpenMaver/
 │   ├── OpenMaverHud.java          # 右侧 ModuleList（胶囊列表 + 参数摘要 + 启用动效）
 │   ├── StatsHud.java              # 左上角 FPS 胶囊 + CPS 小方块（灰色毛玻璃）
 │   ├── ChestFeature.java          # 箱子：存储方块 ESP + 开箱搬运/整理/存入
+│   ├── InventoryManagerFeature.java # 背包整理：读格子 → 规划 → windowClick
+│   ├── InventoryRules.java        # 纯规则表：分类 / 材质评分 / 盔甲槽（无 MC 依赖）
+│   ├── InventoryPlanner.java      # 纯计划器：45 格快照 → 下一步点击（无 MC 依赖）
 │   ├── ChestPacketHook.java       # 入站 S2D/S30/S2E 窗口包记账（Netty 管线）
 │   ├── GuiOpenMaverClickGui.java  # 游戏内 ClickGUI（分类 / 搜索 / 展开设置）
 │   ├── GuiMaverMainMenu.java      # 开始主菜单（透明按钮 / 原版清晰全景 / 账号头像）
@@ -737,6 +741,56 @@ IO 失败只记录一次并自动停用 debug。
   humanize 打开后的时长/间隔下限、连开箱子时新界面被接管而不是被 C0D 掉、
   过期窗口 S2E 被钩子拦下、S30 缺失但本地容器已有内容时直接开搬、
   `CLICK MS` 低于 80ms 被夹上来、刚搬空的箱子 1.5s 内不会被重新扫）。
+
+### Inventory Manager 自动整理背包（穿盔甲 / 排快捷栏 / 丢多余）
+
+- 配置路径 `player.inventorymanager`，默认关闭、无默认热键；参数在 ClickGUI 的
+  **Player** 分类里展开，写入 `config/openmaver-inventory.properties`（`inventory.*`）。
+- 实现分三层，只有最外层碰 MC：
+  | 文件 | 职责 |
+  |---|---|
+  | `mc/InventoryRules.java` | 纯规则表：物品分类（盔甲 → 武器 → 工具 → 方块 → 食物 → 其它）、材质与附魔评分、盔甲槽判定。**不引用任何 `net.minecraft.*`** |
+  | `mc/InventoryPlanner.java` | 纯计划器：吃一份 45 格玩家背包窗口快照，吐出「下一步做哪一件小事」以及它的点击序列。每做一步都重新读真实背包，所以中途被玩家插手也不会跑偏 |
+  | `mc/InventoryManagerFeature.java` | MC 侧执行：把 `ItemStack` 读成纯数据、把动作翻成 `PlayerControllerMP.windowClick`，并按真人手速节拍发包 |
+- 快捷栏布局（需求原文）：**1 武器 → 2 方块 → 3 食物（金苹果优先）→ 4 工具（镐优先）**，
+  5~9 依次补方块 / 食物 / 工具的剩余堆叠；没有的类那一格空着，不会被后面的类顶上来。
+  杂物（末影珍珠、桶等）挪回背包，不占快捷栏。
+- 自动穿盔甲：按 头盔 / 胸甲 / 护腿 / 靴子 逐件比较，**评分 = 护甲点数 × 10 +
+  保护类附魔 × 2 + 剩余耐久 × 0.5**（皮革 1/3/2/1、金 2/5/3/1、锁链 2/5/4/1、
+  铁 2/6/5/2、钻石 3/8/6/3）。背包里更好的那件换到身上，旧的放回原格；
+  更差的不会被换上（不会把钻石胸甲换成皮革胸甲）。
+- 丢多余：剑超过 `KEEP WEAPONS` 把、某种盔甲备用件超过 `KEEP ARMOR` 件、
+  勾上 `DROP TOOLS` 后同家族工具超过 `KEEP TOOLS` 把时，丢掉评分最低的那些。
+  弓不参与「多余武器」统计，斧子按工具算。
+- 点击语义（和玩家自己开背包点格子完全同一条路径，全部走 windowId 0）：
+  | 动作 | 点击 |
+  |---|---|
+  | 换快捷栏 | `mode 2`（数字键动作），一次点击，等价于玩家按 1~9 |
+  | 换盔甲 / 互换 / 挪位 | `mode 0`（拿起 → 放下 → 余数放回） |
+  | 合并同物品的两摞 | `mode 0`（拿起小的 → 点大的 → 余数放回） |
+  | 丢东西 | `mode 4`（丢弃键，整摞丢出） |
+- 节拍：一步动作之间隔 `CLICK GAP` 个 tick；`HUMANIZE` 打开时改为
+  `CLICK MS`~`CLICK MS+`（默认 90~200ms）随机，每 tick 最多 3 次点击。
+  整理完（规划器返回空）后按 `IDLE`（默认 40 tick）再扫一遍背包，不会每 tick 重算。
+- 边界：
+  - 只在 `openContainer == inventoryContainer`（窗口号 0）时动手；开着箱子 / 漏斗 /
+    创造物品栏时完全不碰，那段时间交给 Chest Stealer。背包界面开着时点的是同一个窗口；
+    界面关掉时服务端的 `openContainer` 仍是背包，所以两种情况都会自动整理。
+  - 光标上还拿着东西（玩家正在拖）时不动手，等玩家放完。
+  - 聊天 / 设置 / 其它界面里不偷偷点格子。
+  - 同一动作连续 8 次没生效（服务端拒绝、窗口错位）就停 1 秒再来，避免刷包。
+- 发包时机：挂在 `TickEvent.Phase.START`，`windowClick`（C0E）排在本 tick 的 C03 之前，
+  与 Chest Stealer 记录的 Grim `click window` 包序问题同一个处理方式。
+- 回归测试（不需要 MC / Forge / Netty）：
+
+  ```bash
+  bash tools/inventory-test/run.sh
+  ```
+
+  用假容器按原版 `windowClick` 语义（mode 0 拿起/放下/交换/合并、mode 2 数字键、
+  mode 4 丢弃）执行规划器给出的点击，跑到规划器说「已整理好」为止，再断言布局与稳定性：
+  布局 / 盔甲不降级 / 保护附魔优先 / 保留把数 / 多余工具 / 已整理不再动 /
+  满背包不死循环 / 固定四格占位 / 300 组随机背包收敛（1244 项断言）。
 
 ### Target HUD 目标信息面板
 

@@ -73,6 +73,10 @@
     "cheststealer": {
       "enabled": false,        // 快速开箱：箱子界面打开后自动把物资搬进背包（参数在 ClickGUI）
       "key": ""                // 默认不占用按键，玩家可自行绑定
+    },
+    "inventorymanager": {
+      "enabled": false,        // 自动整理背包：穿盔甲 / 排快捷栏 / 丢多余装备（参数在 ClickGUI）
+      "key": ""                // 默认不占用按键，玩家可自行绑定
     }
   },
 
