@@ -148,6 +148,8 @@ if(Java_Development_FOUND)
     endif()
 
     add_custom_target(openmaver_mc ALL
+        # 删除旧类后不能继续把上次编译残留的 .class 打进 jar（例如旧版 ClickGUI 的内部类）。
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${OPENMAVER_MC_CLASSES_DIR}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${OPENMAVER_MC_CLASSES_DIR}"
         COMMAND "${Java_JAVAC_EXECUTABLE}" ${OPENMAVER_JAVA_RELEASE_FLAGS}
                 -encoding UTF-8 -cp "${OPENMAVER_MC_CP}"

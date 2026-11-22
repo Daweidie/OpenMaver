@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Build first with cmake --build build; these interaction tests need no Minecraft/native GL.
+set -euo pipefail
+repo_dir="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$repo_dir"
+out_dir="${OPENMAVER_CLICKGUI_TEST_OUT:-build/clickgui-test-classes}"
+classpath="build/mc-classes:build/java-classes:build/mcstubs-classes"
+mkdir -p "$out_dir"
+mapfile -t sources < <(rg --files tools/clickgui-test -g '*.java')
+javac --release 8 -Xlint:-options -encoding UTF-8 -cp "$classpath" -d "$out_dir" "${sources[@]}" \
+    mc/GuiOpenMaverClickGui.java mc/ConfigProfiles.java
+java -Djava.awt.headless=true -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" ClickGuiInteractionTest

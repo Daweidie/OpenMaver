@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * ClickGUI「Configs」页的配置档案（profile）读写。
+ * ClickGUI「Config」浮动面板的配置档案（profile）读写。
  *
  * <p>一个 {@code .cfg} 文件就是一整套客户端状态，内部是纯文本、分段存放：
  * <pre>
@@ -44,9 +44,11 @@ public final class ConfigProfiles {
     private static final int MAX_NAME = 40;
 
     /** 最近一次操作的结果（GUI 底部一行提示用）。 */
-    private static String status = "";
-    private static boolean statusError;
-    private static long statusAt;
+    private static volatile String status = "";
+    private static volatile boolean statusError;
+    private static volatile long statusAt;
+    private static boolean importing;
+    private static String importedName;
 
     private ConfigProfiles() {
     }
@@ -244,6 +246,83 @@ public final class ConfigProfiles {
     /** 供面板复制的绝对路径（FOLDER 打不开时至少能贴出来）。 */
     public static String folderPath() {
         return folder().getAbsolutePath();
+    }
+
+    /** 文件选择器在 AWT 线程运行，不阻塞 Minecraft 渲染；导入后由游戏线程选中档案。 */
+    public static synchronized void requestImport() {
+        if (importing) {
+            return;
+        }
+        importing = true;
+        try {
+            java.awt.EventQueue.invokeLater(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        javax.swing.JFileChooser chooser = new javax.swing.JFileChooser(folder());
+                        chooser.setDialogTitle("Import OpenMaver profile");
+                        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                                "OpenMaver profiles (*.cfg)", "cfg"));
+                        chooser.setAcceptAllFileFilterUsed(false);
+                        if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {
+                            String name = importFile(chooser.getSelectedFile());
+                            synchronized (ConfigProfiles.class) {
+                                importedName = name;
+                            }
+                        }
+                    } catch (Throwable t) {
+                        fail("Import failed: " + t.getMessage());
+                    } finally {
+                        synchronized (ConfigProfiles.class) {
+                            importing = false;
+                        }
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            importing = false;
+            fail("Import failed: " + t.getMessage());
+        }
+    }
+
+    public static synchronized String takeImportedName() {
+        String name = importedName;
+        importedName = null;
+        return name;
+    }
+
+    /** 导入本地档案到 profiles；保留同名文件，用户随后点击 Load 应用。 */
+    public static String importFile(File source) {
+        try {
+            if (source == null || !source.isFile()
+                    || !source.getName().toLowerCase(Locale.ROOT).endsWith(EXTENSION)) {
+                fail("Choose a .cfg profile.");
+                return null;
+            }
+            String raw = readText(source).replace("\r\n", "\n");
+            if (!raw.startsWith(HEADER + "\n") || !raw.contains("\n" + MARK_FEATURES + "\n")
+                    || !raw.contains("\n" + MARK_MODULES + "\n")
+                    || !raw.contains("\n" + MARK_STATE + "\n")) {
+                fail("Invalid OpenMaver profile.");
+                return null;
+            }
+            String base = sanitize(source.getName());
+            if (base.isEmpty()) {
+                base = suggestName();
+            }
+            String name = base;
+            int suffix = 2;
+            while (exists(name)) {
+                String ending = "_" + suffix++;
+                name = base.substring(0, Math.min(base.length(), MAX_NAME - ending.length())) + ending;
+            }
+            writeText(fileOf(name), raw);
+            ok("Imported " + name + EXTENSION);
+            return name;
+        } catch (Throwable t) {
+            fail("Import failed: " + t.getMessage());
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------

@@ -27,12 +27,9 @@ import java.util.Set;
 /**
  * 游戏内 ClickGUI（Forge 1.8.9 / {@link GuiScreen}）。
  *
- * <p>视觉对应 {@code design/clickgui.html}：纯灰色面板、中性灰描边、左侧分类栏、
- * 顶部搜索与筛选、模块行 + 可展开设置区。全部由 {@link Gui#drawRect} 与立即模式
- * 线段自绘，不依赖 GuiButton / 纹理资源，因此运行期注入也能用。
- *
- * <p>字体：模块名 / 分类名用打包的 Source Code Pro（{@link HudFont}），
- * 微型标签、数值、键帽用 Minecraft 自带字体，形成第二层级（数值天然接近等宽）。
+ * <p>每个分类都是独立的可拖动、可折叠面板，右键模块展开设置。
+ * Config 与 Wallpaper 也使用相同的列式布局，不再切换到侧栏式界面。
+ * 所有控件由立即模式几何与打包字体绘制，支持运行期注入。
  *
  * <p>真实数据：模块来自 {@link ModuleManager}，Aim Assist / Player ESP 来自
  * {@link OpenMaverFeatures}；两者都可以在展开区直接调参并持久化。
@@ -49,35 +46,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     // 布局（GUI 单位，最终按屏幕缩放）
     // ------------------------------------------------------------------
 
-    private static final int PANEL_MAX_W = 500;
-    private static final int PANEL_MAX_H = 400;
-    private static final int HEADER_H = 64;
-    private static final int TOOLS_H = 32;
-    private static final int FOOTER_H = 26;
-    private static final int ROW_H = 34;
-    private static final int ROW_GAP = 5;
-    private static final int LIST_PAD = 10;
-    private static final int GRID_COLS = 3;
-    private static final int GRID_GAP = 10;
-    private static final int CONTROL_H = 30;
-    private static final int CONTROL_ROW_GAP = 8;
-    private static final int SETTINGS_PAD = 8;
-
-    /** 左栏分类 / 系统入口的固定几何，绘制与点击共用。 */
-    private static final int RAIL_NAV_Y = 84;
-    private static final int RAIL_NAV_STRIDE = 27;
-    private static final int RAIL_NAV_H = 25;
-    private static final int RAIL_SYS_LABEL_Y = 220;
-    private static final int RAIL_SYS_Y = 231;
-    private static final int RAIL_SYS_STRIDE = 23;
-    private static final int RAIL_SYS_H = 21;
-    private static final int RAIL_SYS_MIN_H = 352;
-
-    private static final int RADIUS = 22;
-    /** 模块卡片使用更饱满的圆角，和左侧圆形开关保持同一套圆润语言。 */
-    private static final int CARD_RADIUS = 16;
-    /** 模块行左侧开关图标的半径（含外圈）。 */
-    private static final int TOGGLE_RADIUS = 10;
     /** 圆角/圆形的边缘羽化宽度（GUI 单位）；与主菜单保持一致的柔和描边。 */
     private static final float AA_FEATHER = 1.0F;
     /** 每个圆角使用的圆弧段数；越高越圆滑。 */
@@ -90,60 +58,15 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final float[] AA_OUTER_Y = new float[AA_POINT_COUNT];
 
     // ------------------------------------------------------------------
-    // 配色
-    // ------------------------------------------------------------------
-
-    private static final int TEXT = 0xFFFFFFFF;
-    private static final int TEXT_2 = 0xFFA9B5C6;
-    private static final int MUTED = 0xFF6E7A8C;
-    private static final int FAINT = 0xFF525C6B;
-    /** 全界面只使用白色强调；不再出现青 / 紫 / 红 / 绿。 */
-    private static final int ACCENT = 0xFFFFFFFF;
-
-    /** 中性灰色边缘，用于外框、顶部高光与轻微外发光。 */
-    private static final int GLASS_EDGE = 0xFFBFBFBF;
-    private static final int GLASS_EDGE_BRIGHT = 0xFFEDEDED;
-
-    /** 纯灰色面板 / 分类栏 / 卡片，半透明区域直接透出清晰背景。 */
-    private static final int PANEL_SOLID = 0xC82E2E2E;
-    private static final int RAIL_SOLID = 0xD0272727;
-    private static final int CARD_FILL = 0xE6383838;
-    private static final int CARD_HOVER = 0xEA444444;
-    private static final int CARD_OPEN = 0xE83E3E3E;
-    private static final int FIELD_SOLID = 0xE6232323;
-    private static final int FIELD_HOVER = 0xEA2D2D2D;
-
-
-    private static final int SLIDER_VALUE = 0xFFFFFFFF;
-    private static final int KEYCAP_TEXT = 0xFFD5D9DF;
-
-    private static final float MIN_LOGO_SCALE = 0.35F;
-    private static final float MAX_LOGO_SCALE = 1.25F;
-    private static final float LOGO_SCALE_STEP = 0.05F;
-
-    // ------------------------------------------------------------------
     // 分类
     // ------------------------------------------------------------------
 
     private static final Category[] CATEGORIES = {
-        new Category("combat", "Combat", "Target acquisition, reach and attack timing.",
-                ACCENT, ACCENT),
-        new Category("movement", "Movement", "Velocity, sprint and travel assistance.",
-                ACCENT, ACCENT),
-        new Category("render", "Render", "ESP, overlays and visual clarity.",
-                ACCENT, ACCENT),
-        new Category("player", "Player", "Inventory, tools and survival helpers.",
-                ACCENT, ACCENT),
-        new Category("misc", "Misc", "Utility, exploit and quality-of-life.",
-                ACCENT, ACCENT)
-    };
-
-    /** 左栏 SYSTEM 入口（对应设计稿的 Configs / Statistics / Wallpaper / Settings）。 */
-    private static final SystemItem[] SYSTEM_ITEMS = {
-        new SystemItem("configs", "Configs", "Profiles, storage and active settings."),
-        new SystemItem("stats", "Statistics", "Module counters and category activity."),
-        new SystemItem("wallpaper", "Wallpaper", "Main menu static images and animated backgrounds."),
-        new SystemItem("settings", "Settings", "Client preferences and diagnostics.")
+        new Category("combat", "Combat"),
+        new Category("movement", "Movement"),
+        new Category("render", "Render"),
+        new Category("player", "Player"),
+        new Category("misc", "Misc")
     };
 
     private static final String[] ESP_COLOR_NAMES = {"Orange", "Cyan", "Violet", "Red"};
@@ -174,39 +97,24 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     // ------------------------------------------------------------------
 
     private final GuiScreen returnScreen;
-    private final String initialSystemPage;
+    private final String initialColumn;
     private final List<Entry> entries = new ArrayList<Entry>();
     private final Set<String> expanded = new HashSet<String>();
 
-    private String category = "combat";
-    /** null 表示模块列表；否则显示 Configs / Statistics / Settings 页面。 */
-    private String systemPage;
     private String searchQuery = "";
     private boolean searchFocused;
-    private int filter = 0; // 0 all, 1 enabled, 2 disabled
-    private boolean sortAscending = true;
 
     /** 所有按钮共用的过渡时长：悬停快速、选中/激活稍慢，形成统一的“平滑滚动”手感。 */
     private static final float HOVER_MS = 130.0F;
     private static final float ACTIVE_MS = 190.0F;
     private static final float PRESS_MS = 160.0F;
 
-    /** 打开 / 关闭时的缩放动画：从略小的面板放大展开，关闭时反向收回。 */
+    /** 列面板打开 / 关闭时淡入淡出。 */
     private static final float OPEN_DURATION_MS = 220.0F;
     private static final float CLOSE_DURATION_MS = 210.0F;
-    private static final float OPEN_SCALE_FROM = 0.82F;
-
-    private int scroll;
-    private float scrollVisual;
-    /** 壁纸页文件列表的滚动偏移。 */
-    private int wallpaperScroll;
-
-    /** Configs 页：当前输入 / 选中的档案名（不含 .cfg）。 */
     private String profileName = "";
-    /** Configs 页：名字输入框是否获得焦点（获得焦点时键盘输入写进名字）。 */
     private boolean profileFieldFocused;
-    /** Configs 页档案列表的滚动偏移。 */
-    private int configScroll;
+    private boolean configPreferences;
     private long lastAnimationAt;
     private long frameNow;
     private float openProgress;
@@ -224,29 +132,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private int dragW;
     /** RANGE 正在拖动的是上限手柄。 */
     private boolean dragHigh;
-    private boolean panelDragging;
-    private boolean logoSizeDragging;
-    private float logoScale = 1.00F;
-    private int panelDragOffsetX;
-    private int panelDragOffsetY;
-
-    private Entry selectEntry;
-    private Setting selectSetting;
-    private int selectFieldX;
-    private int selectFieldY;
-    private int selectFieldW;
-
-    private int panelX;
-    private int panelY;
-    private int panelW;
-    private int panelH;
-    private int railW;
-    private int mainX;
-    private int mainW;
-    private int listX;
-    private int listY;
-    private int listW;
-    private int listH;
     private int searchX;
     private int searchY;
     private int searchW;
@@ -254,9 +139,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     /** 上一帧到这一帧的毫秒数（已截断到 50ms），给列式界面的平滑动画用。 */
     private float frameDelta;
-    /** 进入当前视图（列式 / SYSTEM 页面）的时刻，用于两种视图之间的淡入。 */
-    private long modeAt;
-
     /** 出错后停用绘制，避免崩溃。 */
     private boolean failed;
     private boolean drawLogged;
@@ -265,10 +147,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         this(returnScreen, null);
     }
 
-    /** Opens the ClickGUI directly on one of the SYSTEM pages ({@code configs}/{@code stats}/{@code settings}). */
-    public GuiOpenMaverClickGui(GuiScreen returnScreen, String initialSystemPage) {
+    /** 将指定的新面板置于最上层（主菜单的 Wallpaper 入口也走同一个界面）。 */
+    public GuiOpenMaverClickGui(GuiScreen returnScreen, String initialColumn) {
         this.returnScreen = returnScreen;
-        this.initialSystemPage = initialSystemPage;
+        this.initialColumn = initialColumn;
     }
 
     // ==================================================================
@@ -284,27 +166,19 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         this.closing = false;
         this.closingAt = 0L;
         this.closingFrom = 0.0F;
-        this.systemPage = initialSystemPage;
         // 打开面板：短促高音，和模块开关的“开启”音同调。
         OpenMaverFeatures.playUiClick(1.15F);
         Keyboard.enableRepeatEvents(true);
-        layout();
         buildEntries();
 
         expanded.clear();
-        this.modeAt = this.openedAt;
         this.columnsAt = this.openedAt;
         initColumns();
 
-        // 默认选中第一个有内容的分类
-        if (!hasEntries(category)) {
-            for (int i = 0; i < CATEGORIES.length; i++) {
-                if (hasEntries(CATEGORIES[i].id)) {
-                    category = CATEGORIES[i].id;
-                    break;
-                }
-            }
+        if (profileName.isEmpty()) {
+            profileName = ConfigProfiles.suggestName();
         }
+        focusInitialColumn();
 
         this.buttonList.clear();
         System.err.println("[OpenMaver] ClickGUI initialized: " + this.width + "x" + this.height
@@ -333,7 +207,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             float openT = clamp01((now - openedAt) / OPEN_DURATION_MS);
             openProgress = easeOutCubic(openT);
         }
-        scrollVisual = approach(scrollVisual, scroll, frameDelta, 180.0F);
         this.frameDelta = frameDelta;
         lastMouseX = mouseX;
         lastMouseY = mouseY;
@@ -351,26 +224,13 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     OpenMaverFeatures.flushSettings();
                 }
             }
-            if (panelDragging) {
-                if (Mouse.isButtonDown(0)) {
-                    movePanelTo(mouseX - panelDragOffsetX, mouseY - panelDragOffsetY);
-                } else {
-                    panelDragging = false;
-                }
+            String imported = ConfigProfiles.takeImportedName();
+            if (imported != null) {
+                profileName = imported;
+                profileFieldFocused = false;
             }
-            if (logoSizeDragging) {
-                if (Mouse.isButtonDown(0)) {
-                    updateLogoSize(mouseX);
-                } else {
-                    logoSizeDragging = false;
-                }
-            }
-            if (systemPage == null) {
-                updateColumnPress(mouseX, mouseY);
-                drawColumns();
-            } else {
-                drawGui();
-            }
+            updateColumnPress(mouseX, mouseY);
+            drawColumns();
         } catch (Throwable t) {
             failed = true;
             System.out.println("[OpenMaver] ClickGUI 绘制出错，已停用: " + t);
@@ -378,34 +238,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
         super.drawScreen(mouseX, mouseY, partialTicks);
         OpenMaverHud.renderToastOverlay(this.mc.fontRendererObj, this.width, this.height);
-    }
-
-    private void layout() {
-        // 面板保持 5:4 长宽比：先取可用空间，再以较短的一边为准收缩。
-        int availW = Math.min(this.width - 32, PANEL_MAX_W);
-        int availH = Math.min(this.height - 32, PANEL_MAX_H);
-        panelW = Math.min(availW, availH * 5 / 4);
-        panelH = panelW * 4 / 5;
-        panelW = Math.max(320, panelW);
-        panelH = Math.max(240, panelH);
-        panelW = Math.min(panelW, this.width - 8);
-        panelH = Math.min(panelH, this.height - 8);
-        panelX = (this.width - panelW) / 2;
-        panelY = (this.height - panelH) / 2;
-
-        railW = Math.max(120, Math.min(176, panelW * 19 / 100));
-        mainX = panelX + railW;
-        mainW = panelW - railW;
-
-        listX = mainX + 16;
-        listW = mainW - 32;
-        listY = panelY + HEADER_H + TOOLS_H;
-        listH = panelH - HEADER_H - TOOLS_H - FOOTER_H;
-
-        searchW = Math.min(196, Math.max(120, mainW / 3));
-        searchH = 22;
-        searchX = mainX + mainW - 16 - searchW;
-        searchY = panelY + 19;
     }
 
     private void buildEntries() {
@@ -1204,40 +1036,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     // 绘制
     // ==================================================================
 
-    private void drawGui() {
-        float reveal = viewReveal();
-        GlColor.restore();
-
-        drawBackgroundOverlay(0.34F);
-
-        GL11.glPushMatrix();
-        // 打开时从面板中心向外放大，关闭时沿同一路径缩回。
-        float scale = panelScale();
-        float centerX = panelX + panelW / 2.0F;
-        float centerY = panelY + panelH / 2.0F;
-        float lift = (1.0F - reveal) * 6.0F;
-        GL11.glTranslatef(centerX, centerY + lift, 0.0F);
-        GL11.glScalef(scale, scale, 1.0F);
-        GL11.glTranslatef(-centerX, -centerY, 0.0F);
-
-        drawPanelShadow(reveal);
-        drawPanel(reveal);
-
-        FontRenderer font = this.mc.fontRendererObj;
-        drawRail(font);
-        if (systemPage == null) {
-            drawHeader(font);
-            drawTools(font);
-            drawList(font);
-        } else {
-            drawSystemHeader(font);
-            drawSystemPage(font);
-        }
-        drawFooter(font);
-        drawSelectPopup(font);
-        GL11.glPopMatrix();
-    }
-
     private void drawBackgroundOverlay(float opacity) {
         if (returnScreen instanceof GuiMaverMainMenu) {
             // 主菜单不再是当前 screen，需要主动重绘背景才能加载并预览新壁纸。
@@ -1273,7 +1071,13 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final int COL_ON_TEXT = 0xFF1C2573;
     private static final int COL_DIM = 0xFF7C8494;
 
-    private static final String CLIENT_COLUMN = "client";
+    private static final String CONFIG_COLUMN = "configs";
+    private static final String WALLPAPER_COLUMN = "wallpaper";
+    private static final int CONFIG_W = 146;
+    private static final int WALLPAPER_W = 158;
+    private static final int CFG_PINK = 0xFFFFE2E3;
+    private static final int CFG_INK = 0xFF987E83;
+    private String tooltip;
 
     /** 列的位置 / 折叠状态在本次游戏会话内保留，重新打开 ClickGUI 不会复位。 */
     private static final Map<String, ColumnState> COLUMN_STATE = new HashMap<String, ColumnState>();
@@ -1293,29 +1097,58 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int x = COL_GAP;
         int y = COL_TOP;
         int rowMaxBottom = y;
-        for (int i = 0; i <= CATEGORIES.length; i++) {
-            String id = i < CATEGORIES.length ? CATEGORIES[i].id : CLIENT_COLUMN;
-            String title = i < CATEGORIES.length ? CATEGORIES[i].name : "Client";
+        for (int i = 0; i < CATEGORIES.length + 2; i++) {
+            String id = i < CATEGORIES.length ? CATEGORIES[i].id
+                    : i == CATEGORIES.length ? CONFIG_COLUMN : WALLPAPER_COLUMN;
+            String title = i < CATEGORIES.length ? CATEGORIES[i].name
+                    : i == CATEGORIES.length ? "Config" : "Wallpaper";
             if (i < CATEGORIES.length && !hasEntries(id)) {
                 continue;
             }
-            if (x + COL_W > this.width - COL_GAP && x > COL_GAP) {
+            int w = Math.min(this.width, CONFIG_COLUMN.equals(id) ? CONFIG_W
+                    : WALLPAPER_COLUMN.equals(id) ? WALLPAPER_W : COL_W);
+            if (x + w > this.width - COL_GAP && x > COL_GAP) {
                 x = COL_GAP;
-                y = rowMaxBottom + COL_GAP;
+                y = Math.min(rowMaxBottom + COL_GAP, Math.max(COL_TOP, this.height / 2));
+                rowMaxBottom = y;
             }
             ColumnState state = COLUMN_STATE.get(id);
             if (state == null) {
                 state = new ColumnState(x, y);
                 COLUMN_STATE.put(id, state);
             }
-            state.x = clampInt(state.x, 0, Math.max(0, this.width - COL_W));
-            state.y = clampInt(state.y, 0, Math.max(0, this.height - COL_HEADER_H));
-            Column column = new Column(id, title, state, columns.size());
+            state.x = clampInt(state.x, 0, Math.max(0, this.width - w));
+            state.y = clampInt(state.y, 0, Math.max(0, this.height - COL_HEADER_H - 48));
+            Column column = new Column(id, title, state, columns.size(), w);
             columns.add(column);
             int estimate = COL_HEADER_H + COL_BOTTOM_PAD
-                    + COL_ROW_H * (CLIENT_COLUMN.equals(id) ? SYSTEM_ITEMS.length : countCategory(id));
+                    + (isUtilityColumn(column) ? 120 : COL_ROW_H * countCategory(id));
             rowMaxBottom = Math.max(rowMaxBottom, y + estimate);
-            x += COL_W + COL_GAP;
+            x += w + COL_GAP;
+        }
+    }
+
+    private static boolean isUtilityColumn(Column column) {
+        return CONFIG_COLUMN.equals(column.id) || WALLPAPER_COLUMN.equals(column.id);
+    }
+
+    private void focusInitialColumn() {
+        if (initialColumn == null) {
+            return;
+        }
+        String id = "settings".equals(initialColumn) ? CONFIG_COLUMN : initialColumn;
+        for (int i = 0; i < columns.size(); i++) {
+            Column column = columns.get(i);
+            if (id.equals(column.id)) {
+                column.state.collapsed = false;
+                column.collapse = 0.0F;
+                column.state.y = Math.min(column.state.y,
+                        Math.max(0, this.height - COL_HEADER_H - 160));
+                column.visY = column.state.y;
+                configPreferences = "settings".equals(initialColumn);
+                bringToFront(column);
+                return;
+            }
         }
     }
 
@@ -1364,6 +1197,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private void drawColumns() {
         GlColor.restore();
         drawBackgroundOverlay(0.30F);
+        tooltip = null;
 
         FontRenderer font = this.mc.fontRendererObj;
         Column top = topColumnAt(lastMouseX, lastMouseY);
@@ -1372,6 +1206,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             drawColumn(font, column, columnReveal(column.order), column == top);
         }
         drawSearchBar(font);
+        drawTooltip(font);
     }
 
     private void drawColumn(FontRenderer font, Column column, float alpha, boolean topmost) {
@@ -1395,52 +1230,56 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
         int x = Math.round(column.visX);
         int y = Math.round(column.visY - (1.0F - clamp01(alpha / Math.max(0.01F, openProgress))) * 14.0F);
-        boolean client = CLIENT_COLUMN.equals(column.id);
-        List<Entry> list = client ? null : columnEntries(column.id);
+        int w = column.width;
+        boolean utility = isUtilityColumn(column);
+        List<Entry> list = utility ? Collections.<Entry>emptyList() : columnEntries(column.id);
 
         // 内容总高度（含正在展开的设置区）。
-        int contentH = 0;
-        int rows = client ? SYSTEM_ITEMS.length : list.size();
+        int contentH = utility ? utilityContentHeight(column) : 0;
+        int rows = list.size();
         for (int i = 0; i < rows; i++) {
             contentH += COL_ROW_H;
-            if (!client) {
-                Entry entry = list.get(i);
-                if (!entry.settings.isEmpty()) {
-                    contentH += Math.round(columnSettingsHeight(entry) * getEntryProgress(entry, now));
-                }
+            Entry entry = list.get(i);
+            if (!entry.settings.isEmpty()) {
+                contentH += Math.round(columnSettingsHeight(entry) * getEntryProgress(entry, now));
             }
         }
         contentH += COL_BOTTOM_PAD;
-        int maxBody = Math.max(COL_ROW_H * 3, this.height - y - COL_HEADER_H - 6);
+        int maxBody = Math.max(0, this.height - y - COL_HEADER_H - 6);
         int fullBody = Math.min(contentH, maxBody);
         int maxScroll = Math.max(0, contentH - fullBody);
+        column.maxScroll = maxScroll;
         column.scroll = clampInt(column.scroll, 0, maxScroll);
         column.scrollVis = approach(column.scrollVis, column.scroll, frameDelta, 90.0F);
         int bodyH = Math.round(fullBody * open);
         int totalH = COL_HEADER_H + bodyH;
 
         // 投影 + 外框
-        roundRect(x - 1, y + 1, COL_W + 2, totalH + 2, COL_RADIUS + 1,
+        roundRect(x - 1, y + 1, w + 2, totalH + 2, COL_RADIUS + 1,
                 fade(0x40000000, alpha));
-        roundRect(x, y, COL_W, totalH, COL_RADIUS, fade(COL_BODY_BG, alpha));
+        roundRect(x, y, w, totalH, COL_RADIUS, fade(COL_BODY_BG, alpha));
         if (bodyH < COL_RADIUS) {
-            roundRect(x, y, COL_W, COL_HEADER_H, COL_RADIUS, fade(COL_HEADER_BG, alpha));
+            roundRect(x, y, w, COL_HEADER_H, COL_RADIUS, fade(COL_HEADER_BG, alpha));
         } else {
-            shapePolygon(x, y, COL_W, COL_HEADER_H, COL_RADIUS, COL_RADIUS, 0, 0,
+            shapePolygon(x, y, w, COL_HEADER_H, COL_RADIUS, COL_RADIUS, 0, 0,
                     fade(COL_HEADER_BG, alpha));
         }
 
         // 标题栏
-        boolean headerHover = topmost && isHovered(lastMouseX, lastMouseY, x, y, COL_W, COL_HEADER_H);
+        boolean headerHover = topmost && isHovered(lastMouseX, lastMouseY, x, y, w, COL_HEADER_H);
         ControlAnim headerAnim = control("col:" + column.id, headerHover, pressColumn == column && pressMoved, now);
         if (headerAnim.hover > 0.01F) {
-            shapePolygon(x, y, COL_W, COL_HEADER_H, COL_RADIUS, COL_RADIUS,
+            shapePolygon(x, y, w, COL_HEADER_H, COL_RADIUS, COL_RADIUS,
                     bodyH < COL_RADIUS ? COL_RADIUS : 0, bodyH < COL_RADIUS ? COL_RADIUS : 0,
                     fade(0x0CFFFFFF, alpha * headerAnim.hover));
         }
         HudFont.drawString(font, column.title, x + 7, y + 6, fade(COL_TITLE, alpha), 1.12F * FONT_SCALE);
-        drawChevronProgress(x + COL_W - 10, y + COL_HEADER_H / 2, open,
+        drawChevronProgress(x + w - 10, y + COL_HEADER_H / 2, open,
                 fade(blendColor(COL_DIM, COL_TITLE, headerAnim.hover), alpha));
+        if (CONFIG_COLUMN.equals(column.id)) {
+            drawHeaderAction(column, "new", x + w - 46, y, "+", "New profile", alpha, topmost);
+            drawHeaderAction(column, "preferences", x + w - 30, y, "gear", "Settings", alpha, topmost);
+        }
         column.headerX = x;
         column.headerY = y;
         column.bodyY = y + COL_HEADER_H;
@@ -1451,22 +1290,20 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
 
         int bodyTop = y + COL_HEADER_H;
-        pushScissor(x, bodyTop, COL_W, bodyH);
+        pushScissor(x, bodyTop, w, bodyH);
         int rowY = bodyTop - Math.round(column.scrollVis);
         boolean bodyHoverable = topmost && open > 0.95F
-                && isHovered(lastMouseX, lastMouseY, x, bodyTop, COL_W, bodyH);
+                && isHovered(lastMouseX, lastMouseY, x, bodyTop, w, bodyH);
+        if (utility) {
+            if (CONFIG_COLUMN.equals(column.id)) {
+                drawConfigColumn(font, column, x, rowY, alpha, bodyHoverable);
+            } else {
+                drawWallpaperColumn(font, column, x, rowY, alpha, bodyHoverable);
+            }
+        }
         for (int i = 0; i < rows; i++) {
             boolean hovered = bodyHoverable
                     && isHovered(lastMouseX, lastMouseY, x, rowY, COL_W, COL_ROW_H);
-            if (client) {
-                SystemItem item = SYSTEM_ITEMS[i];
-                ControlAnim anim = control("colsys:" + item.id, hovered, false, now);
-                drawColumnRow(font, x, rowY, item.name, null, 0.0F, anim.hover, anim.press,
-                        false, 0.0F, alpha);
-                column.hits.add(Hit.system(item.id, x, rowY, COL_W, COL_ROW_H));
-                rowY += COL_ROW_H;
-                continue;
-            }
             Entry entry = list.get(i);
             entry.hoverProgress = approach(entry.hoverProgress, hovered ? 1.0F : 0.0F,
                     Math.min(50.0F, now - entry.animationAt), HOVER_MS);
@@ -1506,11 +1343,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         popScissor();
 
         // 内容超出时的细滚动条
-        if (maxScroll > 0) {
+        if (maxScroll > 0 && bodyH > 12) {
             int trackH = bodyH - COL_BOTTOM_PAD - 2;
-            int thumbH = Math.max(12, trackH * fullBody / contentH);
+            int thumbH = Math.min(trackH, Math.max(12, trackH * fullBody / contentH));
             int thumbY = bodyTop + 1 + Math.round((trackH - thumbH) * column.scrollVis / maxScroll);
-            roundRect(x + COL_W - 3, thumbY, 2, thumbH, 1, fade(0x50FFFFFF, alpha));
+            roundRect(x + w - 3, thumbY, 2, thumbH, 1, fade(0x50FFFFFF, alpha));
         }
     }
 
@@ -1662,7 +1499,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private Column topColumnAt(int mx, int my) {
         for (int i = columns.size() - 1; i >= 0; i--) {
             Column column = columns.get(i);
-            if (isHovered(mx, my, column.headerX, column.headerY, COL_W,
+            if (isHovered(mx, my, column.headerX, column.headerY, column.width,
                     COL_HEADER_H + column.bodyH)) {
                 return column;
             }
@@ -1677,6 +1514,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private void handleColumnClick(int mx, int my, int button) {
+        profileFieldFocused = false;
         if (isHovered(mx, my, searchX, searchY, searchW, searchH)) {
             searchFocused = true;
             return;
@@ -1688,6 +1526,15 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
         bringToFront(column);
         if (my < column.headerY + COL_HEADER_H) {
+            for (Hit hit : column.hits) {
+                if (hit.header
+                        && isHovered(mx, my, hit.x, hit.y, hit.w, hit.h)) {
+                    if (button == 0) {
+                        handleUtilityAction(column, hit);
+                    }
+                    return;
+                }
+            }
             if (button == 0) {
                 pressColumn = column;
                 pressMoved = false;
@@ -1709,15 +1556,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     || my < column.bodyY || my >= column.bodyY + column.bodyH) {
                 continue;
             }
-            if (hit.systemId != null) {
+            if (hit.action != null) {
                 if (button == 0) {
-                    press("colsys:" + hit.systemId);
-                    OpenMaverFeatures.playUiClick(1.0F);
-                    systemPage = hit.systemId;
-                    profileFieldFocused = false;
-                    configScroll = 0;
-                    modeAt = System.currentTimeMillis();
-                    layout();
+                    handleUtilityAction(column, hit);
                 }
             } else if (hit.setting == null) {
                 Entry entry = hit.entry;
@@ -1768,6 +1609,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     private void toggleCollapse(Column column) {
         column.state.collapsed = !column.state.collapsed;
+        if (CONFIG_COLUMN.equals(column.id) && column.state.collapsed) {
+            profileFieldFocused = false;
+        }
         OpenMaverFeatures.playUiClick(column.state.collapsed ? 0.95F : 1.1F);
     }
 
@@ -1782,7 +1626,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             }
             if (pressMoved) {
                 ColumnState state = pressColumn.state;
-                state.x = clampInt(mx - pressOffsetX, 0, Math.max(0, this.width - COL_W));
+                state.x = clampInt(mx - pressOffsetX, 0, Math.max(0, this.width - pressColumn.width));
                 state.y = clampInt(my - pressOffsetY, 0, Math.max(0, this.height - COL_HEADER_H));
             }
         } else {
@@ -1797,7 +1641,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private void scrollColumn(int mx, int my, int wheel) {
         Column column = topColumnAt(mx, my);
         if (column != null && my >= column.bodyY) {
-            column.scroll -= Integer.signum(wheel) * COL_ROW_H * 2;
+            column.scroll = clampInt(column.scroll - Integer.signum(wheel) * COL_ROW_H * 2,
+                    0, column.maxScroll);
         }
     }
 
@@ -1817,22 +1662,25 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         final String title;
         final ColumnState state;
         final int order;
+        final int width;
         final List<Hit> hits = new ArrayList<Hit>();
         float visX;
         float visY;
         float collapse;
         int scroll;
+        int maxScroll;
         float scrollVis;
         int headerX;
         int headerY;
         int bodyY;
         int bodyH;
 
-        Column(String id, String title, ColumnState state, int order) {
+        Column(String id, String title, ColumnState state, int order, int width) {
             this.id = id;
             this.title = title;
             this.state = state;
             this.order = order;
+            this.width = width;
             this.visX = state.x;
             this.visY = state.y;
             this.collapse = state.collapsed ? 1.0F : 0.0F;
@@ -1845,7 +1693,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final class Hit {
         Entry entry;
         Setting setting;
-        String systemId;
+        String action;
+        String value;
+        boolean header;
         int x;
         int y;
         int w;
@@ -1863,9 +1713,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             return hit;
         }
 
-        static Hit system(String id, int x, int y, int w, int h) {
+        static Hit action(String action, String value, int x, int y, int w, int h) {
             Hit hit = entry(null, x, y, w, h);
-            hit.systemId = id;
+            hit.action = action;
+            hit.value = value;
             return hit;
         }
 
@@ -1879,1818 +1730,326 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
     }
 
-    // ------------------------------------------------------------------
-    // 面板
-    // ------------------------------------------------------------------
+    // Config 与 Wallpaper 是同一套列面板；绘制和命中共用 Hit，不存在旧页面入口。
 
-    /** 面板投影 + 一圈非常淡的白色外发光，让面板从世界里浮起来。 */
-    private void drawPanelShadow(float reveal) {
-        roundRect(panelX + 8, panelY + 20, panelW - 16, panelH, RADIUS + 6,
-                withAlpha(0x000000, Math.round(0x12 * reveal)));
-        roundRect(panelX + 4, panelY + 11, panelW - 8, panelH, RADIUS + 3,
-                withAlpha(0x000000, Math.round(0x1E * reveal)));
-        roundRect(panelX + 1, panelY + 5, panelW - 2, panelH, RADIUS + 1,
-                withAlpha(0x000000, Math.round(0x30 * reveal)));
-        roundRect(panelX - 3, panelY - 3, panelW + 6, panelH + 6, RADIUS + 4,
-                withAlpha(GLASS_EDGE, Math.round(0x10 * reveal)));
-    }
-
-    /** 纯色玻璃面板：1px 描边、顶部折射亮线、四周内阴影。 */
-    private void drawPanel(float reveal) {
-        int accent = accent();
-        roundRect(panelX, panelY, panelW, panelH, RADIUS,
-                withAlpha(GLASS_EDGE, Math.round(0x42 * reveal)));
-        roundRect(panelX + 1, panelY + 1, panelW - 2, panelH - 2, RADIUS - 1,
-                scaleAlpha(PANEL_SOLID, reveal));
-
-        // 顶部 1px 高光：中间最亮，向两侧淡出。
-        int lineY = panelY + 1;
-        int middle = panelX + panelW / 2;
-        Gui.drawRect(panelX + RADIUS, lineY, panelX + panelW - RADIUS, lineY + 1,
-                withAlpha(0xFFFFFF, Math.round(0x10 * reveal)));
-        Gui.drawRect(middle - panelW / 3, lineY, middle + panelW / 3, lineY + 1,
-                withAlpha(GLASS_EDGE_BRIGHT, Math.round(0x1A * reveal)));
-        Gui.drawRect(middle - panelW / 9, lineY, middle + panelW / 9, lineY + 1,
-                withAlpha(0xFFFFFF, Math.round(0x34 * reveal)));
-        // 顶部极淡的一层高光，保留“玻璃”质感但不破坏纯色。
-        Gui.drawRect(panelX + RADIUS, panelY + 2, panelX + panelW - RADIUS,
-                panelY + 3, withAlpha(0xFFFFFF, Math.round(0x05 * reveal)));
-
-        // 四周内阴影：让面板有厚度，同时把视线收进内容区。
-        for (int i = 0; i < 6; i++) {
-            int alpha = Math.round((6 - i) * 1.1F * reveal);
-            int inset = roundedInset(RADIUS, i + 0.5F, panelH);
-            Gui.drawRect(panelX + inset, panelY + i, panelX + panelW - inset,
-                    panelY + i + 1, withAlpha(0x000000, alpha));
+    private int utilityContentHeight(Column column) {
+        if (CONFIG_COLUMN.equals(column.id)) {
+            return 74 + (configPreferences ? 72 : 0)
+                    + Math.max(1, ConfigProfiles.listNames().size()) * COL_ROW_H + 18;
         }
-        for (int i = 0; i < 10; i++) {
-            int alpha = Math.round((10 - i) * 1.7F * reveal);
-            int inset = roundedInset(RADIUS, panelH - 0.5F - i, panelH);
-            Gui.drawRect(panelX + inset, panelY + panelH - 1 - i,
-                    panelX + panelW - inset, panelY + panelH - i,
-                    withAlpha(0x000000, alpha));
+        return 88 + Math.max(1, MaverWallpaper.listWallpapers().size()) * COL_ROW_H + 24;
+    }
+
+    private void drawHeaderAction(Column column, String action, int x, int y,
+            String icon, String hint, float alpha, boolean hoverable) {
+        boolean hovered = hoverable && isHovered(lastMouseX, lastMouseY, x, y + 2, 14, 16);
+        if (hovered) {
+            tooltip = hint;
+            roundRect(x, y + 2, 14, 16, 4, fade(0x20FFFFFF, alpha));
         }
-        for (int i = 0; i < 8; i++) {
-            int alpha = Math.round((8 - i) * 1.1F * reveal);
-            Gui.drawRect(panelX + i, panelY + RADIUS, panelX + i + 1,
-                    panelY + panelH - RADIUS, withAlpha(0x000000, alpha));
-            Gui.drawRect(panelX + panelW - 1 - i, panelY + RADIUS,
-                    panelX + panelW - i, panelY + panelH - RADIUS,
-                    withAlpha(0x000000, alpha));
+        drawActionIcon(icon, x + 7, y + 10, fade(hovered ? COL_TITLE : COL_DIM, alpha));
+        Hit hit = Hit.action(action, null, x, y + 2, 14, 16);
+        hit.header = true;
+        column.hits.add(hit);
+    }
+
+    private void drawConfigColumn(FontRenderer font, Column column, int x, int y,
+            float alpha, boolean hoverable) {
+        int innerX = x + 6;
+        int innerW = column.width - 12;
+        boolean fieldHover = hoverable
+                && isHovered(lastMouseX, lastMouseY, innerX, y + 4, innerW, 22);
+        ControlAnim field = control("cfg:field", fieldHover, profileFieldFocused, frameNow);
+        roundRect(innerX, y + 4, innerW, 22, 7,
+                fade(blendColor(CFG_PINK, 0xFFFFF1F1, field.active), alpha));
+        String label = profileName.isEmpty() ? "Profile name" : profileName + ConfigProfiles.EXTENSION;
+        micro(font, ellipsizeMicro(font, label, innerW - 14), innerX + 7, y + 12,
+                fade(CFG_INK, alpha));
+        if (profileFieldFocused && (frameNow / 480L) % 2L == 0L) {
+            int caretX = innerX + 7 + Math.min(innerW - 16,
+                    microWidth(font, profileName));
+            Gui.drawRect(caretX, y + 10, caretX + 1, y + 20, fade(CFG_INK, alpha));
         }
-        // 底边反射光，呼应顶部高光。
-        Gui.drawRect(middle - panelW / 4, panelY + panelH - 1,
-                middle + panelW / 4, panelY + panelH,
-                withAlpha(accent, Math.round(0x18 * reveal)));
-    }
+        column.hits.add(Hit.action("name", null, innerX, y + 4, innerW, 22));
 
-    // ------------------------------------------------------------------
-    // 左栏
-    // ------------------------------------------------------------------
-
-    private void drawRail(FontRenderer font) {
-        float reveal = viewReveal();
-        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
-        int x = panelX;
-        int y = panelY;
-        int accent = accent();
-
-        // 分类栏纯色底：与主面板用 1px 渐隐线分开。
-        railPanel(x + 1, y + 1, railW - 1, panelH - 2, RADIUS - 1,
-                scaleAlpha(RAIL_SOLID, reveal));
-        int dividerX = x + railW;
-        for (int i = 0; i < panelH - 2; i += 2) {
-            float t = i / (float) Math.max(1, panelH - 2);
-            int alpha = Math.round((0x1A - 0x16 * t) * reveal);
-            Gui.drawRect(dividerX, y + 1 + i, dividerX + 1,
-                    Math.min(y + panelH - 1, y + 3 + i), withAlpha(0xFFFFFF, alpha));
+        String[] actions = {"refresh", "save", "load", "delete"};
+        String[] hints = {"Refresh profiles", "Save current settings", "Load selected profile", "Delete selected profile"};
+        int buttonW = (innerW - 18) / 4;
+        for (int i = 0; i < actions.length; i++) {
+            drawUtilityButton(font, column, actions[i], null, innerX + i * (buttonW + 6),
+                    y + 32, buttonW, 16, actions[i], hints[i], true, false, alpha, hoverable);
         }
+        int halfW = (innerW - 6) / 2;
+        drawUtilityButton(font, column, "folder", null, innerX, y + 52, halfW, 16,
+                "Folder", "Open profiles folder", true, false, alpha, hoverable);
+        drawUtilityButton(font, column, "import", null, innerX + halfW + 6, y + 52, halfW, 16,
+                "Import", "Import a local .cfg file", true, false, alpha, hoverable);
 
-        MaverLogo.draw(font, x + 18, y + 3, railW - 36, 32, logoScale, TEXT);
-
-        // LOGO SIZE 滑杆
-        micro(font, "LOGO SIZE", x + 16, y + 44, FAINT);
-        String scaleText = String.format(Locale.ROOT, "%.2fx", logoScale);
-        micro(font, scaleText, x + railW - 16 - microWidth(font, scaleText), y + 44,
-                TEXT_2);
-        int sliderX = x + 16;
-        int sliderW = railW - 32;
-        int sliderY = y + 58;
-        boolean logoHovered = isHovered(lastMouseX, lastMouseY, x + 8, y + 42, railW - 16, 23);
-        ControlAnim logoAnim = control("logo", logoHovered, logoSizeDragging, now);
-        float logoHi = Math.max(logoAnim.hover, logoAnim.active);
-        int trackColor = blendColor(withAlpha(0xFFFFFF, 0x12), withAlpha(0xFFFFFF, 0x24), logoHi);
-        roundRect(sliderX, sliderY, sliderW, 4, 2, trackColor);
-        float logoSizePercent = (logoScale - MIN_LOGO_SCALE)
-                / (MAX_LOGO_SCALE - MIN_LOGO_SCALE);
-        int sliderFill = Math.max(1, Math.round((sliderW - 1) * logoSizePercent));
-        roundRect(sliderX, sliderY, sliderFill, 4, 2,
-                withAlpha(accent, Math.round(0xDD + 0x22 * logoHi)));
-        int thumbX = sliderX + sliderFill;
-        int thumbGlow = 6 + Math.round(logoHi * 2.0F);
-        fillCircle(thumbX, sliderY + 2, thumbGlow, withAlpha(accent, Math.round(0x18 + 0x10 * logoHi)));
-        fillCircle(thumbX, sliderY + 2, 4, withAlpha(accent, Math.round(0x40 + 0x24 * logoHi)));
-        fillCircle(thumbX, sliderY + 2, 2, 0xFFFFFFFF);
-
-        int navY = y + RAIL_NAV_Y;
-        for (int i = 0; i < CATEGORIES.length; i++) {
-            Category cat = CATEGORIES[i];
-            boolean active = systemPage == null && category.equals(cat.id);
-            int itemX = x + 4;
-            int itemY = navY + i * RAIL_NAV_STRIDE;
-            int itemW = railW - 12;
-            int itemH = RAIL_NAV_H;
-            boolean hovered = isHovered(lastMouseX, lastMouseY, itemX, itemY, itemW, itemH);
-            ControlAnim anim = control("nav:" + cat.id, hovered, active, now);
-            float on = anim.active;
-            float hover = anim.hover * (1.0F - on);
-
-            if (hover > 0.01F) {
-                roundRect(itemX, itemY, itemW, itemH, 7,
-                        withAlpha(0xFFFFFF, Math.round(0x08 * hover)));
-            }
-            if (on > 0.01F) {
-                // 横向渗入的强调色 + 左侧发光竖条，像液体被点亮。
-                roundRect(itemX, itemY, itemW, itemH, 7,
-                        withAlpha(cat.color, Math.round(0x26 * on)));
-                roundRect(itemX, itemY, itemW * 3 / 4, itemH, 7,
-                        withAlpha(cat.color, Math.round(0x14 * on)));
-                roundRect(itemX, itemY, itemW / 3, itemH, 7,
-                        withAlpha(cat.color, Math.round(0x14 * on)));
-                roundRect(itemX - 1, itemY + 4, 3, itemH - 8, 2,
-                        withAlpha(cat.color, Math.round(0x44 * on)));
-                roundRect(itemX, itemY + 6, 2, itemH - 12, 1,
-                        withAlpha(cat.color, Math.round(0xF0 * on)));
-            }
-            if (anim.press > 0.01F) {
-                roundRect(itemX, itemY, itemW, itemH, 7,
-                        withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
-            }
-
-            int iconColor = blendColor(0xFF7D879A, cat.color, on);
-            iconColor = blendColor(iconColor, 0xFFB6C2D4, hover * 0.7F);
-            drawCategoryIcon(cat.id, x + 22, itemY + 8, iconColor);
-            int textColor = blendColor(TEXT_2, 0xFFF4FBFF, on);
-            textColor = blendColor(textColor, 0xFFE4EBF6, hover * 0.65F);
-            hud(font, cat.name, x + 40, itemY + 8, textColor);
-
-            int count = countCategory(cat.id);
-            String countText = count < 10 ? "0" + count : String.valueOf(count);
-            int countColor = blendColor(0xFF596272, withAlpha(cat.color, 0xEE), on);
-            countColor = blendColor(countColor, 0xFF8A95A6, hover * 0.5F);
-            micro(font, countText, x + railW - 26, itemY + 10, countColor);
+        int rowY = y + 74;
+        if (configPreferences) {
+            micro(font, "SETTINGS", innerX + 2, rowY + 3, fade(COL_DIM, alpha));
+            rowY += 12;
+            drawUtilityRow(font, column, "bypass", "Grim Bypass",
+                    OpenMaverFeatures.isBypassEnabled() ? "ON" : "OFF",
+                    x, rowY, alpha, hoverable, "Toggle Grim Bypass");
+            drawUtilityRow(font, column, "debug", "Debug log",
+                    OpenMaverFeatures.isDebugEnabled() ? "ON" : "OFF",
+                    x, rowY + 14, alpha, hoverable, "Toggle debug logging");
+            drawUtilityRow(font, column, "bypassProfile", "Profile",
+                    BYPASS_PROFILES[OpenMaverFeatures.getBypassProfile()],
+                    x, rowY + 28, alpha, hoverable, "Cycle bypass profile");
+            drawUtilityRow(font, column, "guiKey", "GUI key", OpenMaverFeatures.getGuiKeyName(),
+                    x, rowY + 42, alpha, hoverable, "Change ClickGUI key");
+            rowY += 60;
         }
-
-        // SYSTEM 入口：Configs / Statistics / Settings（高度不足时省略）
-        if (panelH >= RAIL_SYS_MIN_H) {
-            micro(font, "SYSTEM", x + 18, y + RAIL_SYS_LABEL_Y, FAINT);
-            for (int i = 0; i < SYSTEM_ITEMS.length; i++) {
-                SystemItem item = SYSTEM_ITEMS[i];
-                boolean active = item.id.equals(systemPage);
-                int itemX = x + 4;
-                int itemY = y + RAIL_SYS_Y + i * RAIL_SYS_STRIDE;
-                int itemW = railW - 12;
-                int itemH = RAIL_SYS_H;
-                boolean hovered = isHovered(lastMouseX, lastMouseY, itemX, itemY, itemW, itemH);
-                ControlAnim anim = control("sysnav:" + item.id, hovered, active, now);
-                float on = anim.active;
-                float hover = anim.hover * (1.0F - on);
-
-                if (hover > 0.01F) {
-                    roundRect(itemX, itemY, itemW, itemH, 7,
-                            withAlpha(0xFFFFFF, Math.round(0x08 * hover)));
-                }
-                if (on > 0.01F) {
-                    roundRect(itemX, itemY, itemW, itemH, 7,
-                            withAlpha(ACCENT, Math.round(0x24 * on)));
-                    roundRect(itemX, itemY, itemW * 3 / 4, itemH, 7,
-                            withAlpha(ACCENT, Math.round(0x12 * on)));
-                    roundRect(itemX - 1, itemY + 4, 3, itemH - 8, 2,
-                            withAlpha(ACCENT, Math.round(0x40 * on)));
-                    roundRect(itemX, itemY + 5, 2, itemH - 10, 1,
-                            withAlpha(ACCENT, Math.round(0xF0 * on)));
-                }
-                if (anim.press > 0.01F) {
-                    roundRect(itemX, itemY, itemW, itemH, 7,
-                            withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
-                }
-
-                int iconColor = blendColor(0xFF6B7686, ACCENT, on);
-                iconColor = blendColor(iconColor, 0xFFB6C2D4, hover * 0.7F);
-                drawSystemIcon(item.id, x + 22, itemY + 7, iconColor);
-                int textColor = blendColor(0xFF98A3B4, 0xFFF4FBFF, on);
-                textColor = blendColor(textColor, 0xFFE4EBF6, hover * 0.65F);
-                hud(font, item.name, x + 40, itemY + 7, textColor);
-            }
-        }
-
-    }
-
-    // ------------------------------------------------------------------
-    // 顶部
-    // ------------------------------------------------------------------
-
-    private void drawHeader(FontRenderer font) {
-        Category cat = currentCategory();
-        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
-        int accent = cat.color;
-        int x = mainX + 18;
-        int y = panelY;
-
-        String title = cat.name;
-        hudBold(font, title, x, y + 21, TEXT);
-        int titleW = hudBoldWidth(font, title);
-        int chipX = x + titleW + 9;
-        int count = countCategory(cat.id);
-        String countText = String.valueOf(count);
-        int chipW = Math.max(18, microWidth(font, countText) + 12);
-        roundRect(chipX, y + 21, chipW, 13, 5, withAlpha(accent, 0x24));
-        roundRect(chipX, y + 21, chipW, 13, 5, withAlpha(accent, 0x12));
-        micro(font, countText, chipX + (chipW - microWidth(font, countText)) / 2,
-                y + 24, withAlpha(accent, 0xE8));
-
-        // 搜索框：内凹玻璃 + 聚焦时的白色光圈
-        boolean focus = searchFocused;
-        boolean searchHovered = isHovered(lastMouseX, lastMouseY,
-                searchX, searchY, searchW, searchH);
-        ControlAnim searchAnim = control("search", searchHovered, focus, now);
-        float focusAmt = searchAnim.active;
-        float searchHover = searchAnim.hover * (1.0F - focusAmt);
-        if (focusAmt > 0.01F) {
-            roundRect(searchX - 2, searchY - 2, searchW + 4, searchH + 4, 9,
-                    withAlpha(ACCENT, Math.round(0x18 * focusAmt)));
-        }
-        if (searchAnim.press > 0.01F) {
-            roundRect(searchX, searchY, searchW, searchH, 7,
-                    withAlpha(0xFFFFFF, Math.round(0x0A * searchAnim.press)));
-        }
-        int searchBorder = blendColor(withAlpha(0xFFFFFF, 0x14),
-                withAlpha(ACCENT, 0x5A), focusAmt);
-        searchBorder = blendColor(searchBorder, withAlpha(0xFFFFFF, 0x26), searchHover * 0.6F);
-        roundRect(searchX, searchY, searchW, searchH, 7, searchBorder);
-        roundRect(searchX + 1, searchY + 1, searchW - 2, searchH - 2, 6,
-                blendColor(FIELD_SOLID, 0xFF1E1E1E, focusAmt));
-        Gui.drawRect(searchX + 6, searchY + 1, searchX + searchW - 6, searchY + 2,
-                withAlpha(0xFFFFFF, Math.round(0x0A + 0x0A * focusAmt + 0x04 * searchHover)));
-        drawSearchIcon(searchX + 7, searchY + 7,
-                blendColor(0xFF7C8798, ACCENT, focusAmt));
-
-        String shown = searchQuery;
-        if (shown.isEmpty()) {
-            micro(font, ellipsizeMicro(font, "Search modules...", searchW - 30),
-                    searchX + 20, searchY + 7, 0xFF5E6878);
-            if (focus && ((System.currentTimeMillis() - openedAt) / 500L) % 2L == 0L) {
-                Gui.drawRect(searchX + 20, searchY + 7, searchX + 21, searchY + 15, ACCENT);
-            }
-        } else {
-            int max = searchW - 26;
-            micro(font, ellipsizeMicro(font, shown, max), searchX + 20, searchY + 7, TEXT_2);
-            if (focus && ((System.currentTimeMillis() - openedAt) / 500L) % 2L == 0L) {
-                int caretX = searchX + 20 + microWidth(font, ellipsizeMicro(font, shown, max));
-                Gui.drawRect(caretX + 1, searchY + 7, caretX + 2, searchY + 15, ACCENT);
-            }
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // SYSTEM 页面（Configs / Statistics / Settings）
-    // ------------------------------------------------------------------
-
-    private void drawSystemHeader(FontRenderer font) {
-        SystemItem item = currentSystemItem();
-        int x = mainX + 18;
-        int y = panelY;
-
-        hudBold(font, item.name, x, y + 21, TEXT);
-    }
-
-    private void drawSystemPage(FontRenderer font) {
-        int x = listX;
-        int y = panelY + HEADER_H + 8;
-        int w = listW;
-        int h = panelH - HEADER_H - FOOTER_H - 16;
-        if ("stats".equals(systemPage)) {
-            drawStatsPage(font, x, y, w, h);
-        } else if ("configs".equals(systemPage)) {
-            drawConfigsPage(font, x, y, w, h);
-        } else if ("wallpaper".equals(systemPage)) {
-            drawWallpaperPage(font, x, y, w, h);
-        } else {
-            drawSettingsPage(font, x, y, w, h);
-        }
-    }
-
-    private void drawStatsPage(FontRenderer font, int x, int y, int w, int h) {
-        int gap = 10;
-        int cardW = (w - gap * 2) / 3;
-        int cardH = 70;
-        drawStatCard(font, "MODULES", entries.size(), x, y, cardW, cardH);
-        drawStatCard(font, "ENABLED", enabledCount(), x + cardW + gap, y, cardW, cardH);
-        drawStatCard(font, "CATEGORIES", CATEGORIES.length,
-                x + (cardW + gap) * 2, y, cardW, cardH);
-
-        int rowY = y + cardH + 18;
-        int stride = Math.min(30, Math.max(20, (y + h - rowY) / CATEGORIES.length));
-        int rowH = stride - 4;
-        for (int i = 0; i < CATEGORIES.length; i++) {
-            Category cat = CATEGORIES[i];
-            int ry = rowY + i * stride;
-            if (ry + rowH > y + h) {
-                break;
-            }
-            roundRect(x, ry, w, rowH, 7, withAlpha(0xFFFFFF, 0x06));
-            drawCategoryIcon(cat.id, x + 10, ry + rowH / 2 - 5, cat.color);
-            hud(font, cat.name, x + 27, ry + (rowH - 9) / 2, TEXT_2);
-
-            int enabled = countCategoryEnabled(cat.id);
-            int total = countCategory(cat.id);
-            String count = (enabled < 10 ? "0" : "") + enabled + " / "
-                    + (total < 10 ? "0" : "") + total;
-            int countW = microWidth(font, count);
-            int countX = x + w - 12 - countW;
-            micro(font, count, countX, ry + (rowH - 8) / 2,
-                    enabled > 0 ? withAlpha(cat.color, 0xDD) : 0xFF596272);
-
-            int barW = Math.min(90, Math.max(40, w / 5));
-            int barX = countX - 14 - barW;
-            int barY = ry + rowH / 2 - 2;
-            roundRect(barX, barY, barW, 4, 2, withAlpha(0xFFFFFF, 0x12));
-            if (enabled > 0) {
-                int fill = total <= 0 ? 0 : Math.max(1, barW * enabled / total);
-                roundRect(barX, barY, fill, 4, 2, withAlpha(cat.color, 0xC8));
-                roundRect(barX, barY, fill, 2, 1, withAlpha(0xFFFFFF, 0x28));
-            }
-        }
-    }
-
-    private void drawStatCard(FontRenderer font, String label, int value,
-            int x, int y, int w, int h) {
-        roundRect(x, y, w, h, 9, withAlpha(0xFFFFFF, 0x12));
-        roundRect(x + 1, y + 1, w - 2, h - 2, 8, CARD_FILL);
-        Gui.drawRect(x + 9, y + 1, x + w - 9, y + 2, withAlpha(0xFFFFFF, 0x12));
-
-        micro(font, ellipsizeMicro(font, label, w - 24), x + 12, y + 14, FAINT);
-        hudBold(font, String.valueOf(value), x + 12, y + 28, TEXT);
-
-        if (w >= 90) {
-            int ringX = x + w - 24;
-            int ringY = y + 34;
-            fillCircle(ringX, ringY, 11, withAlpha(ACCENT, 0x12));
-            ringCircle(ringX, ringY, 8, withAlpha(ACCENT, 0x55));
-            fillCircle(ringX, ringY, 3, withAlpha(ACCENT, 0xCC));
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Configs 页：配置档案（保存到 xxx / 导入 xxx / 删除 / 打开目录）
-    // ------------------------------------------------------------------
-
-    /** 名字输入框高度。 */
-    private static final int CFG_FIELD_H = 26;
-    /** 操作按钮高度。 */
-    private static final int CFG_BTN_H = 22;
-    /** 档案行高度。 */
-    private static final int CFG_ROW_H = 26;
-    private static final int CFG_ROW_GAP = 4;
-    private static final int CFG_BTN_GAP = 6;
-    private static final int CFG_DEL_W = 18;
-    private static final int CFG_ROW_SAVE_W = 34;
-
-    private static final String[] CFG_BUTTONS = {"NEW", "SAVE", "LOAD", "DEL", "FOLDER"};
-    private static final int CFG_ERR = 0xFFE5826E;
-
-    private int configsFieldY() {
-        return panelY + HEADER_H + 8;
-    }
-
-    private int configsButtonsY() {
-        return configsFieldY() + CFG_FIELD_H + 8;
-    }
-
-    /** 列表标题（SAVED PROFILES）的基线。 */
-    private int configsListTop() {
-        return configsButtonsY() + CFG_BTN_H + 10;
-    }
-
-    private int configsRowsTop() {
-        return configsListTop() + 14;
-    }
-
-    private int configsStatusY() {
-        return panelY + panelH - FOOTER_H - 8;
-    }
-
-    private int configsListBottom() {
-        return Math.max(configsRowsTop() + CFG_ROW_H, configsStatusY() - 6);
-    }
-
-    private int configsRowStride() {
-        return CFG_ROW_H + CFG_ROW_GAP;
-    }
-
-    private int configsMaxScroll() {
-        int visible = Math.max(1, configsListBottom() - configsRowsTop());
-        int content = ConfigProfiles.listNames().size() * configsRowStride();
-        return Math.max(0, content - visible);
-    }
-
-    private void clampConfigScroll() {
-        configScroll = clampInt(configScroll, 0, configsMaxScroll());
-    }
-
-    /** 一行里 5 个操作按钮的等宽布局（绘制与点击共用）。 */
-    private int configsButtonWidth() {
-        int count = CFG_BUTTONS.length;
-        return Math.max(30, (listW - CFG_BTN_GAP * (count - 1)) / count);
-    }
-
-    private int configsButtonsX() {
-        int count = CFG_BUTTONS.length;
-        int total = configsButtonWidth() * count + CFG_BTN_GAP * (count - 1);
-        return listX + Math.max(0, (listW - total) / 2);
-    }
-
-    private void drawConfigsPage(FontRenderer font, int x, int y, int w, int h) {
-        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
-        clampConfigScroll();
-
-        // ---------------- 名字输入框 ----------------
-        int fieldY = configsFieldY();
-        boolean fieldHovered = isHovered(lastMouseX, lastMouseY, x, fieldY, w, CFG_FIELD_H);
-        ControlAnim fieldAnim = control("cfg:field", fieldHovered, profileFieldFocused, now);
-        roundRect(x, fieldY, w, CFG_FIELD_H, 8,
-                withAlpha(0xFFFFFF, Math.round(0x0A + 0x08 * fieldAnim.hover)));
-        roundRect(x + 1, fieldY + 1, w - 2, CFG_FIELD_H - 2, 7, FIELD_SOLID);
-        if (profileFieldFocused) {
-            roundRect(x + 1, fieldY + 1, w - 2, CFG_FIELD_H - 2, 7,
-                    withAlpha(ACCENT, 0x08));
-        }
-        Gui.drawRect(x + 12, fieldY + 1, x + w - 12, fieldY + 2,
-                withAlpha(0xFFFFFF, Math.round(0x10 + 0x10 * fieldAnim.hover)));
-
-        int suffixW = microWidth(font, ConfigProfiles.EXTENSION);
-        int textY = fieldY + (CFG_FIELD_H - 11) / 2 + 1;
-        int textMax = Math.max(20, w - 24 - suffixW - 8);
-        if (profileName == null || profileName.trim().isEmpty()) {
-            hud(font, "profile name", x + 12, textY, 0xFF596272);
-        } else {
-            hud(font, ellipsizeHud(font, profileName, textMax), x + 12, textY, TEXT);
-        }
-        micro(font, ConfigProfiles.EXTENSION,
-                x + w - 12 - suffixW, fieldY + (CFG_FIELD_H - 8) / 2,
-                profileFieldFocused ? withAlpha(ACCENT, 0xAA) : FAINT);
-        if (profileFieldFocused && ((now / 480L) % 2L == 0L)) {
-            String shown = (profileName == null || profileName.trim().isEmpty())
-                    ? "" : ellipsizeHud(font, profileName, textMax);
-            int caretX = x + 12 + (shown.isEmpty() ? 0 : hudWidth(font, shown));
-            Gui.drawRect(caretX + 1, fieldY + 9, caretX + 2, fieldY + CFG_FIELD_H - 9, ACCENT);
-        }
-
-        // ---------------- 操作按钮 ----------------
-        int by = configsButtonsY();
-        int bw = configsButtonWidth();
-        int bx = configsButtonsX();
-        for (int i = 0; i < CFG_BUTTONS.length; i++) {
-            drawConfigButton(font, bx + i * (bw + CFG_BTN_GAP), by, bw, CFG_BTN_H,
-                    CFG_BUTTONS[i], i == 1, i, now);
-        }
-
-        // ---------------- 档案列表 ----------------
         List<String> names = ConfigProfiles.listNames();
-        int listTop = configsRowsTop();
-        int listBottom = configsListBottom();
-        micro(font, "SAVED PROFILES", x + 2, configsListTop(), FAINT);
-        String summary = names.size() + (names.size() == 1 ? " PROFILE" : " PROFILES")
-                + " / " + enabledCount() + " ON";
-        summary = ellipsizeMicro(font, summary, Math.max(40, w / 2));
-        micro(font, summary, x + w - 2 - microWidth(font, summary), configsListTop(),
-                0xFF596272);
-
         if (names.isEmpty()) {
-            roundRect(x, listTop, w, Math.max(CFG_ROW_H, listBottom - listTop), 8,
-                    withAlpha(0xFFFFFF, 0x06));
-            micro(font, "No profiles yet.", x + 12, listTop + 10, 0xFF7C8798);
-            micro(font, "Type a name above, then press SAVE.", x + 12, listTop + 24,
-                    0xFF596272);
-        } else {
-            pushScissor(x, listTop, w, Math.max(1, listBottom - listTop));
-            int rowTop = listTop - configScroll;
-            for (int i = 0; i < names.size(); i++) {
-                if (rowTop + CFG_ROW_H > listTop && rowTop < listBottom) {
-                    drawConfigRow(font, x, rowTop, w, names.get(i), now);
-                }
-                rowTop += configsRowStride();
-            }
-            popScissor();
+            micro(font, "No saved profiles", innerX + 2, rowY + 5, fade(COL_DIM, alpha));
+            rowY += COL_ROW_H;
         }
-
-        // ---------------- 结果提示 ----------------
-        String message = ConfigProfiles.status();
-        if (message != null && !message.isEmpty()) {
-            int color = ConfigProfiles.statusIsError() ? CFG_ERR : 0xFF9FB4C8;
-            micro(font, ellipsizeMicro(font, message, w - 4), x + 2, configsStatusY(), color);
-        } else {
-            micro(font, ellipsizeMicro(font, ConfigProfiles.folderPath(), w - 4),
-                    x + 2, configsStatusY(), 0xFF596272);
+        for (String name : names) {
+            boolean selected = name.equals(ConfigProfiles.sanitize(profileName));
+            drawUtilityButton(font, column, "profile", name, innerX, rowY,
+                    innerW, COL_ROW_H - 1, name + ConfigProfiles.EXTENSION,
+                    name + ConfigProfiles.EXTENSION + " · select, then Load", false, selected, alpha, hoverable);
+            rowY += COL_ROW_H;
         }
+        String status = ConfigProfiles.status();
+        drawUtilityStatus(font, column, innerX, rowY + 4, innerW,
+                status.isEmpty() ? "Select a profile or save a new one" : status,
+                ConfigProfiles.statusIsError(), alpha, hoverable);
     }
 
-    private void drawConfigButton(FontRenderer font, int x, int y, int w, int h,
-            String label, boolean primary, int index, long now) {
-        boolean hovered = isHovered(lastMouseX, lastMouseY, x, y, w, h);
-        ControlAnim anim = control("cfg:btn:" + index, hovered, primary, now);
-        int fill = primary
-                ? withAlpha(ACCENT, Math.round(0x1C + 0x14 * anim.hover))
-                : withAlpha(0xFFFFFF, Math.round(0x0A + 0x0C * anim.hover));
-        roundRect(x, y, w, h, 7, fill);
+    private void drawWallpaperColumn(FontRenderer font, Column column, int x, int y,
+            float alpha, boolean hoverable) {
+        drawUtilityRow(font, column, "mode", "Mode", MaverWallpaper.getModeName(),
+                x, y + 4, alpha, hoverable, "Cycle panorama / static / dynamic");
+        drawUtilityRow(font, column, "fit", "Fit", MaverWallpaper.getFitName(),
+                x, y + 22, alpha, hoverable, "Cycle cover / contain / stretch");
+        drawUtilityRow(font, column, "source", "Source", MaverWallpaper.getDisplayName(),
+                x, y + 40, alpha, hoverable, "Current: " + MaverWallpaper.getDisplayName() + " · click to reset");
+        drawUtilityRow(font, column, "wallpaperFolder", "Folder", "OPEN",
+                x, y + 58, alpha, hoverable, "Open wallpapers folder and refresh files");
+        micro(font, "WALLPAPERS", x + 8, y + 79, fade(COL_DIM, alpha));
+        List<File> files = MaverWallpaper.listWallpapers();
+        int rowY = y + 88;
+        if (files.isEmpty()) {
+            micro(font, "No wallpapers · open Folder", x + 8, rowY + 5, fade(COL_DIM, alpha));
+            rowY += COL_ROW_H;
+        }
+        for (File file : files) {
+            drawUtilityButton(font, column, "wallpaper", file.getName(), x + 6, rowY,
+                    column.width - 12, COL_ROW_H - 1, file.getName(), file.getName(),
+                    false, MaverWallpaper.isSelected(file), alpha, hoverable);
+            rowY += COL_ROW_H;
+        }
+        String issue = MaverWallpaper.getStatusHint();
+        drawUtilityStatus(font, column, x + 8, rowY + 6, column.width - 16,
+                issue == null || issue.isEmpty() ? "PNG / JPG / GIF / WEBP / MP4" : issue,
+                issue != null && !issue.isEmpty(), alpha, hoverable);
+    }
+
+    private void drawUtilityButton(FontRenderer font, Column column, String action, String value,
+            int x, int y, int w, int h, String label, String hint, boolean pink,
+            boolean selected, float alpha, boolean hoverable) {
+        boolean hovered = hoverable && isHovered(lastMouseX, lastMouseY, x, y, w, h);
+        ControlAnim anim = control(column.id + ":" + action + ":" + value, hovered, selected, frameNow);
+        int fill = pink ? blendColor(CFG_PINK, 0xFFFFF1F1, anim.hover)
+                : blendColor(selected ? COL_ON_FILL : 0x18FFFFFF,
+                        selected ? COL_ON_HOVER : 0x30FFFFFF, anim.hover);
+        roundRect(x, y, w, h, pink ? h / 2 : 3, fade(fill, alpha));
         if (anim.press > 0.01F) {
-            roundRect(x, y, w, h, 7, withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
+            roundRect(x, y, w, h, pink ? h / 2 : 3, fade(0x24FFFFFF, alpha * anim.press));
         }
-        String shown = ellipsizeMicro(font, label, w - 8);
-        micro(font, shown, x + (w - microWidth(font, shown)) / 2, y + (h - 8) / 2,
-                primary ? withAlpha(ACCENT, 0xF0)
-                        : blendColor(TEXT_2, TEXT, anim.hover * 0.7F));
+        int color = fade(pink ? CFG_INK : selected ? COL_ON_TEXT : COL_ROW_TEXT, alpha);
+        if ("refresh".equals(label) || "save".equals(label)
+                || "load".equals(label) || "delete".equals(label)) {
+            drawActionIcon(label, x + w / 2, y + h / 2, color);
+        } else {
+            String shown = ellipsizeMicro(font, label, w - 10);
+            micro(font, shown, pink ? x + (w - microWidth(font, shown)) / 2 : x + 5,
+                    y + (h - 7) / 2, color);
+        }
+        if (hovered) {
+            tooltip = hint;
+        }
+        column.hits.add(Hit.action(action, value, x, y, w, h));
     }
 
-    private void drawConfigRow(FontRenderer font, int x, int y, int w, String name, long now) {
-        boolean current = name != null && name.equals(ConfigProfiles.sanitize(profileName));
-        boolean hovered = isHovered(lastMouseX, lastMouseY, x, y, w, CFG_ROW_H);
-        ControlAnim anim = control("cfg:row:" + name, hovered, current, now);
-
-        int fill = current ? withAlpha(ACCENT, Math.round(0x12 + 0x08 * anim.hover))
-                : withAlpha(0xFFFFFF, Math.round(0x06 + 0x08 * anim.hover));
-        roundRect(x, y, w, CFG_ROW_H, 7, fill);
-        if (current) {
-            roundRect(x, y + 5, 2, CFG_ROW_H - 10, 1, withAlpha(ACCENT, 0xC8));
+    private void drawUtilityRow(FontRenderer font, Column column, String action,
+            String label, String value, int x, int y, float alpha, boolean hoverable, String hint) {
+        int w = column.width - 12;
+        boolean hovered = hoverable && isHovered(lastMouseX, lastMouseY, x + 6, y, w, 14);
+        roundRect(x + 6, y, w, 14, 3, fade(hovered ? 0x25FFFFFF : 0x10FFFFFF, alpha));
+        micro(font, label, x + 10, y + 4, fade(COL_ROW_TEXT, alpha));
+        int space = Math.max(8, w - microWidth(font, label) - 14);
+        String shown = ellipsizeMicro(font, value, space);
+        micro(font, shown, x + column.width - 10 - microWidth(font, shown), y + 4,
+                fade(COL_ON_FILL, alpha));
+        if (hovered) {
+            tooltip = hint;
         }
-
-        int delX = x + w - 10 - CFG_DEL_W;
-        int saveX = delX - 4 - CFG_ROW_SAVE_W;
-        int textX = x + 12;
-        int textMax = Math.max(30, saveX - textX - 8);
-
-        String label = ellipsizeHud(font, name, textMax);
-        hud(font, label, textX, y + (CFG_ROW_H - 11) / 2 + 1,
-                current ? TEXT : (hovered ? 0xFFE4EBF6 : TEXT_2));
-        int stampX = textX + hudWidth(font, label) + 6;
-        String stamp = ConfigProfiles.savedAtText(name);
-        if (stampX + microWidth(font, stamp) < saveX - 6) {
-            micro(font, stamp, stampX, y + (CFG_ROW_H - 8) / 2, 0xFF596272);
-        }
-
-        // 覆盖保存
-        boolean saveHover = isHovered(lastMouseX, lastMouseY, saveX, y + 5,
-                CFG_ROW_SAVE_W, CFG_ROW_H - 10);
-        roundRect(saveX, y + 5, CFG_ROW_SAVE_W, CFG_ROW_H - 10, 5,
-                withAlpha(0xFFFFFF, saveHover ? 0x1C : 0x10));
-        micro(font, "SAVE", saveX + (CFG_ROW_SAVE_W - microWidth(font, "SAVE")) / 2,
-                y + (CFG_ROW_H - 8) / 2, saveHover ? TEXT : 0xFF8B96A6);
-
-        // 删除
-        boolean delHover = isHovered(lastMouseX, lastMouseY, delX, y + 5,
-                CFG_DEL_W, CFG_ROW_H - 10);
-        roundRect(delX, y + 5, CFG_DEL_W, CFG_ROW_H - 10, 5,
-                withAlpha(delHover ? CFG_ERR : 0xFFFFFF, delHover ? 0x2A : 0x10));
-        micro(font, "x", delX + (CFG_DEL_W - microWidth(font, "x")) / 2,
-                y + (CFG_ROW_H - 8) / 2, delHover ? 0xFFF2EE : 0xFF8B96A6);
+        column.hits.add(Hit.action(action, null, x + 6, y, w, 14));
     }
 
-    /** Configs 页的按钮 / 行点击。 */
-    private void handleConfigsPageClick(int mouseX, int mouseY, int button) {
-        if (button != 0) {
+    private void drawUtilityStatus(FontRenderer font, Column column, int x, int y, int w,
+            String message, boolean error, float alpha, boolean hoverable) {
+        micro(font, ellipsizeMicro(font, message, w), x, y,
+                fade(error ? 0xFFE5826E : COL_DIM, alpha));
+        if (hoverable && isHovered(lastMouseX, lastMouseY, x, y, w, 10)) {
+            tooltip = message;
+        }
+    }
+
+    private void drawTooltip(FontRenderer font) {
+        if (tooltip == null || tooltip.isEmpty()) {
             return;
         }
-        int x = listX;
-        int w = listW;
+        String shown = ellipsizeMicro(font, tooltip, Math.max(20, this.width - 24));
+        int w = microWidth(font, shown) + 12;
+        int x = clampInt(lastMouseX + 8, 4, Math.max(4, this.width - w - 4));
+        int y = clampInt(lastMouseY + 12, 4, Math.max(4, this.height - 20));
+        roundRect(x, y, w, 15, 4, fade(0xF5141518, openProgress));
+        micro(font, shown, x + 6, y + 4, fade(COL_TITLE, openProgress));
+    }
 
-        if (isHovered(mouseX, mouseY, x, configsFieldY(), w, CFG_FIELD_H)) {
+    private static void drawActionIcon(String action, int cx, int cy, int color) {
+        if ("+".equals(action)) {
+            line(cx - 4, cy, cx + 4, cy, color);
+            line(cx, cy - 4, cx, cy + 4, color);
+        } else if ("gear".equals(action)) {
+            ringCircle(cx, cy, 3, color);
+            fillCircle(cx, cy, 1, color);
+            for (int i = 0; i < 8; i++) {
+                double a = i * Math.PI / 4;
+                line(cx + (float) Math.cos(a) * 3, cy + (float) Math.sin(a) * 3,
+                        cx + (float) Math.cos(a) * 4.5F, cy + (float) Math.sin(a) * 4.5F, color);
+            }
+        } else if ("refresh".equals(action)) {
+            ringCircle(cx, cy, 4, color);
+            fillTriangle(cx + 1, cy - 5, cx + 5, cy - 4, cx + 2, cy - 1, color);
+        } else if ("save".equals(action)) {
+            line(cx - 4, cy - 4, cx + 4, cy - 4, color);
+            line(cx + 4, cy - 4, cx + 4, cy + 4, color);
+            line(cx + 4, cy + 4, cx - 4, cy + 4, color);
+            line(cx - 4, cy + 4, cx - 4, cy - 4, color);
+            line(cx - 1, cy - 3, cx - 1, cy - 1, color);
+            line(cx - 2, cy + 1, cx + 2, cy + 1, color);
+            line(cx - 2, cy + 3, cx + 2, cy + 3, color);
+        } else if ("load".equals(action)) {
+            line(cx, cy - 5, cx, cy + 1, color);
+            line(cx - 2, cy - 1, cx, cy + 1, color);
+            line(cx + 2, cy - 1, cx, cy + 1, color);
+            line(cx - 4, cy, cx - 4, cy + 4, color);
+            line(cx - 4, cy + 4, cx + 4, cy + 4, color);
+            line(cx + 4, cy + 4, cx + 4, cy, color);
+        } else if ("delete".equals(action)) {
+            line(cx - 4, cy - 2, cx + 4, cy - 2, color);
+            line(cx - 1, cy - 4, cx + 1, cy - 4, color);
+            line(cx - 3, cy - 2, cx - 2, cy + 4, color);
+            line(cx - 2, cy + 4, cx + 2, cy + 4, color);
+            line(cx + 2, cy + 4, cx + 3, cy - 2, color);
+            line(cx, cy, cx, cy + 2, color);
+        }
+    }
+
+    private void handleUtilityAction(Column column, Hit hit) {
+        String action = hit.action;
+        if ("name".equals(action)) {
             profileFieldFocused = true;
-            press("cfg:field");
+            searchFocused = false;
             return;
         }
-        profileFieldFocused = false;
-
-        int by = configsButtonsY();
-        int bw = configsButtonWidth();
-        int bx = configsButtonsX();
-        for (int i = 0; i < CFG_BUTTONS.length; i++) {
-            if (isHovered(mouseX, mouseY, bx + i * (bw + CFG_BTN_GAP), by, bw, CFG_BTN_H)) {
-                press("cfg:btn:" + i);
-                handleConfigAction(i);
-                return;
-            }
-        }
-
-        int listTop = configsRowsTop();
-        int listBottom = configsListBottom();
-        if (!isHovered(mouseX, mouseY, x, listTop, w, Math.max(1, listBottom - listTop))) {
-            return;
-        }
-        List<String> names = ConfigProfiles.listNames();
-        int rowTop = listTop - configScroll;
-        for (int i = 0; i < names.size(); i++) {
-            String name = names.get(i);
-            if (rowTop + CFG_ROW_H <= listTop || rowTop >= listBottom
-                    || !isHovered(mouseX, mouseY, x, rowTop, w, CFG_ROW_H)) {
-                rowTop += configsRowStride();
-                continue;
-            }
-            int delX = x + w - 10 - CFG_DEL_W;
-            int saveX = delX - 4 - CFG_ROW_SAVE_W;
-            if (isHovered(mouseX, mouseY, delX, rowTop + 5, CFG_DEL_W, CFG_ROW_H - 10)) {
-                ConfigProfiles.delete(name);
-                if (name.equals(ConfigProfiles.sanitize(profileName))) {
-                    profileName = "";
-                }
-                clampConfigScroll();
-                return;
-            }
-            if (isHovered(mouseX, mouseY, saveX, rowTop + 5, CFG_ROW_SAVE_W, CFG_ROW_H - 10)) {
-                profileName = name;
-                ConfigProfiles.save(name);
-                clampConfigScroll();
-                return;
-            }
-            profileName = name;
-            ConfigProfiles.load(name);
-            clampConfigScroll();
-            return;
-        }
-    }
-
-    /** NEW / SAVE / LOAD / DEL / FOLDER。 */
-    private void handleConfigAction(int index) {
-        switch (index) {
-            case 0:
+        OpenMaverFeatures.playUiClick(1.0F);
+        press(column.id + ":" + action + ":" + hit.value);
+        if ("new".equals(action)) {
+            profileName = ConfigProfiles.suggestName();
+            profileFieldFocused = true;
+            column.state.collapsed = false;
+            column.scroll = 0;
+            ConfigProfiles.clearStatus();
+        } else if ("preferences".equals(action)) {
+            configPreferences = !configPreferences;
+            column.state.collapsed = false;
+        } else if ("refresh".equals(action)) {
+            ConfigProfiles.clearStatus();
+        } else if ("save".equals(action)) {
+            if (ConfigProfiles.sanitize(profileName).isEmpty()) {
                 profileName = ConfigProfiles.suggestName();
-                profileFieldFocused = true;
-                ConfigProfiles.clearStatus();
-                break;
-            case 1:
-                if (profileName == null || profileName.trim().isEmpty()) {
-                    profileName = ConfigProfiles.suggestName();
-                }
-                ConfigProfiles.save(profileName);
-                break;
-            case 2:
-                ConfigProfiles.load(profileName == null ? "" : profileName);
-                break;
-            case 3:
-                ConfigProfiles.delete(profileName == null ? "" : profileName);
-                break;
-            default:
-                ConfigProfiles.openFolder();
-                break;
+            }
+            profileName = ConfigProfiles.sanitize(profileName);
+            ConfigProfiles.save(profileName);
+        } else if ("load".equals(action)) {
+            ConfigProfiles.load(profileName);
+        } else if ("delete".equals(action)) {
+            if (ConfigProfiles.delete(profileName)) {
+                profileName = ConfigProfiles.suggestName();
+            }
+        } else if ("folder".equals(action)) {
+            ConfigProfiles.openFolder();
+        } else if ("import".equals(action)) {
+            ConfigProfiles.requestImport();
+        } else if ("profile".equals(action)) {
+            profileName = hit.value;
+        } else if ("bypass".equals(action)) {
+            OpenMaverFeatures.setBypassEnabled(!OpenMaverFeatures.isBypassEnabled());
+        } else if ("debug".equals(action)) {
+            OpenMaverFeatures.setDebugEnabled(!OpenMaverFeatures.isDebugEnabled());
+        } else if ("bypassProfile".equals(action)) {
+            OpenMaverFeatures.setBypassProfile((OpenMaverFeatures.getBypassProfile() + 1) % BYPASS_PROFILES.length);
+        } else if ("guiKey".equals(action)) {
+            OpenMaverFeatures.cycleGuiKey();
+        } else if ("mode".equals(action)) {
+            MaverWallpaper.nextMode();
+        } else if ("fit".equals(action)) {
+            MaverWallpaper.nextFit();
+        } else if ("source".equals(action)) {
+            MaverWallpaper.setFilePath("");
+        } else if ("wallpaperFolder".equals(action)) {
+            MaverWallpaper.refreshFiles();
+            MaverWallpaper.openFolder();
+        } else if ("wallpaper".equals(action)) {
+            MaverWallpaper.setFilePath(hit.value);
+            if (MaverWallpaper.getMode() == MaverWallpaper.MODE_PANORAMA) {
+                MaverWallpaper.setMode(MaverWallpaper.isAnimatedFile(hit.value)
+                        ? MaverWallpaper.MODE_DYNAMIC : MaverWallpaper.MODE_STATIC);
+            }
         }
-        clampConfigScroll();
     }
 
-    /** Configs 页输入名字时的按键处理；返回 true 表示已消费。 */
     private boolean handleConfigFieldKey(char typedChar, int keyCode) {
-        if (!"configs".equals(systemPage) || !profileFieldFocused) {
+        if (!profileFieldFocused) {
             return false;
         }
         if (keyCode == Keyboard.KEY_ESCAPE) {
             profileFieldFocused = false;
-            return true;
-        }
-        if (keyCode == Keyboard.KEY_RETURN) {
-            if (profileName == null || profileName.trim().isEmpty()) {
+        } else if (keyCode == Keyboard.KEY_RETURN) {
+            profileName = ConfigProfiles.sanitize(profileName);
+            if (profileName.isEmpty()) {
                 profileName = ConfigProfiles.suggestName();
             }
             ConfigProfiles.save(profileName);
-            clampConfigScroll();
-            return true;
-        }
-        if (keyCode == Keyboard.KEY_BACK) {
-            if (profileName != null && !profileName.isEmpty()) {
+            profileFieldFocused = false;
+        } else if (keyCode == Keyboard.KEY_BACK) {
+            if (!profileName.isEmpty()) {
                 profileName = profileName.substring(0, profileName.length() - 1);
             }
-            return true;
+        } else if (typedChar >= 32 && typedChar != 127 && profileName.length() < 40) {
+            boolean safe = Character.isLetterOrDigit(typedChar) || typedChar == '_'
+                    || typedChar == '-' || typedChar == '.' || typedChar == ' ';
+            profileName += safe ? typedChar : '_';
         }
-        if (typedChar >= 32 && typedChar != 127) {
-            String raw = (profileName == null ? "" : profileName) + typedChar;
-            profileName = ConfigProfiles.sanitize(raw.length() > 39
-                    ? raw.substring(0, 39) : raw);
-            return true;
-        }
-        return false;
-    }
-
-    private int systemSettingsRowH() {
-        int h = panelH - HEADER_H - FOOTER_H - 16;
-        return Math.min(54, Math.max(40, (h - 12 - 24) / 4));
-    }
-
-    private void drawSettingsPage(FontRenderer font, int x, int y, int w, int h) {
-        int rowH = systemSettingsRowH();
-        int gap = 8;
-        drawSettingsRow(font, x, y, w, rowH, 0, "GRIM BYPASS");
-        drawSettingsRow(font, x, y + rowH + gap, w, rowH, 1, "DEBUG LOG");
-        drawSettingsRow(font, x, y + (rowH + gap) * 2, w, rowH, 2, "BYPASS PROFILE");
-        drawSettingsRow(font, x, y + (rowH + gap) * 3, w, rowH, 3, "GUI KEY");
-    }
-
-    // ------------------------------------------------------------------
-    // 壁纸设置页
-    // ------------------------------------------------------------------
-
-    private int wallpaperRowH() {
-        int h = panelH - HEADER_H - FOOTER_H - 16;
-        // 小窗口也要为文件列表保留空间，不能让四个设置行占满面板。
-        return clampInt((h - 96) / 7, 16, 42);
-    }
-
-    private int wallpaperRowGap() {
-        return panelH < 280 ? 2 : 6;
-    }
-
-    private int wallpaperListTop() {
-        int y = panelY + HEADER_H + 8;
-        return y + 4 * (wallpaperRowH() + wallpaperRowGap())
-                + (panelH < 280 ? 4 : 10);
-    }
-
-    private int wallpaperListBottom() {
-        return panelY + panelH - FOOTER_H - 8;
-    }
-
-    private int wallpaperFileRowH() {
-        int height = Math.max(1, wallpaperListBottom() - wallpaperListTop() - 18);
-        return clampInt(height / 4, 24, 34);
-    }
-
-    private void clampWallpaperScroll(int fileCount) {
-        int visibleHeight = Math.max(1, wallpaperListBottom() - wallpaperListTop() - 18);
-        int content = fileCount * wallpaperFileRowH();
-        int max = Math.max(0, content - visibleHeight);
-        wallpaperScroll = Math.max(0, Math.min(max, wallpaperScroll));
-    }
-
-    private void drawWallpaperPage(FontRenderer font, int x, int y, int w, int h) {
-        int rowH = wallpaperRowH();
-        int gap = wallpaperRowGap();
-        drawWallpaperRow(font, x, y, w, rowH, 0, "MODE",
-                MaverWallpaper.getModeName(), false);
-        drawWallpaperRow(font, x, y + rowH + gap, w, rowH, 1, "FIT",
-                MaverWallpaper.getFitName(), false);
-        drawWallpaperRow(font, x, y + (rowH + gap) * 2, w, rowH, 2, "SOURCE",
-                MaverWallpaper.getDisplayName(), MaverWallpaper.isBuiltIn());
-        drawWallpaperRow(font, x, y + (rowH + gap) * 3, w, rowH, 3, "FOLDER",
-                "OPEN", false);
-
-        int listTop = wallpaperListTop();
-        int listBottom = wallpaperListBottom();
-        int listHeight = Math.max(1, listBottom - listTop);
-        roundRect(x, listTop, w, listHeight, 8, withAlpha(0xFFFFFF, 0x08));
-        roundRect(x, listTop + 2, 2, listHeight - 4, 1, withAlpha(ACCENT, 0x55));
-        micro(font, "WALLPAPERS", x + 12, listTop + 5, FAINT);
-        String hint = "PNG / JPG / GIF / WEBP / MP4";
-        int hintColor = 0xFF596272;
-        String issue = MaverWallpaper.getStatusHint();
-        if (issue != null) {
-            // 当前壁纸解不出来时直接说明原因（例如 .png 其实是 WebP、或没装 ffmpeg）。
-            hint = issue;
-            hintColor = 0xFFE5826E;
-        }
-        hint = ellipsizeMicro(font, hint, Math.max(40, w - 120));
-        micro(font, hint, x + w - 12 - microWidth(font, hint), listTop + 5, hintColor);
-
-        List<File> files = MaverWallpaper.listWallpapers();
-        clampWallpaperScroll(files.size());
-        int fileRowH = wallpaperFileRowH();
-        int rowTop = listTop + 16 - wallpaperScroll;
-        pushScissor(x, listTop + 14, w, Math.max(1, listHeight - 14));
-        for (int i = 0; i < files.size(); i++) {
-            if (rowTop + fileRowH > listTop + 14 && rowTop < listBottom) {
-                drawWallpaperFileRow(font, x, rowTop, w, fileRowH, files.get(i));
-            }
-            rowTop += fileRowH;
-        }
-        popScissor();
-
-        if (files.isEmpty()) {
-            String empty = "Drop images or clips into " + MaverWallpaper.getWallpaperFolderDisplay();
-            micro(font, ellipsizeMicro(font, empty, w - 28), x + 14, listTop + 26,
-                    0xFF7C8798);
-            micro(font, "Then reopen this page / restart the client.", x + 14,
-                    listTop + 40, 0xFF596272);
-        }
-    }
-
-    private void drawWallpaperRow(FontRenderer font, int x, int y, int w, int rowH,
-            int index, String label, String value, boolean active) {
-        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
-        boolean hovered = isHovered(lastMouseX, lastMouseY, x, y, w, rowH);
-        ControlAnim anim = control("wallrow:" + index, hovered, active, now);
-        float on = anim.active;
-        float hover = anim.hover * (1.0F - on * 0.5F);
-
-        roundRect(x, y, w, rowH, 8,
-                withAlpha(active ? ACCENT : 0xFFFFFF,
-                        Math.round((active ? 0x11 : 0x08) + 0x07 * hover)));
-        roundRect(x, y + 2, 2, rowH - 4, 1,
-                withAlpha(ACCENT, Math.round((active ? 0x88 : 0x44) + 0x40 * hover)));
-        if (anim.press > 0.01F) {
-            roundRect(x, y, w, rowH, 8,
-                    withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
-        }
-        hud(font, label, x + 14, y + (rowH - 11) / 2 + 2,
-                blendColor(TEXT, 0xFFFFFFFF, hover * 0.6F));
-
-        int right = x + w - 14;
-        String shown = ellipsizeMicro(font, value, Math.max(40, w / 2));
-        int pillW = microWidth(font, shown) + 16;
-        int controlY = y + (rowH - 16) / 2;
-        roundRect(right - pillW, controlY, pillW, 16, 6,
-                withAlpha(active ? ACCENT : 0xFFFFFF,
-                        Math.round((active ? 0x20 : 0x10) + 0x0C * hover)));
-        micro(font, shown, right - pillW + 8, controlY + 4,
-                active ? withAlpha(ACCENT, 0xF0)
-                        : blendColor(TEXT_2, TEXT, hover * 0.65F));
-    }
-
-    private void drawWallpaperFileRow(FontRenderer font, int x, int y, int w,
-            int rowH, File file) {
-        int rowY = y + 1;
-        int rowHeight = rowH - 2;
-        boolean selected = MaverWallpaper.isSelected(file);
-        boolean hovered = isHovered(lastMouseX, lastMouseY, x + 4, rowY, w - 8, rowHeight);
-        int fill = selected ? withAlpha(ACCENT, 0x16)
-                : withAlpha(0xFFFFFF, hovered ? 0x10 : 0x06);
-        roundRect(x + 4, rowY, w - 8, rowHeight, 6, fill);
-        if (selected) {
-            roundRect(x + 4, rowY + 4, 2, rowHeight - 8, 1, withAlpha(ACCENT, 0xCC));
-        }
-
-        String name = file.getName();
-        String label = ellipsizeHud(font, name, w - 84);
-        int textY = rowY + (rowHeight - 11) / 2 + 1;
-        hud(font, label, x + 13, textY,
-                selected ? TEXT : (hovered ? 0xFFE4EBF6 : TEXT_2));
-
-        int dot = name.lastIndexOf('.');
-        String extension = dot >= 0 && dot + 1 < name.length()
-                ? name.substring(dot + 1).toUpperCase(Locale.ROOT) : "IMG";
-        if (extension.length() > 5) {
-            extension = extension.substring(0, 5);
-        }
-        int badgeW = Math.max(26, microWidth(font, extension) + 12);
-        int badgeX = x + w - 12 - badgeW;
-        int badgeY = rowY + (rowHeight - 13) / 2;
-        // GIF / MP4 这类“会动”的素材用冷色调角标，跟静态图片区分开。
-        boolean animated = "GIF".equals(extension)
-                || MaverWallpaper.isVideoFile("x." + extension);
-        roundRect(badgeX, badgeY, badgeW, 13, 5,
-                withAlpha(animated ? 0xBFE9FF : 0xFFFFFF,
-                        selected ? 0x28 : 0x12));
-        micro(font, extension, badgeX + (badgeW - microWidth(font, extension)) / 2,
-                badgeY + 3, selected ? withAlpha(ACCENT, 0xF0) : 0xFF8B96A6);
-    }
-
-    private void drawSettingsRow(FontRenderer font, int x, int y, int w, int rowH,
-            int index, String label) {
-        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
-        boolean on = index == 0 ? OpenMaverFeatures.isBypassEnabled()
-                : index == 1 && OpenMaverFeatures.isDebugEnabled();
-        boolean hovered = isHovered(lastMouseX, lastMouseY, x, y, w, rowH);
-        ControlAnim anim = control("sysrow:" + index, hovered, on, now);
-        float hover = anim.hover * (1.0F - anim.active * 0.5F);
-
-        roundRect(x, y, w, rowH, 8,
-                withAlpha(0xFFFFFF, Math.round(0x08 + 0x07 * hover)));
-        roundRect(x, y + 2, 2, rowH - 4, 1,
-                withAlpha(ACCENT, Math.round(0x44 + 0x40 * hover)));
-        if (anim.press > 0.01F) {
-            roundRect(x, y, w, rowH, 8,
-                    withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
-        }
-        hud(font, label, x + 14, y + (rowH - 11) / 2 + 2,
-                blendColor(TEXT, 0xFFFFFFFF, hover * 0.6F));
-
-        int right = x + w - 14;
-        int controlY = y + (rowH - 16) / 2;
-        if (index == 0) {
-            drawSwitch(right - 32, controlY, OpenMaverFeatures.isBypassEnabled(), anim);
-        } else if (index == 1) {
-            drawSwitch(right - 32, controlY, OpenMaverFeatures.isDebugEnabled(), anim);
-        } else if (index == 2) {
-            String name = OpenMaverFeatures.getBypassProfileName().toUpperCase(Locale.ROOT);
-            int pillW = microWidth(font, name) + 16;
-            roundRect(right - pillW, controlY, pillW, 16, 6,
-                    withAlpha(ACCENT, Math.round(0x18 + 0x14 * hover)));
-            micro(font, name, right - pillW + 8, controlY + 4,
-                    withAlpha(ACCENT, Math.round(0xEE)));
-        } else {
-            String value = OpenMaverFeatures.getGuiKeyName();
-            int valueW = microWidth(font, value);
-            roundRect(right - valueW - 12, controlY, valueW + 12, 16, 5,
-                    withAlpha(0xFFFFFF, Math.round(0x10 + 0x0C * hover)));
-            micro(font, value, right - valueW - 6, controlY + 4,
-                    blendColor(TEXT_2, TEXT, hover * 0.65F));
-        }
-    }
-
-    private void drawSwitch(int x, int y, boolean on, ControlAnim anim) {
-        int w = 32;
-        int h = 16;
-        float onAmt = anim == null ? (on ? 1.0F : 0.0F) : anim.active;
-        float hover = anim == null ? 0.0F : anim.hover * (1.0F - onAmt);
-        int track = blendColor(withAlpha(0xFFFFFF, 0x14), withAlpha(ACCENT, 0x66), onAmt);
-        track = blendColor(track, withAlpha(0xFFFFFF, 0x30), hover * 0.6F);
-        int fill = blendColor(FIELD_SOLID, withAlpha(ACCENT, 0x26), onAmt);
-        int knobColor = blendColor(0xFF8A95A6, ACCENT, onAmt);
-        int knobX = x + Math.round(8 + (w - 16) * onAmt);
-
-        fillCircle(knobX, y + 8, 6 + Math.round(onAmt * 1.0F),
-                withAlpha(ACCENT, Math.round(0x18 * onAmt + 0x08 * hover)));
-        roundRect(x, y, w, h, 8, track);
-        roundRect(x + 1, y + 1, w - 2, h - 2, 7, fill);
-        fillCircle(knobX, y + 8, 4, knobColor);
-    }
-
-    private SystemItem currentSystemItem() {
-        for (int i = 0; i < SYSTEM_ITEMS.length; i++) {
-            if (SYSTEM_ITEMS[i].id.equals(systemPage)) {
-                return SYSTEM_ITEMS[i];
-            }
-        }
-        return SYSTEM_ITEMS[0];
-    }
-
-    private void drawTools(FontRenderer font) {
-        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
-        int y = panelY + HEADER_H;
-        int tabY = y + 6;
-        int tabH = 20;
-        int accent = accent();
-        final int[] widths = {56, 74, 82};
-        int tabsW = widths[0] + widths[1] + widths[2] + 8;
-        roundRect(listX, tabY, tabsW, tabH, 8, withAlpha(0xFFFFFF, 0x10));
-        roundRect(listX + 1, tabY + 1, tabsW - 2, tabH - 2, 7, FIELD_SOLID);
-        String[] labels = {"ALL", "ENABLED", "DISABLED"};
-        int[] counts = {
-            countCategory(category),
-            countCategoryEnabled(category),
-            countCategory(category) - countCategoryEnabled(category)
-        };
-        int tx = listX + 4;
-        for (int i = 0; i < 3; i++) {
-            int tabW = widths[i];
-            int ty = tabY + 3;
-            boolean active = filter == i;
-            boolean hovered = isHovered(lastMouseX, lastMouseY, tx, ty, tabW - 2, 14);
-            ControlAnim anim = control("tab:" + i, hovered, active, now);
-            float on = anim.active;
-            float hover = anim.hover * (1.0F - on);
-
-            if (hover > 0.01F) {
-                roundRect(tx, ty, tabW - 2, 14, 5,
-                        withAlpha(0xFFFFFF, Math.round(0x08 * hover)));
-            }
-            if (on > 0.01F) {
-                roundRect(tx, ty, tabW - 2, 14, 5,
-                        withAlpha(accent, Math.round(0x22 * on)));
-                roundRect(tx, ty, tabW - 2, 14, 5,
-                        withAlpha(accent, Math.round(0x10 * on)));
-                Gui.drawRect(tx + 4, ty + 11, tx + tabW - 6, ty + 12,
-                        withAlpha(accent, Math.round(0xAA * on)));
-            }
-            if (anim.press > 0.01F) {
-                roundRect(tx, ty, tabW - 2, 14, 5,
-                        withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
-            }
-
-            int textColor = blendColor(0xFF788395, withAlpha(accent, 0xFF), on);
-            textColor = blendColor(textColor, 0xFFE4EBF6, hover * 0.55F);
-            micro(font, labels[i], tx + 7, ty + 4, textColor);
-            String c = String.valueOf(counts[i]);
-            int countColor = blendColor(0xFF5F6A7B, withAlpha(accent, 0xBB), on);
-            countColor = blendColor(countColor, 0xFFA9B5C6, hover * 0.45F);
-            micro(font, c, tx + tabW - 8 - microWidth(font, c), ty + 4, countColor);
-            tx += tabW;
-        }
-
-        if (listW >= 330) {
-            boolean sortHovered = isHovered(lastMouseX, lastMouseY,
-                    listX + listW - 110, tabY - 2, 110, 18);
-            ControlAnim sortAnim = control("sort", sortHovered, false, now);
-            float hover = sortAnim.hover;
-            if (hover > 0.01F) {
-                roundRect(listX + listW - 110, tabY - 2, 110, 18, 6,
-                        withAlpha(0xFFFFFF, Math.round(0x08 * hover)));
-            }
-            if (sortAnim.press > 0.01F) {
-                roundRect(listX + listW - 110, tabY - 2, 110, 18, 6,
-                        withAlpha(0xFFFFFF, Math.round(0x0A * sortAnim.press)));
-            }
-            micro(font, sortAscending ? "A-Z" : "Z-A", listX + listW - 46, tabY + 7,
-                    blendColor(0xFF9EAABB, TEXT, hover * 0.65F));
-            drawChevron(listX + listW - 30, tabY + 11, false,
-                    blendColor(MUTED, 0xFFD8E2F0, hover));
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 列表
-    // ------------------------------------------------------------------
-
-    private void drawList(FontRenderer font) {
-        List<Entry> visible = visibleEntries();
-        int contentH = contentHeight(visible);
-        int maxScroll = Math.max(0, contentH - listH);
-        if (scroll > maxScroll) {
-            scroll = maxScroll;
-        }
-        if (scroll < 0) {
-            scroll = 0;
-        }
-
-        pushScissor(listX, listY, listW, listH);
-        int y = listY + LIST_PAD - Math.round(scrollVisual);
-        for (int i = 0; i < visible.size(); i++) {
-            Entry entry = visible.get(i);
-            int cardH = animatedEntryHeight(entry, System.currentTimeMillis());
-            if (y + cardH >= listY && y <= listY + listH) {
-                drawEntry(font, entry, y, cardH);
-            }
-            y += cardH + ROW_GAP;
-        }
-
-        if (visible.isEmpty()) {
-            String message = searchQuery.isEmpty()
-                    ? "No modules registered in this category"
-                    : "No modules match \"" + searchQuery + "\"";
-            micro(font, message, listX + (listW - microWidth(font, message)) / 2,
-                    listY + listH / 2 - 4, 0xFF5A6474);
-        }
-
-        // 底部渐隐（可滚动时）
-        if (maxScroll > 0) {
-            int fadeH = 26;
-            for (int i = 0; i < fadeH; i += 2) {
-                Gui.drawRect(listX, listY + listH - fadeH + i, listX + listW,
-                        listY + listH - fadeH + i + 2, (i * 4) << 24);
-            }
-        }
-        popScissor();
-
-        // 细滚动条
-        if (maxScroll > 0) {
-            int trackX = listX + listW - 3;
-            int thumbH = Math.max(20, listH * listH / contentH);
-            // 滚动条与内容使用同一条平滑值，滚轮时不会出现“文字在动、滑块瞬移”。
-            int visualScroll = clampInt(Math.round(scrollVisual), 0, maxScroll);
-            int thumbY = listY + (listH - thumbH) * visualScroll / maxScroll;
-            roundRect(trackX, listY, 2, listH, 1, withAlpha(0xFFFFFF, 0x08));
-            roundRect(trackX, thumbY, 2, thumbH, 1, withAlpha(0xFFFFFF, 0x22));
-            roundRect(trackX, thumbY + thumbH / 3, 2, Math.max(4, thumbH / 3), 1,
-                    withAlpha(accent(), 0x44));
-        }
-    }
-
-    private void drawEntry(FontRenderer font, Entry entry, int y, int cardH) {
-        int x = listX;
-        int w = listW - 6;
-        boolean open = expanded.contains(entry.id);
-        float openProgress = getEntryProgress(entry, System.currentTimeMillis());
-        boolean hover = isHovered(lastMouseX, lastMouseY, x, y, w, ROW_H);
-        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
-        entry.hoverProgress = approach(entry.hoverProgress, hover ? 1.0F : 0.0F,
-                Math.min(50.0F, now - entry.animationAt), 120.0F);
-        entry.animationAt = now;
-        entry.pressProgress = approach(entry.pressProgress, 0.0F,
-                Math.min(50.0F, now - entry.pressAt), PRESS_MS);
-        entry.pressAt = now;
-        boolean on = entry.isEnabled();
-        entry.toggleProgress = approach(entry.toggleProgress, on ? 1.0F : 0.0F,
-                Math.min(50.0F, now - entry.toggleAt), 140.0F);
-        entry.toggleAt = now;
-        float hoverProgress = entry.hoverProgress;
-        float pressProgress = entry.pressProgress;
-        float glow = Math.max(hoverProgress * 0.55F + pressProgress * 0.25F,
-                openProgress * 0.45F + (on ? 0.12F : 0.0F));
-        int accent = accentFor(entry);
-
-        // 启用 / 悬停 / 展开时透出的一层柔光。
-        if (glow > 0.01F) {
-            roundRect(x - 1, y - 1, w + 2, cardH + 2, CARD_RADIUS + 1,
-                    withAlpha(accent, Math.round(0x12 * glow)));
-        }
-        int border = (on || open)
-                ? withAlpha(accent, Math.round(0x20 + 0x22 * glow))
-                : withAlpha(0xFFFFFF, Math.round(0x12 + 0x10 * hoverProgress));
-        roundRect(x, y, w, cardH, CARD_RADIUS, border);
-
-        // 卡片本体：纯色 + 悬停/展开时轻微提亮。
-        int fill = blendColor(CARD_FILL, CARD_HOVER, hoverProgress);
-        if (on) {
-            fill = blendColor(fill, CARD_OPEN, 0.6F);
-        }
-        if (openProgress > 0.01F) {
-            fill = blendColor(fill, CARD_OPEN, openProgress * 0.7F);
-        }
-        if (pressProgress > 0.01F) {
-            fill = blendColor(fill, CARD_HOVER, pressProgress * 0.55F);
-        }
-        roundRect(x + 1, y + 1, w - 2, cardH - 2, CARD_RADIUS - 1, fill);
-        if (w > CARD_RADIUS * 2) {
-            Gui.drawRect(x + CARD_RADIUS, y + 1, x + w - CARD_RADIUS, y + 2,
-                    withAlpha(0xFFFFFF, Math.round(0x10 * (0.5F + glow))));
-        }
-
-        // 开关图标：更大的圆形底板 + 柔和外圈，开启时用强调色光晕替代原来的小圆点。
-        float toggleProgress = entry.toggleProgress;
-        int dotX = x + 17;
-        int dotY = y + ROW_H / 2;
-        int orbRadius = TOGGLE_RADIUS - 2;
-        int offRing = withAlpha(0xFFFFFF, Math.round(0x48 + 0x20 * hoverProgress));
-        int onRing = withAlpha(accent, Math.round(0xC8 + 0x28 * hoverProgress));
-        fillCircle(dotX, dotY, orbRadius, blendColor(
-                withAlpha(0xFFFFFF, 0x0A + Math.round(0x08 * hoverProgress)),
-                withAlpha(accent, 0x1A), toggleProgress));
-        ringCircle(dotX, dotY, orbRadius, blendColor(offRing, onRing, toggleProgress));
-        fillCircle(dotX, dotY, 3, blendColor(
-                withAlpha(0xFFFFFF, 0x70), accent, toggleProgress));
-        if (toggleProgress > 0.01F) {
-            // 左上角一点柔和高光，让开关看起来更像一枚圆润的玻璃按钮。
-            fillCircle(dotX - 2, dotY - 2, 1,
-                    withAlpha(0xFFFFFF, Math.round(0x70 * toggleProgress)));
-        }
-
-        hud(font, ellipsizeHud(font, entry.name, w - 100), x + 32, y + 13,
-                on ? TEXT : 0xFFB3BCCB);
-
-        // 键帽：胶囊状圆角，悬停展开时也保持和卡片一致的圆润感。
-        String keybind = entry.keybind();
-        int keyX = x + w - 48;
-        if (keybind != null) {
-            int keyW = Math.min(26, Math.max(16, microWidth(font, keybind) + 9));
-            int kx = keyX + (15 - keyW) / 2;
-            int keyY = y + 9;
-            int keyH = 16;
-            roundRect(kx, keyY, keyW, keyH, keyH / 2, withAlpha(0xFFFFFF, 0x1E));
-            roundRect(kx + 1, keyY + 1, keyW - 2, keyH - 2, (keyH - 2) / 2, 0xFF484848);
-            Gui.drawRect(kx + 4, keyY + 1, kx + keyW - 4, keyY + 2,
-                    withAlpha(0xFFFFFF, 0x12));
-            String keyText = ellipsizeMicro(font, keybind, keyW - 6);
-            micro(font, keyText, kx + (keyW - microWidth(font, keyText)) / 2,
-                    keyY + 4, KEYCAP_TEXT);
-        } else {
-            Gui.drawRect(keyX + 5, y + 16, keyX + 10, y + 17,
-                    withAlpha(0xFFFFFF, 0x18));
-        }
-
-        // 右侧展开箭头：悬停 / 展开时出现圆形底光，和左侧开关图标呼应。
-        int chevX = x + w - 18;
-        int chevY = y + ROW_H / 2;
-        float chevronGlow = Math.max(hoverProgress, openProgress);
-        if (chevronGlow > 0.01F) {
-            ringCircle(chevX, chevY, 8,
-                    withAlpha(0xFFFFFF, Math.round(0x12 * chevronGlow)));
-        }
-        drawChevronProgress(chevX, chevY, openProgress,
-                blendColor(MUTED, accent, openProgress));
-
-        if (openProgress > 0.01F && !entry.settings.isEmpty()) {
-            int settingsHeight = Math.round(settingsHeight(entry) * openProgress);
-            pushScissor(x, y + ROW_H, w, settingsHeight + 4);
-            drawSettings(font, entry, x, y, w);
-            popScissor();
-        }
-    }
-
-    private void drawSettings(FontRenderer font, Entry entry, int cardX, int cardY, int cardW) {
-        int panelH = settingsHeight(entry);
-        int x = cardX + 32;
-        int y = cardY + ROW_H + 2;
-        int w = cardW - 44;
-        int accent = accentFor(entry);
-
-        roundRect(x, y, w, panelH, 12, withAlpha(0xFFFFFF, 0x0C));
-        roundRect(x + 1, y + 1, w - 2, panelH - 2, 11, 0xE62A2A2A);
-        // 和上方开关圆点连成一条的强调色细线。
-        int connectorX = x - 15;
-        roundRect(connectorX, y + 2, 2, panelH - 4, 1, withAlpha(accent, 0x26));
-        roundRect(connectorX, y + 2, 2, Math.max(8, panelH / 3), 1,
-                withAlpha(accent, 0xA8));
-        Gui.drawRect(x + 6, y + 1, x + w - 6, y + 2, withAlpha(0xFFFFFF, 0x08));
-
-        int innerX = x + SETTINGS_PAD;
-        int innerY = y + SETTINGS_PAD;
-        int cols = settingsColumns();
-        int cellW = (w - SETTINGS_PAD * 2 - GRID_GAP * (cols - 1)) / cols;
-
-        for (int i = 0; i < entry.settings.size(); i++) {
-            int col = i % cols;
-            int row = i / cols;
-            int cx = innerX + col * (cellW + GRID_GAP);
-            int cy = innerY + row * (CONTROL_H + CONTROL_ROW_GAP);
-            drawSetting(font, entry, entry.settings.get(i), cx, cy, cellW);
-        }
-    }
-
-    private void drawSetting(FontRenderer font, Entry entry, Setting setting,
-            int x, int y, int w) {
-        int accent = accentFor(entry);
-        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
-        String key = settingKey(entry, setting);
-        if (setting.kind == Setting.SLIDER) {
-            boolean hovered = isHovered(lastMouseX, lastMouseY, x, y + 7, w, 16);
-            boolean dragging = dragSetting == setting;
-            ControlAnim anim = control("slider:" + key, hovered, dragging, now);
-            float hi = Math.max(anim.hover, anim.active);
-
-            micro(font, setting.label, x, y,
-                    blendColor(0xFF73808F, 0xFFA9B5C6, hi * 0.75F));
-            String value = setting.display();
-            micro(font, value, x + w - microWidth(font, value), y,
-                    blendColor(SLIDER_VALUE, 0xFFFFFFFF, hi * 0.55F));
-
-            int trackY = y + 15;
-            roundRect(x, trackY, w, 5, 3,
-                    blendColor(withAlpha(0xFFFFFF, 0x12), withAlpha(0xFFFFFF, 0x26), hi));
-            double pct = setting.percent();
-            int fillW = (int) Math.round((w - 1) * pct);
-            if (fillW > 0) {
-                roundRect(x, trackY, fillW, 5, 3,
-                        withAlpha(accent, Math.round(0xE2 + 0x1D * hi)));
-                if (fillW > 5) {
-                    Gui.drawRect(x + 2, trackY, x + fillW - 1, trackY + 1,
-                            withAlpha(0xFFFFFF, Math.round(0x34 + 0x14 * hi)));
-                }
-            }
-            int thumbX = x + clampInt((int) Math.round((w - 1) * pct), 0, w - 1);
-            int glow = 7 + Math.round(hi * 2.0F);
-            fillCircle(thumbX, trackY + 2, glow,
-                    withAlpha(accent, Math.round(0x18 + 0x12 * hi)));
-            fillCircle(thumbX, trackY + 2, 5,
-                    withAlpha(accent, Math.round(0x40 + 0x28 * hi)));
-            fillCircle(thumbX, trackY + 2, 3, 0xFFFFFFFF);
-        } else if (setting.kind == Setting.RANGE) {
-            boolean hovered = isHovered(lastMouseX, lastMouseY, x, y + 7, w, 16);
-            boolean dragging = dragSetting == setting;
-            ControlAnim anim = control("range:" + key, hovered, dragging, now);
-            float hi = Math.max(anim.hover, anim.active);
-
-            String highText = setting.highDisplay();
-            String lowText = setting.lowDisplay();
-            int highW = microWidth(font, highText);
-            int lowW = microWidth(font, lowText);
-            int labelRoom = Math.max(18, w - highW - lowW - 26);
-            micro(font, ellipsizeMicro(font, setting.label, labelRoom), x, y,
-                    blendColor(0xFF73808F, 0xFFA9B5C6, hi * 0.75F));
-
-            // 右上角两段数值 + 中间的双向箭头，和区间滑块一一对应。
-            int highX = x + w - highW;
-            micro(font, highText, highX, y, blendColor(SLIDER_VALUE, 0xFFFFFFFF, hi * 0.55F));
-            int arrowCx = highX - 8;
-            drawRangeArrow(arrowCx, y + 4, blendColor(0xFF8C98A8, 0xFFC8D3E2, hi));
-            micro(font, lowText, arrowCx - 7 - lowW, y,
-                    blendColor(0xFF8C98A8, 0xFFBFCBDC, hi * 0.5F));
-
-            int trackY = y + 15;
-            roundRect(x, trackY, w, 5, 3,
-                    blendColor(withAlpha(0xFFFFFF, 0x12), withAlpha(0xFFFFFF, 0x26), hi));
-            int lowX = x + clampInt((int) Math.round((w - 1) * setting.lowPercent()), 0, w - 1);
-            int highX2 = x + clampInt((int) Math.round((w - 1) * setting.highPercent()), 0, w - 1);
-            if (highX2 > lowX + 1) {
-                roundRect(lowX, trackY, highX2 - lowX, 5, 2,
-                        withAlpha(accent, Math.round(0xE2 + 0x1D * hi)));
-            }
-            drawRangeHandle(lowX, trackY + 2, true, accent, hi);
-            drawRangeHandle(highX2, trackY + 2, false, accent, hi);
-        } else if (setting.kind == Setting.SELECT) {
-            int fieldY = y + 9;
-            boolean hovered = isHovered(lastMouseX, lastMouseY, x, fieldY, w, 16);
-            boolean open = selectSetting == setting;
-            ControlAnim anim = control("select:" + key, hovered, open, now);
-            float focus = anim.active;
-            float hover = anim.hover * (1.0F - focus);
-            float hi = Math.max(focus, hover);
-            micro(font, setting.label, x, y,
-                    blendColor(0xFF73808F, 0xFFA9B5C6, hi * 0.75F));
-
-            int fieldBorder = blendColor(withAlpha(0xFFFFFF, 0x14),
-                    withAlpha(accent, 0x66), focus);
-            fieldBorder = blendColor(fieldBorder, withAlpha(0xFFFFFF, 0x3C), hover * 0.7F);
-            roundRect(x, fieldY, w, 16, 8, fieldBorder);
-            roundRect(x + 1, fieldY + 1, w - 2, 14, 7,
-                    blendColor(FIELD_SOLID, FIELD_HOVER, hi));
-            Gui.drawRect(x + 4, fieldY + 1, x + w - 4, fieldY + 2,
-                    withAlpha(0xFFFFFF, Math.round(0x0A + 0x0A * hi)));
-            if (anim.press > 0.01F) {
-                roundRect(x, fieldY, w, 16, 8,
-                        withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
-            }
-            String value = setting.display();
-            micro(font, ellipsizeMicro(font, value, w - 22), x + 6, fieldY + 4,
-                    blendColor(0xFFD3DCE9, 0xFFFFFFFF, hi * 0.65F));
-            drawChevronProgress(x + w - 9, fieldY + 8, focus,
-                    blendColor(0xFF7B8798, accent, hi));
-        } else if (setting.kind == Setting.CHECK) {
-            boolean checked = setting.checked();
-            boolean hovered = isHovered(lastMouseX, lastMouseY, x, y, w, CONTROL_H);
-            ControlAnim anim = control("check:" + key, hovered, checked, now);
-            float on = anim.active;
-            float hover = anim.hover * (1.0F - on);
-            int box = 11;
-            int boxX = x + 1;
-            int boxY = y + 8;
-
-            int border = blendColor(withAlpha(0xFFFFFF, 0x22),
-                    withAlpha(accent, 0xF0), on);
-            border = blendColor(border, withAlpha(0xFFFFFF, 0x48), hover * 0.7F);
-            roundRect(boxX, boxY, box, box, 4, border);
-            roundRect(boxX + 1, boxY + 1, box - 2, box - 2, 3,
-                    withAlpha(0x000000, 0x50));
-            if (on > 0.01F) {
-                roundRect(boxX - 1, boxY - 1, box + 2, box + 2, 5,
-                        withAlpha(accent, Math.round(0x2E * on)));
-                roundRect(boxX, boxY, box, box, 4,
-                        withAlpha(accent, Math.round(0xF0 * on)));
-                roundRect(boxX, boxY, box, 4, 4,
-                        withAlpha(0xFFFFFF, Math.round(0x30 * on)));
-                drawCheck(boxX + 3, boxY + 6,
-                        withAlpha(0xFF151515, Math.round(0xFF * on)));
-            }
-            int labelColor = blendColor(0xFFAEB9C9, 0xFFFFFFFF, on);
-            labelColor = blendColor(labelColor, 0xFFFFFFFF, hover * 0.6F);
-            micro(font, setting.label, boxX + 17, y + 10, labelColor);
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // 底部
-    // ------------------------------------------------------------------
-
-    private void drawFooter(FontRenderer font) {
-        int y = panelY + panelH - FOOTER_H;
-        int left = mainX + 18;
-        int right = panelX + panelW - 18;
-        Gui.drawRect(left, y, right, y + 1, withAlpha(0xFFFFFF, 0x08));
-        int width = right - left;
-        Gui.drawRect(left + width / 5, y, right - width / 5, y + 1,
-                withAlpha(0xFFFFFF, 0x07));
-
-        String guiKey = OpenMaverFeatures.getGuiKeyName();
-        if (systemPage != null) {
-            drawHint(font, right - keycapWidth(font, guiKey) - 6
-                    - microWidth(font, "CLOSE"), y + 7, guiKey, "CLOSE");
-            return;
-        }
-
-        int closeW = keycapWidth(font, guiKey) + 6 + microWidth(font, "CLOSE");
-        int expandW = keycapWidth(font, "RMB") + 6 + microWidth(font, "EXPAND");
-        int toggleW = keycapWidth(font, "LMB") + 6 + microWidth(font, "TOGGLE");
-
-        int totalW = toggleW + 14 + expandW;
-        if (totalW + closeW + 20 < mainW - 170) {
-            totalW += 14 + closeW;
-        } else if (totalW > mainW - 170) {
-            totalW = toggleW;
-        }
-
-        int cx = right - totalW;
-        cx = drawHint(font, cx, y + 7, "LMB", "TOGGLE") + 14;
-        if (totalW >= toggleW + 14 + expandW) {
-            cx = drawHint(font, cx, y + 7, "RMB", "EXPAND") + 14;
-            if (totalW >= toggleW + 14 + expandW + 14 + closeW) {
-                drawHint(font, cx, y + 7, guiKey, "CLOSE");
-            }
-        }
-    }
-
-    private int drawHint(FontRenderer font, int x, int y, String key, String label) {
-        int kw = keycapWidth(font, key);
-        roundRect(x, y, kw, 13, 5, withAlpha(0xFFFFFF, 0x16));
-        roundRect(x + 1, y + 1, kw - 2, 11, 4, 0xFF4A4A4A);
-        Gui.drawRect(x + 3, y + 1, x + kw - 3, y + 2, withAlpha(0xFFFFFF, 0x0C));
-        micro(font, key, x + (kw - microWidth(font, key)) / 2, y + 2, KEYCAP_TEXT);
-        micro(font, label, x + kw + 6, y + 2, 0xFF545E6D);
-        return x + kw + 6 + microWidth(font, label);
-    }
-
-    private int keycapWidth(FontRenderer font, String key) {
-        return Math.max(15, microWidth(font, key) + 8);
-    }
-
-    // ------------------------------------------------------------------
-    // 下拉弹层
-    // ------------------------------------------------------------------
-
-    private void drawSelectPopup(FontRenderer font) {
-        if (selectSetting == null || selectSetting.options == null) {
-            return;
-        }
-        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
-        int accent = accentFor(selectEntry);
-        String popupKey = settingKey(selectEntry, selectSetting);
-        int w = selectFieldW;
-        int h = selectSetting.options.length * 18 + 6;
-        int x = Math.min(selectFieldX, panelX + panelW - 8 - w);
-        int y = selectFieldY + 18;
-        if (y + h > panelY + panelH - 8) {
-            y = selectFieldY - h - 2;
-        }
-        y = Math.max(panelY + 8, y);
-
-        roundRect(x + 2, y + 4, w, h, 8, withAlpha(0x000000, 0x55));
-        roundRect(x, y, w, h, 8, withAlpha(accent, 0x55));
-        roundRect(x + 1, y + 1, w - 2, h - 2, 7, withAlpha(0x0A0E16, 0xFA));
-        Gui.drawRect(x + 6, y + 1, x + w - 6, y + 2, withAlpha(0xFFFFFF, 0x12));
-        int current = (int) Math.round(selectSetting.value());
-        for (int i = 0; i < selectSetting.options.length; i++) {
-            int rowY = y + 3 + i * 18;
-            boolean active = i == current;
-            boolean hovered = isHovered(lastMouseX, lastMouseY, x + 1, rowY, w - 2, 18);
-            ControlAnim anim = control("popup:" + popupKey + ":" + i, hovered, active, now);
-            float on = anim.active;
-            float hover = anim.hover * (1.0F - on);
-
-            if (hover > 0.01F) {
-                roundRect(x + 2, rowY + 1, w - 4, 16, 4,
-                        withAlpha(0xFFFFFF, Math.round(0x0C * hover)));
-            }
-            if (on > 0.01F) {
-                roundRect(x + 2, rowY + 1, w - 4, 16, 4,
-                        withAlpha(accent, Math.round(0x20 * on)));
-                roundRect(x + 2, rowY + 1, w - 4, 16, 4,
-                        withAlpha(accent, Math.round(0x12 * on)));
-            }
-            if (anim.press > 0.01F) {
-                roundRect(x + 2, rowY + 1, w - 4, 16, 4,
-                        withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
-            }
-            int textColor = blendColor(TEXT_2, 0xFFFFFFFF, on);
-            textColor = blendColor(textColor, 0xFFFFFFFF, hover * 0.6F);
-            micro(font, selectSetting.options[i], x + 9, rowY + 5, textColor);
-            if (on > 0.01F) {
-                fillCircle(x + w - 10, rowY + 9, 3,
-                        withAlpha(accent, Math.round(0x34 * on)));
-                fillCircle(x + w - 10, rowY + 9, 1,
-                        withAlpha(accent, Math.round(0xFF * on)));
-            }
-        }
-    }
-
-    private boolean handleSelectClick(int mouseX, int mouseY) {
-        if (selectSetting == null || selectSetting.options == null) {
-            return false;
-        }
-        int w = selectFieldW;
-        int h = selectSetting.options.length * 18 + 6;
-        int x = Math.min(selectFieldX, panelX + panelW - 8 - w);
-        int y = selectFieldY + 18;
-        if (y + h > panelY + panelH - 8) {
-            y = selectFieldY - h - 2;
-        }
-        y = Math.max(panelY + 8, y);
-        if (isHovered(mouseX, mouseY, x, y, w, h)) {
-            int index = (mouseY - (y + 3)) / 18;
-            if (index >= 0 && index < selectSetting.options.length) {
-                selectSetting.binding.set(index);
-                press("popup:" + settingKey(selectEntry, selectSetting) + ":" + index);
-            }
-        }
-        selectSetting = null;
-        selectEntry = null;
         return true;
     }
-
-    // ==================================================================
-    // 输入
-    // ==================================================================
 
     @Override
-    protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
-        if (closing) {
+    protected void mouseClicked(int mouseX, int mouseY, int button) throws IOException {
+        if (closing || failed) {
             return;
         }
-        try {
-            lastMouseX = mouseX;
-            lastMouseY = mouseY;
-
-            if (systemPage == null) {
-                handleColumnClick(mouseX, mouseY, mouseButton);
-                return;
-            }
-
-            if (handleSelectClick(mouseX, mouseY)) {
-                return;
-            }
-
-            if (mouseButton == 0 && isHovered(mouseX, mouseY,
-                    panelX + 8, panelY + 42, railW - 16, 23)) {
-                logoSizeDragging = true;
-                searchFocused = false;
-                press("logo");
-                updateLogoSize(mouseX);
-                return;
-            }
-
-            if (mouseButton == 0 && isHovered(mouseX, mouseY,
-                    panelX + 4, panelY + 4, railW - 8, 38)) {
-                panelDragging = true;
-                panelDragOffsetX = mouseX - panelX;
-                panelDragOffsetY = mouseY - panelY;
-                searchFocused = false;
-                return;
-            }
-
-            if (systemPage == null
-                    && isHovered(mouseX, mouseY, searchX, searchY, searchW, searchH)) {
-                searchFocused = true;
-                press("search");
-                return;
-            }
-            searchFocused = false;
-
-            if (!isHovered(mouseX, mouseY, panelX, panelY, panelW, panelH)) {
-                super.mouseClicked(mouseX, mouseY, mouseButton);
-                return;
-            }
-
-            // SYSTEM 入口
-            if (handleSystemNavClick(mouseX, mouseY)) {
-                return;
-            }
-
-            // 分类栏
-            int navY = panelY + RAIL_NAV_Y;
-            for (int i = 0; i < CATEGORIES.length; i++) {
-                if (isHovered(mouseX, mouseY, panelX + 4,
-                        navY + i * RAIL_NAV_STRIDE, railW - 12, RAIL_NAV_H)) {
-                    category = CATEGORIES[i].id;
-                    systemPage = null;
-                    columnsAt = System.currentTimeMillis();
-                    modeAt = columnsAt;
-                    filter = 0;
-                    searchQuery = "";
-                    searchFocused = false;
-                    selectSetting = null;
-                    scroll = 0;
-                    press("nav:" + category);
-                    return;
-                }
-            }
-
-            // SYSTEM 页面内容（页面激活时不再落到模块筛选 / 列表）
-            if (systemPage != null) {
-                handleSystemPageClick(mouseX, mouseY, mouseButton);
-                return;
-            }
-
-            // 分段筛选
-            int tabY = panelY + HEADER_H + 9;
-            final int[] widths = {56, 74, 82};
-            int tx = listX + 4;
-            for (int i = 0; i < 3; i++) {
-                if (isHovered(mouseX, mouseY, tx, tabY, widths[i] - 2, 14)) {
-                    filter = i;
-                    selectSetting = null;
-                    scroll = 0;
-                    press("tab:" + i);
-                    return;
-                }
-                tx += widths[i];
-            }
-
-            // 排序
-            if (isHovered(mouseX, mouseY, listX + listW - 110, tabY - 2, 110, 18)) {
-                sortAscending = !sortAscending;
-                selectSetting = null;
-                press("sort");
-                return;
-            }
-
-            // 列表
-            if (isHovered(mouseX, mouseY, listX, listY, listW, listH)) {
-                handleListClick(mouseX, mouseY, mouseButton);
-                return;
-            }
-        } catch (Throwable t) {
-            failed = true;
-            System.out.println("[OpenMaver] ClickGUI 点击处理出错: " + t);
-        }
-        super.mouseClicked(mouseX, mouseY, mouseButton);
-    }
-
-    private boolean handleSystemNavClick(int mouseX, int mouseY) {
-        if (panelH < RAIL_SYS_MIN_H) {
-            return false;
-        }
-        for (int i = 0; i < SYSTEM_ITEMS.length; i++) {
-            int itemY = panelY + RAIL_SYS_Y + i * RAIL_SYS_STRIDE;
-            if (isHovered(mouseX, mouseY, panelX + 4, itemY, railW - 12, RAIL_SYS_H)) {
-                systemPage = SYSTEM_ITEMS[i].id;
-                filter = 0;
-                searchQuery = "";
-                searchFocused = false;
-                profileFieldFocused = false;
-                selectSetting = null;
-                selectEntry = null;
-                scroll = 0;
-                wallpaperScroll = 0;
-                configScroll = 0;
-                press("sysnav:" + systemPage);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private void handleSystemPageClick(int mouseX, int mouseY, int button) {
-        if (button != 0) {
-            return;
-        }
-        if ("configs".equals(systemPage)) {
-            handleConfigsPageClick(mouseX, mouseY, button);
-            return;
-        }
-        if ("wallpaper".equals(systemPage)) {
-            handleWallpaperPageClick(mouseX, mouseY);
-            return;
-        }
-        if (!"settings".equals(systemPage)) {
-            return;
-        }
-        int x = listX;
-        int y = panelY + HEADER_H + 8;
-        int w = listW;
-        int rowH = systemSettingsRowH();
-        int gap = 8;
-        for (int i = 0; i < 4; i++) {
-            int rowY = y + i * (rowH + gap);
-            if (!isHovered(mouseX, mouseY, x, rowY, w, rowH)) {
-                continue;
-            }
-            if (i == 0) {
-                OpenMaverFeatures.setBypassEnabled(!OpenMaverFeatures.isBypassEnabled());
-            } else if (i == 1) {
-                OpenMaverFeatures.setDebugEnabled(!OpenMaverFeatures.isDebugEnabled());
-            } else if (i == 2) {
-                int next = (OpenMaverFeatures.getBypassProfile() + 1)
-                        % BYPASS_PROFILES.length;
-                OpenMaverFeatures.setBypassProfile(next);
-            } else if (i == 3) {
-                OpenMaverFeatures.cycleGuiKey();
-            }
-            press("sysrow:" + i);
-            return;
-        }
-    }
-
-    private void handleWallpaperPageClick(int mouseX, int mouseY) {
-        int x = listX;
-        int y = panelY + HEADER_H + 8;
-        int w = listW;
-        int rowH = wallpaperRowH();
-        int gap = wallpaperRowGap();
-
-        for (int i = 0; i < 4; i++) {
-            int rowY = y + i * (rowH + gap);
-            if (!isHovered(mouseX, mouseY, x, rowY, w, rowH)) {
-                continue;
-            }
-            if (i == 0) {
-                MaverWallpaper.nextMode();
-                wallpaperScroll = 0;
-            } else if (i == 1) {
-                MaverWallpaper.nextFit();
-            } else if (i == 2) {
-                // SOURCE 行点击恢复内置背景；选择具体文件请点下面的列表。
-                MaverWallpaper.setFilePath("");
-                wallpaperScroll = 0;
-            } else if (i == 3) {
-                MaverWallpaper.refreshFiles();
-                MaverWallpaper.openFolder();
-            }
-            press("wallrow:" + i);
-            return;
-        }
-
-        int listTop = wallpaperListTop();
-        int listBottom = wallpaperListBottom();
-        if (!isHovered(mouseX, mouseY, x, listTop + 14, w,
-                Math.max(1, listBottom - listTop - 14))) {
-            return;
-        }
-        List<File> files = MaverWallpaper.listWallpapers();
-        clampWallpaperScroll(files.size());
-        int fileRowH = wallpaperFileRowH();
-        int rowTop = listTop + 16 - wallpaperScroll;
-        for (int i = 0; i < files.size(); i++) {
-            if (isHovered(mouseX, mouseY, x + 4, rowTop + 1, w - 8, fileRowH - 2)) {
-                File file = files.get(i);
-                MaverWallpaper.setFilePath(file.getName());
-                if (MaverWallpaper.getMode() == MaverWallpaper.MODE_PANORAMA) {
-                    MaverWallpaper.setMode(MaverWallpaper.isAnimatedFile(file.getName())
-                            ? MaverWallpaper.MODE_DYNAMIC : MaverWallpaper.MODE_STATIC);
-                }
-                press("wallfile:" + file.getName());
-                return;
-            }
-            rowTop += fileRowH;
-        }
-    }
-
-    private void handleListClick(int mouseX, int mouseY, int button) {
-        List<Entry> visible = visibleEntries();
-        int y = listY + LIST_PAD - Math.round(scrollVisual);
-        for (int i = 0; i < visible.size(); i++) {
-            Entry entry = visible.get(i);
-            int cardH = animatedEntryHeight(entry, System.currentTimeMillis());
-            int x = listX;
-            int w = listW - 6;
-            if (mouseY >= y && mouseY < y + cardH && mouseX >= x && mouseX < x + w) {
-                entry.press();
-                if (expanded.contains(entry.id) && mouseY >= y + ROW_H && !entry.settings.isEmpty()) {
-                    if (handleSettingsClick(entry, x, y, w, mouseX, mouseY, button)) {
-                        return;
-                    }
-                    return; // 点在设置面板空白处，不折叠
-                }
-
-                boolean onDot = mouseX >= x + 6 && mouseX < x + 28
-                        && mouseY >= y + 6 && mouseY < y + 28;
-                if (onDot && button == 0) {
-                    entry.toggle();
-                    return;
-                }
-                if (button == 1) {
-                    if (!entry.settings.isEmpty()) {
-                        toggleExpanded(entry);
-                    }
-                    return;
-                }
-                if (!entry.settings.isEmpty()) {
-                    toggleExpanded(entry);
-                } else {
-                    entry.toggle();
-                }
-                return;
-            }
-            y += cardH + ROW_GAP;
-        }
-    }
-
-    private boolean handleSettingsClick(Entry entry, int cardX, int cardY, int cardW,
-            int mouseX, int mouseY, int button) {
-        if (button != 0) {
-            return false;
-        }
-        int panelH = settingsHeight(entry);
-        int x = cardX + 32;
-        int y = cardY + ROW_H + 2;
-        int w = cardW - 44;
-        if (!isHovered(mouseX, mouseY, x, y, w, panelH)) {
-            return false;
-        }
-
-        int innerX = x + SETTINGS_PAD;
-        int innerY = y + SETTINGS_PAD;
-        int cols = settingsColumns();
-        int cellW = (w - SETTINGS_PAD * 2 - GRID_GAP * (cols - 1)) / cols;
-
-        for (int i = 0; i < entry.settings.size(); i++) {
-            int col = i % cols;
-            int row = i / cols;
-            int cx = innerX + col * (cellW + GRID_GAP);
-            int cy = innerY + row * (CONTROL_H + CONTROL_ROW_GAP);
-            Setting setting = entry.settings.get(i);
-
-            if (setting.kind == Setting.SLIDER || setting.kind == Setting.RANGE) {
-                if (isHovered(mouseX, mouseY, cx, cy + 7, cellW, 16)) {
-                    dragEntry = entry;
-                    dragSetting = setting;
-                    dragX = cx;
-                    dragW = cellW;
-                    if (setting.kind == Setting.RANGE) {
-                        beginRangeDrag(setting, mouseX, cx, cellW);
-                        press("range:" + settingKey(entry, setting));
-                    } else {
-                        press("slider:" + settingKey(entry, setting));
-                    }
-                    updateDrag(mouseX);
-                    return true;
-                }
-            } else if (isHovered(mouseX, mouseY, cx, cy, cellW, CONTROL_H)) {
-                if (setting.kind == Setting.SELECT) {
-                    selectEntry = entry;
-                    selectSetting = setting;
-                    selectFieldX = cx;
-                    selectFieldY = cy + 9;
-                    selectFieldW = cellW;
-                    press("select:" + settingKey(entry, setting));
-                } else if (setting.kind == Setting.CHECK) {
-                    setting.toggle();
-                    press("check:" + settingKey(entry, setting));
-                }
-                return true;
-            }
-        }
-        return true;
+        lastMouseX = mouseX;
+        lastMouseY = mouseY;
+        handleColumnClick(mouseX, mouseY, button);
     }
 
     private void updateDrag(int mouseX) {
@@ -3717,27 +2076,12 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         dragHigh = Math.abs(pct - setting.highPercent()) < Math.abs(pct - setting.lowPercent());
     }
 
-    private void updateLogoSize(int mouseX) {
-        int sliderX = panelX + 14;
-        int sliderW = railW - 28;
-        if (sliderW <= 0) {
-            return;
-        }
-        double percent = Math.max(0.0D, Math.min(1.0D,
-                (mouseX - sliderX) / (double) sliderW));
-        float raw = MIN_LOGO_SCALE + (MAX_LOGO_SCALE - MIN_LOGO_SCALE) * (float) percent;
-        logoScale = Math.max(MIN_LOGO_SCALE,
-                Math.min(MAX_LOGO_SCALE, Math.round(raw / LOGO_SCALE_STEP) * LOGO_SCALE_STEP));
-    }
-
     private void toggleExpanded(Entry entry) {
         if (expanded.contains(entry.id)) {
             expanded.remove(entry.id);
         } else {
             expanded.add(entry.id);
         }
-        selectSetting = null;
-        selectEntry = null;
     }
 
     private float getEntryProgress(Entry entry, long now) {
@@ -3746,16 +2090,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         entry.expandProgress = approach(entry.expandProgress, target, delta, 160.0F);
         entry.expandAt = now;
         return easeOutCubic(entry.expandProgress);
-    }
-
-    private void movePanelTo(int x, int y) {
-        panelX = clampInt(x, 0, Math.max(0, width - panelW));
-        panelY = clampInt(y, 0, Math.max(0, height - panelH));
-        mainX = panelX + railW;
-        listX = mainX + 16;
-        listY = panelY + HEADER_H + TOOLS_H;
-        searchX = mainX + mainW - 16 - searchW;
-        searchY = panelY + 19;
     }
 
     @Override
@@ -3769,23 +2103,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             if (wheel == 0) {
                 return;
             }
-            if (systemPage == null) {
-                scrollColumn(lastMouseX, lastMouseY, wheel);
-            } else if ("configs".equals(systemPage)
-                    && isHovered(lastMouseX, lastMouseY, listX, configsRowsTop(),
-                            listW, Math.max(1, configsListBottom() - configsRowsTop()))) {
-                configScroll = clampInt(configScroll - Integer.signum(wheel) * 20,
-                        0, configsMaxScroll());
-            } else if ("wallpaper".equals(systemPage)
-                    && isHovered(lastMouseX, lastMouseY, listX, wallpaperListTop(),
-                            listW, Math.max(1, wallpaperListBottom() - wallpaperListTop()))) {
-                int visibleHeight = Math.max(1, wallpaperListBottom()
-                        - wallpaperListTop() - 18);
-                int content = MaverWallpaper.listWallpapers().size() * wallpaperFileRowH();
-                int max = Math.max(0, content - visibleHeight);
-                wallpaperScroll = Math.max(0,
-                        Math.min(max, wallpaperScroll - Integer.signum(wheel) * 18));
-            }
+            scrollColumn(lastMouseX, lastMouseY, wheel);
         } catch (Throwable t) {
             failed = true;
             System.out.println("[OpenMaver] ClickGUI 滚轮处理出错: " + t);
@@ -3797,38 +2115,21 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         if (closing) {
             return;
         }
-        // Configs 页正在输入档案名：所有按键先给输入框，别落到搜索框 / ESC 关闭上。
         if (handleConfigFieldKey(typedChar, keyCode)) {
             return;
         }
         if (keyCode == Keyboard.KEY_ESCAPE) {
-            if (selectSetting != null) {
-                selectSetting = null;
-                selectEntry = null;
-                return;
-            }
-            if (systemPage == null && (searchFocused || !searchQuery.isEmpty())) {
+            if (searchFocused || !searchQuery.isEmpty()) {
                 searchQuery = "";
                 searchFocused = false;
                 return;
             }
-            if (systemPage != null && initialSystemPage == null) {
-                // 从列式界面进入的 SYSTEM 页面：ESC 先回到模块列。
-                systemPage = null;
-                columnsAt = System.currentTimeMillis();
-                modeAt = columnsAt;
-                return;
-            }
-            OpenMaverFeatures.flushSettings();
             closeGui();
             return;
         }
-        selectSetting = null;
-        selectEntry = null;
         if ((keyCode == Keyboard.KEY_K)
                 && (Keyboard.isKeyDown(Keyboard.KEY_LCONTROL)
                     || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL))) {
-            systemPage = null;
             searchFocused = true;
             return;
         }
@@ -3875,11 +2176,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         // 关闭动画期间不再响应拖拽 / 输入，避免面板缩小时误触。
         dragSetting = null;
         dragEntry = null;
-        panelDragging = false;
-        logoSizeDragging = false;
         pressColumn = null;
-        selectSetting = null;
-        selectEntry = null;
         searchFocused = false;
         profileFieldFocused = false;
         OpenMaverFeatures.flushSettings();
@@ -3903,76 +2200,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     // 数据 / 布局辅助
     // ==================================================================
 
-    private List<Entry> visibleEntries() {
-        List<Entry> out = new ArrayList<Entry>();
-        String query = searchQuery.toLowerCase(Locale.ROOT);
-        for (int i = 0; i < entries.size(); i++) {
-            Entry entry = entries.get(i);
-            if (!entry.category.equals(category)) {
-                continue;
-            }
-            boolean on = entry.isEnabled();
-            if (filter == 1 && !on) {
-                continue;
-            }
-            if (filter == 2 && on) {
-                continue;
-            }
-            if (!query.isEmpty() && !entry.name.toLowerCase(Locale.ROOT).contains(query)) {
-                continue;
-            }
-            out.add(entry);
-        }
-        Collections.sort(out, new Comparator<Entry>() {
-            @Override
-            public int compare(Entry a, Entry b) {
-                int result = a.name.compareToIgnoreCase(b.name);
-                return sortAscending ? result : -result;
-            }
-        });
-        return out;
-    }
-
-    private int contentHeight(List<Entry> visible) {
-        int height = LIST_PAD * 2;
-        for (int i = 0; i < visible.size(); i++) {
-            height += entryHeight(visible.get(i)) + ROW_GAP;
-        }
-        return height;
-    }
-
-    private int entryHeight(Entry entry) {
-        if (!expanded.contains(entry.id) || entry.settings.isEmpty()) {
-            return ROW_H;
-        }
-        return ROW_H + settingsHeight(entry) + 10;
-    }
-
-    private int animatedEntryHeight(Entry entry, long now) {
-        if (entry.settings.isEmpty()) {
-            return ROW_H;
-        }
-        return ROW_H + Math.round((settingsHeight(entry) + 10)
-                * getEntryProgress(entry, now));
-    }
-
-    /** 设置区列数：窗口较窄时自动降为 2 列 / 1 列，避免控件互相挤压。 */
-    private int settingsColumns() {
-        int available = Math.max(40, listW - 50);
-        int cols = GRID_COLS;
-        while (cols > 1
-                && (available - SETTINGS_PAD * 2 - GRID_GAP * (cols - 1)) / cols < 74) {
-            cols--;
-        }
-        return cols;
-    }
-
-    private int settingsHeight(Entry entry) {
-        int cols = settingsColumns();
-        int rows = Math.max(1, (entry.settings.size() + cols - 1) / cols);
-        return SETTINGS_PAD * 2 + rows * CONTROL_H + (rows - 1) * CONTROL_ROW_GAP;
-    }
-
     private int countCategory(String cat) {
         int count = 0;
         for (int i = 0; i < entries.size(); i++) {
@@ -3981,49 +2208,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             }
         }
         return count;
-    }
-
-    private int countCategoryEnabled(String cat) {
-        int count = 0;
-        for (int i = 0; i < entries.size(); i++) {
-            Entry entry = entries.get(i);
-            if (entry.category.equals(cat) && entry.isEnabled()) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private int enabledCount() {
-        int count = 0;
-        for (int i = 0; i < entries.size(); i++) {
-            if (entries.get(i).isEnabled()) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private Category currentCategory() {
-        for (int i = 0; i < CATEGORIES.length; i++) {
-            if (CATEGORIES[i].id.equals(category)) {
-                return CATEGORIES[i];
-            }
-        }
-        return CATEGORIES[0];
-    }
-
-    private int accent() {
-        return currentCategory().color;
-    }
-
-    private int accentFor(Entry entry) {
-        for (int i = 0; i < CATEGORIES.length; i++) {
-            if (CATEGORIES[i].id.equals(entry.category)) {
-                return CATEGORIES[i].color;
-            }
-        }
-        return ACCENT;
     }
 
     // ==================================================================
@@ -4035,16 +2219,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         HudFont.drawString(font, text, x, y, color, 1.02F * FONT_SCALE);
     }
 
-    private static void hudBold(FontRenderer font, String text, int x, int y, int color) {
-        HudFont.drawString(font, "\u00a7l" + text, x, y, color, 1.44F * FONT_SCALE);
-    }
-
     private static int hudWidth(FontRenderer font, String text) {
         return HudFont.getStringWidth(font, text, 1.02F * FONT_SCALE);
-    }
-
-    private static int hudBoldWidth(FontRenderer font, String text) {
-        return HudFont.getStringWidth(font, "\u00a7l" + text, 1.44F * FONT_SCALE);
     }
 
     private static void micro(FontRenderer font, String text, int x, int y, int color) {
@@ -4091,15 +2267,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             return;
         }
         shapePolygon(x, y, w, h, r, r, r, r, color);
-    }
-
-    /** 左栏纯色底：左侧圆角、右侧与分割线齐平。 */
-    private static void railPanel(int x, int y, int w, int h, float radius, int color) {
-        if (w <= 0 || h <= 0 || (color >>> 24) == 0) {
-            return;
-        }
-        float r = Math.min(radius, h / 2.0F);
-        shapePolygon(x, y, w, h, r, 0.0F, 0.0F, r, color);
     }
 
     /**
@@ -4217,37 +2384,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 (argb & 0xFF) / 255.0F, alpha);
     }
 
-    /** 圆角行内缩量，四舍五入到像素，用于内阴影。 */
-    private static int roundedInset(int radius, float rowCenter, int height) {
-        return Math.round(roundedInsetF(radius, rowCenter, height));
-    }
-
-    /** 圆角行内缩量（浮点，用于抗锯齿圆角）。 */
-    private static float roundedInsetF(int radius, float rowCenter, int height) {
-        if (radius <= 0) {
-            return 0.0F;
-        }
-        float dy;
-        if (rowCenter < radius) {
-            dy = radius - rowCenter;
-        } else if (rowCenter > height - radius) {
-            dy = rowCenter - (height - radius);
-        } else {
-            return 0.0F;
-        }
-        float square = radius * radius - dy * dy;
-        if (square <= 0.0F) {
-            return radius;
-        }
-        return radius - (float) Math.sqrt(square);
-    }
-
-    /** 按比例缩放 ARGB 的 alpha（用于打开动画的整体淡入）。 */
-    private static int scaleAlpha(int argb, float factor) {
-        int alpha = Math.round((argb >>> 24) * Math.max(0.0F, factor));
-        return withAlpha(argb, Math.min(255, alpha));
-    }
-
     /** 实心三角形：区间滑块的左右手柄与数值之间的双向箭头都用它。 */
     private static void fillTriangle(int x1, int y1, int x2, int y2, int x3, int y3, int color) {
         if ((color >>> 24) == 0) {
@@ -4261,26 +2397,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         GL11.glVertex2f(x3, y3);
         GL11.glEnd();
         aaEnd();
-    }
-
-    /** 区间手柄：左端是向右的三角，右端是向左的三角。 */
-    private static void drawRangeHandle(int x, int cy, boolean lowSide, int accent, float hi) {
-        int glow = 7 + Math.round(hi * 2.0F);
-        fillCircle(x, cy, glow, withAlpha(accent, Math.round(0x18 + 0x12 * hi)));
-        if (lowSide) {
-            fillTriangle(x - 1, cy - 5, x - 1, cy + 5, x + 5, cy, 0xFFD5DCE6);
-            fillTriangle(x - 1, cy - 4, x - 1, cy + 4, x + 4, cy, 0xFFFFFFFF);
-        } else {
-            fillTriangle(x + 1, cy - 5, x + 1, cy + 5, x - 5, cy, 0xFFD5DCE6);
-            fillTriangle(x + 1, cy - 4, x + 1, cy + 4, x - 4, cy, 0xFFFFFFFF);
-        }
-    }
-
-    /** 两个数值之间的双向箭头。 */
-    private static void drawRangeArrow(int cx, int cy, int color) {
-        fillTriangle(cx - 5, cy, cx - 1, cy - 3, cx - 1, cy + 3, color);
-        fillTriangle(cx + 5, cy, cx + 1, cy - 3, cx + 1, cy + 3, color);
-        Gui.drawRect(cx - 1, cy, cx + 2, cy + 1, color);
     }
 
     private static void fillCircle(int cx, int cy, int radius, int color) {
@@ -4354,17 +2470,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         GL11.glEnd();
     }
 
-    private static void drawChevron(int cx, int cy, boolean up, int color) {
-        if (up) {
-            line(cx - 3, cy + 1, cx, cy - 2, color);
-            line(cx, cy - 2, cx + 3, cy + 1, color);
-        } else {
-            line(cx - 3, cy - 2, cx, cy + 1, color);
-            line(cx, cy + 1, cx + 3, cy - 2, color);
-        }
-    }
-
-    /** 展开进度在 0..1 之间时，V 形箭头会平滑翻转而不是瞬间跳变。 */
     private static void drawChevronProgress(int cx, int cy, float progress, int color) {
         float p = Math.max(0.0F, Math.min(1.0F, progress));
         float outerY = cy - 2.0F + 3.0F * p;
@@ -4416,94 +2521,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         aaEnd();
     }
 
-    private static void drawCategoryIcon(String id, int x, int y, int color) {
-        if ("combat".equals(id)) {
-            // 八边形准星：四向刻度 + 中心竖线（对应设计稿的 Combat 图标）。
-            float cx = x + 5.0F;
-            float cy = y + 5.0F;
-            float radius = 3.55F;
-            float previousX = cx;
-            float previousY = cy - radius;
-            for (int i = 1; i <= 8; i++) {
-                double angle = Math.toRadians(-90.0D + i * 45.0D);
-                float px = cx + (float) Math.cos(angle) * radius;
-                float py = cy + (float) Math.sin(angle) * radius;
-                line(previousX, previousY, px, py, color);
-                previousX = px;
-                previousY = py;
-            }
-            line(cx, y, cx, cy - radius, color);
-            line(cx, cy + radius, cx, y + 10, color);
-            line(x, cy, cx - radius, cy, color);
-            line(cx + radius, cy, x + 10, cy, color);
-            line(cx, cy - 2.6F, cx, cy + 2.6F, color);
-        } else if ("movement".equals(id)) {
-            line(x, y + 2, x + 4, y + 5, color);
-            line(x + 4, y + 5, x, y + 8, color);
-            line(x + 4, y + 2, x + 8, y + 5, color);
-            line(x + 8, y + 5, x + 4, y + 8, color);
-        } else if ("render".equals(id)) {
-            line(x, y + 5, x + 5, y + 1, color);
-            line(x + 5, y + 1, x + 10, y + 5, color);
-            line(x + 10, y + 5, x + 5, y + 9, color);
-            line(x + 5, y + 9, x, y + 5, color);
-            fillCircle(x + 5, y + 5, 1, color);
-        } else if ("player".equals(id)) {
-            ringCircle(x + 5, y + 3, 2, color);
-            line(x + 1, y + 9, x + 2, y + 7, color);
-            line(x + 2, y + 7, x + 8, y + 7, color);
-            line(x + 8, y + 7, x + 9, y + 9, color);
-        } else {
-            line(x, y + 2, x + 10, y + 2, color);
-            line(x, y + 5, x + 6, y + 5, color);
-            line(x, y + 8, x + 10, y + 8, color);
-            fillCircle(x + 7, y + 2, 1, color);
-            fillCircle(x + 3, y + 5, 1, color);
-            fillCircle(x + 6, y + 8, 1, color);
-        }
-    }
-
-    private static void drawSystemIcon(String id, int x, int y, int color) {
-        if ("configs".equals(id)) {
-            line(x, y + 2.5F, x + 3.2F, y + 2.5F, color);
-            line(x + 3.2F, y + 2.5F, x + 4.6F, y + 4.0F, color);
-            line(x + 4.6F, y + 4.0F, x + 10, y + 4.0F, color);
-            line(x + 10, y + 4.0F, x + 10, y + 8.2F, color);
-            line(x + 10, y + 8.2F, x, y + 8.2F, color);
-            line(x, y + 8.2F, x, y + 2.5F, color);
-        } else if ("stats".equals(id)) {
-            line(x + 1, y + 1, x + 1, y + 9, color);
-            line(x + 1, y + 9, x + 9.5F, y + 9, color);
-            line(x + 3.4F, y + 9, x + 3.4F, y + 6, color);
-            line(x + 5.8F, y + 9, x + 5.8F, y + 3.6F, color);
-            line(x + 8.2F, y + 9, x + 8.2F, y + 6.6F, color);
-        } else if ("wallpaper".equals(id)) {
-            // 相框 + 小山：壁纸页入口。
-            line(x, y + 1, x + 10, y + 1, color);
-            line(x + 10, y + 1, x + 10, y + 9, color);
-            line(x + 10, y + 9, x, y + 9, color);
-            line(x, y + 9, x, y + 1, color);
-            line(x + 2, y + 7, x + 4.5F, y + 4.2F, color);
-            line(x + 4.5F, y + 4.2F, x + 6.6F, y + 6.4F, color);
-            line(x + 6.6F, y + 6.4F, x + 8.2F, y + 4.8F, color);
-            line(x + 8.2F, y + 4.8F, x + 8.2F, y + 7, color);
-            fillCircle(x + 7, y + 3, 1, color);
-        } else {
-            float cx = x + 5.0F;
-            float cy = y + 5.0F;
-            ringCircle(cx, cy, 2.7F, color);
-            ringCircle(cx, cy, 1.0F, color);
-            for (int i = 0; i < 8; i++) {
-                double angle = Math.toRadians(i * 45.0D);
-                float ix = cx + (float) Math.cos(angle) * 2.7F;
-                float iy = cy + (float) Math.sin(angle) * 2.7F;
-                float ox = cx + (float) Math.cos(angle) * 4.4F;
-                float oy = cy + (float) Math.sin(angle) * 4.4F;
-                line(ix, iy, ox, oy, color);
-            }
-        }
-    }
-
     private static int withAlpha(int color, int alpha) {
         return (alpha & 0xFF) << 24 | (color & 0xFFFFFF);
     }
@@ -4543,21 +2560,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         return entry.id + ":" + setting.label;
     }
 
-    /** 当前整体可见度。 */
-    private float viewReveal() {
-        return openProgress * easeOutCubic(clamp01((frameNow - modeAt) / OPEN_DURATION_MS));
-    }
-
-    /** 面板缩放：打开时带一点轻微回弹，关闭时直接跟随可见度收回。 */
-    private float panelScale() {
-        if (!closing) {
-            float t = clamp01((frameNow - Math.max(openedAt, modeAt)) / OPEN_DURATION_MS);
-            float spring = easeOutBack(t);
-            return OPEN_SCALE_FROM + (1.0F - OPEN_SCALE_FROM) * spring;
-        }
-        return OPEN_SCALE_FROM + (1.0F - OPEN_SCALE_FROM) * openProgress;
-    }
-
     private static float clamp01(float value) {
         return Math.max(0.0F, Math.min(1.0F, value));
     }
@@ -4574,15 +2576,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
         float inverse = -2.0F * t + 2.0F;
         return 1.0F - inverse * inverse * inverse / 2.0F;
-    }
-
-    /** 轻微的 ease-out-back：结束时带一点点回弹，避免缩放像生硬地推到终点。 */
-    private static float easeOutBack(float value) {
-        float t = clamp01(value);
-        float c1 = 0.9F;
-        float c3 = c1 + 1.0F;
-        float p = t - 1.0F;
-        return 1.0F + c3 * p * p * p + c1 * p * p;
     }
 
     private static int blendColor(int from, int to, float amount) {
@@ -4628,29 +2621,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final class Category {
         final String id;
         final String name;
-        final String description;
-        final int color;
-        /** 渐变的第二个色标，让强调色有方向感。 */
-        final int color2;
-
-        Category(String id, String name, String description, int color, int color2) {
+        Category(String id, String name) {
             this.id = id;
             this.name = name;
-            this.description = description;
-            this.color = color;
-            this.color2 = color2;
-        }
-    }
-
-    private static final class SystemItem {
-        final String id;
-        final String name;
-        final String description;
-
-        SystemItem(String id, String name, String description) {
-            this.id = id;
-            this.name = name;
-            this.description = description;
         }
     }
 

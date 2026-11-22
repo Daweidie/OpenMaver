@@ -571,7 +571,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
         int nameW = HudFont.getStringWidth(fontRendererObj, username, 0.95F * ui);
         int clientX = Math.round(40.0F * ui) + nameW + Math.round(5.0F * ui);
         clientX = Math.min(clientX, right - 3 * (iconSize + iconGap));
-        buttons.add(new MenuButton("Client Settings", ACTION_CLIENT,
+        buttons.add(new MenuButton("ClickGUI", ACTION_CLIENT,
                 clientX, iconY, iconSize, iconSize, 0, false));
         menuTop = top;
     }
@@ -1075,9 +1075,9 @@ public final class GuiMaverMainMenu extends GuiScreen {
             } else if (action == ACTION_MULTIPLAYER) {
                 mc.displayGuiScreen(new GuiMultiplayer(this));
             } else if (action == ACTION_CLIENT) {
-                openClientGui(null);
+                openClickGui(null);
             } else if (action == ACTION_WALLPAPER) {
-                openClientGui("wallpaper");
+                openClickGui("wallpaper");
             } else if (action == ACTION_OPTIONS) {
                 mc.displayGuiScreen(new GuiOptions(this, mc.gameSettings));
             } else if (action == ACTION_FULLSCREEN) {
@@ -1090,7 +1090,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
         }
     }
 
-    private void openClientGui(String initialPage) {
+    private void openClickGui(String initialColumn) {
         try {
             if (!OpenMaver.isStarted()) {
                 OpenMaver.start();
@@ -1098,7 +1098,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
         } catch (Throwable t) {
             System.err.println("[OpenMaver] Core startup failed: " + t);
         }
-        mc.displayGuiScreen(new GuiOpenMaverClickGui(this, initialPage));
+        mc.displayGuiScreen(new GuiOpenMaverClickGui(this, initialColumn));
     }
 
     private static boolean inside(int mouseX, int mouseY, MenuButton button) {

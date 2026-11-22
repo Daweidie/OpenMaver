@@ -282,7 +282,7 @@ java -Djava.library.path=build/lib \
 | `TickEvent.ClientTickEvent` (END) | `ModuleManager.onTick()` |
 | `RenderWorldLastEvent` | `ModuleManager.onRender()` |
 | `RenderGameOverlayEvent.Post` | `OpenMaverHud` 绘制右侧 ModuleList + 加载提示 |
-| RSHIFT（在游戏内，可在 SYSTEM → Settings → GUI KEY 改键） | 开关 `GuiOpenMaverClickGui` |
+| RSHIFT（在游戏内，可在 Config 齿轮 → GUI key 改键） | 开关 `GuiOpenMaverClickGui` |
 | 模块绑定键（如 `V`） | 切换对应模块的启用状态 |
 
 配置文件默认读取游戏工作目录下的 `config/default.jsonc`
@@ -330,26 +330,24 @@ java -Djava.library.path=build/lib \
 - **Maver 主菜单** `mc/GuiMaverMainMenu.java`：替换原版标题界面（`GuiOpenEvent`），
   默认使用清晰的原版旋转全景图，中央展示白色 Maver 字标，以及三行半透明圆角按钮
   **Singleplayer / Multiplayer / Settings**。背景和按钮均不使用模糊。
-  左上角展示当前账号头像与用户名，旁边的 **+** 打开 Client Settings；
+  左上角展示当前账号头像与用户名，旁边的 **+** 打开 ClickGUI；
   右上角依次为 **Fullscreen / Wallpaper / Quit Game**，悬停显示入口名称。
   头像从微软 / Mojang 官方服务异步获取，支持旧版 64×32 皮肤，失败时展示 Steve。
   背景可以替换成静态图片、动态 GIF 或 MP4 等视频，详见下面「主菜单壁纸」。
 - **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关（默认键位，可在
-  SYSTEM → Settings 的 **GUI KEY** 行点一下切换：RSHIFT / LSHIFT / RCTRL / RALT / NUM ENTER /
+  Config 面板右上角齿轮展开设置，在 **GUI key** 行点一下切换：RSHIFT / LSHIFT / RCTRL / RALT / NUM ENTER /
   SEMICOLON / APOSTROPHE / GRAVE / TAB，写进 `config/openmaver.properties` 的
   `ui.clickgui.key`）。
-  列布局和客户端设置页均只使用半透明背景遮罩，不对主菜单或游戏画面做整屏模糊。
-  纯灰色面板 + 中性灰描边，全部强调色统一为白色；左侧 Combat / Movement / Render /
-  Player / Misc 分类栏，以及 SYSTEM → Configs / Statistics / Wallpaper / Settings 页面
-  （配置概览、模块统计、主菜单壁纸与客户端设置），顶部搜索（`Ctrl+K`）、ALL / ENABLED /
-  DISABLED 筛选与排序；点击行展开设置在
-  `Gui.drawRect` 自绘的滑块 / 下拉 / 复选框中直接调参。分类、SYSTEM 入口、筛选页签、
-  排序、模块行、搜索框、开关与全部设置控件都有统一的悬停 / 激活 / 按压过渡，
-  滚动条与列表内容共用同一条平滑滚动值。模块列表来自
+  仅保留可拖动的列式界面：Combat / Movement / Render / Player / Misc，
+  以及独立的 **Config / Wallpaper** 浮动面板；旧版侧栏界面与 Client 列已移除。
+  深色半透明面板使用淡紫色选中行，Config 使用浅粉色圆角输入框和操作按钮。
+  拖动标题栏移动面板，点击或右键标题栏折叠，位置与折叠状态在本次游戏会话内保留。
+  左键模块切换开关、右键展开滑块 / 选项 / 复选框；底部搜索支持直接输入与 `Ctrl+K`。
+  所有面板都在内容溢出时单独滚动，主菜单与游戏画面均不使用整屏模糊。模块列表来自
   `ModuleManager`，Aim Assist、Player ESP、Grim Bypass、AutoSprint、AutoClicker、Reach、
   Criticals、FastPlace、Target HUD 与 Player X-Ray 的设置直接绑定 `OpenMaverFeatures`，参数写入
   `config/openmaver.properties`（拖拽结束与关闭 GUI 时落盘）。
-- **主菜单壁纸** `mc/MaverWallpaper.java`：ClickGUI 的 **SYSTEM → Wallpaper**
+- **主菜单壁纸** `mc/MaverWallpaper.java`：ClickGUI 的独立 **Wallpaper** 浮动面板
   （或主菜单右上角的图片图标）可以切换开始菜单背景：
 
   | 模式 | 效果 |
@@ -360,7 +358,7 @@ java -Djava.library.path=build/lib \
 
   把素材放到 `config/openmaver/wallpapers/`（支持 `.png` / `.jpg` / `.jpeg` / `.bmp` /
   `.gif` / `.webp` / `.avif` / `.mp4` / `.m4v` / `.mov` / `.webm` / `.mkv`），
-  然后在 Wallpaper 页选择文件即可；
+  然后在 Wallpaper 面板选择文件即可；点击 `Source` 恢复内置背景；
   从主菜单打开时，选中的壁纸加载后会立即显示在设置页背景中。
   `FIT` 可设为 `COVER`（裁切铺满）、`CONTAIN`（完整显示、留黑边）
   或 `STRETCH`（拉伸铺满）。GIF 会在后台线程解码并限制到 720px 边长 / 64 帧，避免大文件拖慢主菜单。
@@ -370,7 +368,7 @@ java -Djava.library.path=build/lib \
   Java 8 的 ImageIO 只认 PNG / JPG / BMP / GIF：`.webp`、`.avif`，以及**扩展名和内容不符**
   的图片（例如把 WebP 改名成 `.png`）会由 ffmpeg 解一帧后当作静态壁纸显示，
   所以装了 ffmpeg 的机器上这些格式一样能直接用。解不出来时不会静默失败：
-  Wallpaper 页顶部会显示红色的 `CAN'T DECODE · NEEDS FFMPEG` / `VIDEO NEEDS FFMPEG`，
+  Wallpaper 面板会显示红色的 `CAN'T DECODE · NEEDS FFMPEG` / `VIDEO NEEDS FFMPEG`，
   控制台也会打印一次原因，并且会自动重试（装好 ffmpeg 后无需重启）。
 
   视频走 `mc/MaverVideo.java`：后台线程启动
@@ -423,19 +421,22 @@ if (!worldEntered) {
 > 说明：HUD / ClickGUI 依赖 `net.minecraft.*`，由 Forge 的类加载器加载。
 > 除了随 mod 加载，**纯运行期注入**也能显示（见下面「注入也能显示 UI」一节）。
 
-### Configs 页：配置档案（保存 / 导入）
+### Config 面板：配置档案（保存 / 导入）
 
-ClickGUI 左栏 **SYSTEM → Configs** 是一套「配置文件」档案管理，对应 `mc/ConfigProfiles.java`：
+ClickGUI 的独立 **Config** 浮动面板管理配置档案，对应 `mc/ConfigProfiles.java`。
+图标按钮悬停显示操作名称；右上角齿轮在面板内展开客户端设置。
 
 | 控件 | 作用 |
 |---|---|
 | 名字输入框 | 输入档案名（自动过滤非法字符、去掉 `.cfg` 后缀，最长 40 字），点一下获得焦点后直接打字 |
-| `NEW` | 填一个不冲突的默认名（`config_MM.dd`），并把光标放进输入框 |
-| `SAVE` | 把**当前内存状态**落盘后打包成 `config/profiles/<名字>.cfg`（同名覆盖） |
-| `LOAD` | 导入档案：还原两个配置文件 → 重载配置 → 按档案恢复模块开关 / 键位 |
-| `DEL` | 删除输入框里那个档案 |
-| `FOLDER` | 打开 `config/profiles/`（单文件，直接发给别人即可） |
-| 列表行 | 点名字 = 导入并选中；行内 `SAVE` = 用当前状态覆盖这个档案；行内 `x` = 删除 |
+| 标题栏 `+` | 填一个不冲突的默认名（`config_MM.dd`），并把光标放进输入框 |
+| 刷新图标 | 刷新列表并清除结果提示 |
+| 保存图标 / 输入框 Enter | 把**当前内存状态**落盘后打包成 `config/profiles/<名字>.cfg`（同名覆盖） |
+| 载入图标 | 应用档案：还原两个配置文件 → 重载配置 → 按档案恢复模块开关 / 键位 |
+| 删除图标 | 删除输入框里那个档案 |
+| `Folder` | 打开 `config/profiles/`（单文件，直接发给别人即可） |
+| `Import` | 选择本地 `.cfg` 文件导入列表；同名时自动加后缀，保留已有档案，随后点击载入图标应用 |
+| 列表行 | 选中档案并填入名字输入框 |
 
 档案是纯文本、三段式，便于手工 diff：
 
