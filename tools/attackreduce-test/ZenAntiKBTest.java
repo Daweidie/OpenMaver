@@ -169,7 +169,99 @@ public final class ZenAntiKBTest {
     public static void main(String[] args) throws Exception {
         ModuleManager.register(MODULE); ModuleManager.register(AURA);
         settings(); noXZ(); jumpReset(); mix(); lifecycle(); threadIsolation(); debugChat(); Protocol18Test.run();
+        keepSprintCoexistence();
         System.out.println("ZenAntiKBTest: " + passed + " passed, 0 failed");
+    }
+
+    /** Exercise both real feature callbacks, including modes that write unchanged values. */
+    static void keepSprintCoexistence() throws Exception {
+        module.movement.KeepSprint sprint = new module.movement.KeepSprint();
+        ModuleManager.register(sprint);
+        KeepSprintFeature.load(new Properties());
+        sprint.setEnabled(true);
+        try {
+            for (int mode = 0; mode < 3; mode++) {
+                try (Fixture f = new Fixture(mode)) {
+                    Minecraft.instance = f.mc;
+                    f.player.movementInput = new ScaffoldMovementInput(f.mc.gameSettings);
+                    f.mc.objectMouseOver = null;
+                    f.player.hurtTime = 0;
+                    f.start();
+                    coexistInput(f, -1, 0, false);
+                    check("idle Velocity permits KeepSprint in mode " + mode,
+                            "ROTATE".equals(KeepSprintFeature.getStatus())
+                                    && near(Math.abs(f.player.rotationYaw), 180)
+                                    && !AttackReduceFeature.ownsMovementInput(f.player, f.player.movementInput));
+                    coexistEnd(f);
+                    check("idle coexistence restores camera " + mode, near(f.player.rotationYaw, 0));
+
+                    // Mix uses actual silent rotation alone; NoXZ / JumpReset own input pulses.
+                    if (mode == AttackReduceFeature.MODE_MIX) {
+                        AttackReduceFeature.setRotate(true);
+                        f.player.onGround = false;
+                    }
+                    f.receive(f.velocity());
+                    f.start();
+                    coexistInput(f, 1, 0, true);
+                    check("active Velocity owns this input in mode " + mode,
+                            AttackReduceFeature.ownsMovementInput(f.player, f.player.movementInput));
+                    check("KeepSprint yields only during actual Velocity work " + mode,
+                            "YIELD VELOCITY".equals(KeepSprintFeature.getStatus()));
+                    check("claim is tied to the input object " + mode,
+                            !AttackReduceFeature.ownsMovementInput(f.player, new MovementInput()));
+                    check("claim is tied to the local player " + mode,
+                            !AttackReduceFeature.ownsMovementInput(new Player(), f.player.movementInput));
+                    if (mode == AttackReduceFeature.MODE_JUMP_RESET) {
+                        check("unchanged forward/jump values still count as intentional ownership",
+                                f.player.movementInput.moveForward == 1
+                                        && f.player.movementInput.moveStrafe == 0
+                                        && f.player.movementInput.jump && near(f.player.rotationYaw, 0));
+                    }
+                    if (mode == AttackReduceFeature.MODE_MIX) {
+                        check("KeepSprint leaves Velocity rotation in place until native C03",
+                                near(f.player.rotationYaw, 63.4349488));
+                    }
+                    coexistEnd(f);
+                    check("END clears Velocity input claim " + mode,
+                            !AttackReduceFeature.ownsMovementInput(f.player, f.player.movementInput));
+                    f.player.onGround = true;
+                    for (int i = 0; i < 12; i++) {
+                        f.start();
+                        check("new tick starts without a stale input claim " + mode,
+                                !AttackReduceFeature.ownsMovementInput(f.player, f.player.movementInput));
+                        coexistInput(f, -1, 0, false);
+                        coexistEnd(f);
+                    }
+                    check("KeepSprint resumes automatically after Velocity pulse " + mode,
+                            "ROTATE".equals(KeepSprintFeature.getStatus()));
+                    MODULE.setEnabled(false);
+                    f.start();
+                    check("disabled Velocity cannot retain ownership " + mode,
+                            !AttackReduceFeature.ownsMovementInput(f.player, f.player.movementInput));
+                } finally {
+                    KeepSprintFeature.reset();
+                    Minecraft.instance = null;
+                }
+            }
+        } finally {
+            sprint.setEnabled(false);
+            KeepSprintFeature.reset();
+        }
+    }
+
+    static void coexistInput(Fixture f, float forward, float strafe, boolean jump) {
+        KeepSprintFeature.onPlayerTickStart(f.mc, f.player);
+        f.player.movementInput.moveForward = forward;
+        f.player.movementInput.moveStrafe = strafe;
+        f.player.movementInput.jump = jump;
+        AttackReduceFeature.afterMovementInput(f.player.movementInput);
+        KeepSprintFeature.afterMovementInput(f.player.movementInput);
+        KeepSprintFeature.onPlayerTickEnd(f.player);
+    }
+
+    static void coexistEnd(Fixture f) {
+        KeepSprintFeature.onTickEnd(f.mc);
+        f.end();
     }
     static void settings() throws Exception {
         Properties old = new Properties(); old.setProperty("velocity.mode", "2"); old.setProperty("velocity.horizontal", "0");

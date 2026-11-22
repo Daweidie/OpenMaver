@@ -3,6 +3,8 @@ package net.minecraft.client;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class Minecraft {
+    public static Minecraft instance;
+    public static Minecraft getMinecraft() { return instance; }
     public Object thePlayer;
     public Object theWorld;
     public Object currentScreen;

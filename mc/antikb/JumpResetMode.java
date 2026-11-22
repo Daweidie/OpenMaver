@@ -65,6 +65,7 @@ final class JumpResetMode extends AntiKBMode {
         overriddenInput = input;
         forwardBefore = input.moveForward; strafeBefore = input.moveStrafe; jumpBefore = input.jump;
         wroteMovement = sprint; wroteJump = jump;
+        if (sprint || jump) AttackReduceFeature.claimMovementInput(input);
         if (sprint) {
             input.moveForward = 1; input.moveStrafe = 0;
             OpenMaverFeatures.callVoid(sprintPlayer, "setSprinting", "func_70031_b", null, Boolean.TRUE);

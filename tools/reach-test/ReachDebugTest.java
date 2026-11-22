@@ -10,16 +10,16 @@ import java.nio.file.Paths;
 import java.util.List;
 
 /**
- * Reach 聊天调试通道的行为验证：格式、限流、配置持久化与热重载。
+ * Reach 距离、攻击路径、聊天调试、配置持久化与热重载验证。
  *
- * <p>只驱动 {@link ReachDebug} 与配置读写，不构造 Minecraft 世界；聊天组件在
- * 无客户端环境下会退化为 {@code util.Logger.info}，同样不影响断言。
+ * <p>用最小世界与实体 fixture 驱动真实攻击路径，无需启动游戏客户端。
  */
 public final class ReachDebugTest {
 
     private static int passed;
 
     public static void main(String[] args) throws Exception {
+        distanceRange();
         format();
         packetOrder();
         gui();
@@ -31,27 +31,27 @@ public final class ReachDebugTest {
     private static void format() {
         OpenMaverFeatures.setBypassEnabled(true);
         OpenMaverFeatures.setBypassProfile(OpenMaverFeatures.PROFILE_BALANCED);
-        OpenMaverFeatures.setReachDistance(3.0F);
+        OpenMaverFeatures.setReachDistance(5.0F);
         OpenMaverFeatures.setReachChance(100.0F);
         OpenMaverFeatures.setReachDebugChat(true);
 
         List<String> header = ReachDebug.drain();
         check("enable announces effective cap and profile",
-                has(header, "DEBUG ON") && has(header, "cap=2.97m")
-                        && has(header, "dist=3.00") && has(header, "profile=BALANCED"));
+                has(header, "DEBUG ON") && has(header, "cap=5.00m")
+                        && has(header, "dist=5.00") && has(header, "profile=BALANCED"));
 
-        ReachDebug.swing(0, 2.97D, "BALANCED");
+        ReachDebug.swing(0, 5.0D, "BALANCED");
         ReachDebug.skip("chance 42% >= 55%");
         ReachDebug.skipImportant("hurt Steve");
-        ReachDebug.hit("Steve", 2.87D, 2.97D, 0.1D, 12.5F, -4.2F, true);
+        ReachDebug.hit("Steve", 4.87D, 5.0D, 0.1D, 12.5F, -4.2F, true);
 
         List<String> lines = ReachDebug.drain();
-        check("swing line carries chance/extra/cap",
-                has(lines, "SWING p=0 chance=100% dist=3.00 cap=2.97 BALANCED"));
+        check("swing line carries chance/distance/cap",
+                has(lines, "SWING p=0 chance=100% dist=5.00 cap=5.00 BALANCED"));
         check("chance miss is reported", has(lines, "SKIP chance 42% >= 55%"));
         check("hurt wait is reported as important", has(lines, "SKIP hurt Steve"));
         check("hit line carries distance/border/rotation",
-                has(lines, "HIT Steve dist=2.87/2.97 border=0.10 yaw=12.5 pitch=-4.2 anim=c0a swing=1"));
+                has(lines, "HIT Steve dist=4.87/5.00 border=0.10 yaw=12.5 pitch=-4.2 anim=c0a swing=1"));
         check("history keeps every event without chat throttling",
                 has(ReachDebug.history(), "HIT Steve")
                         && has(ReachDebug.history(), "SKIP hurt Steve"));
@@ -86,9 +86,92 @@ public final class ReachDebugTest {
                 features.indexOf("updateReach(mc);") < features.indexOf("updateAimTarget(mc);"));
         check("tick END no longer injects attacks after the movement packet",
                 count(features, "updateReach(mc);") == 2);
-        check("caps stay under Grim maxReach=3.0 on the 0.1-expanded box",
-                features.contains("REACH_SAFE_CAP = 2.97D")
-                        && features.contains("REACH_AGGRESSIVE_CAP = 2.99D"));
+    }
+
+    private static void distanceRange() throws Exception {
+        Method auraRange = OpenMaverFeatures.class.getDeclaredMethod("effectiveKillAuraRange");
+        auraRange.setAccessible(true);
+        for (boolean bypass : new boolean[] {true, false}) {
+            OpenMaverFeatures.setBypassEnabled(bypass);
+            for (int profile = 0; profile <= 2; profile++) {
+                OpenMaverFeatures.setBypassProfile(profile);
+                String mode = " bypass=" + bypass + " profile=" + profile;
+                float[] inputs = {-1.0F, 0.0F, 2.5F, 3.5F, 5.0F, 8.0F};
+                float[] expected = {0.0F, 0.0F, 2.5F, 3.5F, 5.0F, 5.0F};
+                for (int i = 0; i < inputs.length; i++) {
+                    OpenMaverFeatures.setReachDistance(inputs[i]);
+                    check("distance " + inputs[i] + " clamps to " + expected[i] + mode,
+                            OpenMaverFeatures.getReachDistance() == expected[i]
+                                    && OpenMaverFeatures.getEffectiveReachDistance() == expected[i]);
+                }
+                check("5m reach attacks a target at 4.5m" + mode, attacks(5.0F, 4.5D, true) == 1);
+                check("5m reach includes its endpoint" + mode, attacks(5.0F, 5.0D, true) == 1);
+                check("5m reach excludes targets beyond 5m" + mode, attacks(5.0F, 5.01D, true) == 0);
+                check("shorter distance limits the attack ray" + mode, attacks(3.5F, 4.5D, true) == 0);
+                check("zero disables extended attacks" + mode, attacks(0.0F, 1.0D, true) == 0);
+                check("extended reach still requires visibility" + mode, attacks(5.0F, 4.5D, false) == 0);
+                double expectedAura = bypass ? (profile == 2 ? 2.99D : 2.97D) : 3.0D;
+                check("KillAura profile distance is preserved" + mode,
+                        Math.abs(((Number) auraRange.invoke(null)).doubleValue() - expectedAura) < 1.0E-6D);
+            }
+        }
+    }
+
+    /** 调用实际的实体筛选/射线/挥击/攻击链路，controller 只记录调用。 */
+    private static int attacks(float distance, double targetDistance, boolean visible) throws Exception {
+        ReachMinecraft mc = new ReachMinecraft();
+        ReachPlayer player = new ReachPlayer();
+        player.visible = visible;
+        net.minecraft.world.World world = new net.minecraft.world.World();
+        world.loadedEntityList.add(new ReachTarget(targetDistance));
+        OpenMaverFeatures.setReachDistance(distance);
+        Field used = OpenMaverFeatures.class.getDeclaredField("entityAttackUsedThisTick");
+        used.setAccessible(true);
+        used.setBoolean(null, false);
+        Method attack = OpenMaverFeatures.class.getDeclaredMethod("attackNearestEntityInReach",
+                net.minecraft.client.Minecraft.class, Object.class, Object.class);
+        attack.setAccessible(true);
+        attack.invoke(null, mc, player, world);
+        return mc.playerController.attacks;
+    }
+
+    public static final class ReachMinecraft extends net.minecraft.client.Minecraft {
+        public final ReachController playerController = new ReachController();
+    }
+
+    public static final class ReachController {
+        int attacks;
+
+        public void attackEntity(ReachPlayer player, net.minecraft.entity.Entity target) {
+            if (player.swings != attacks + 1) throw new AssertionError("attack needs a preceding swing");
+            attacks++;
+        }
+    }
+
+    public static final class ReachPlayer extends net.minecraft.entity.EntityLivingBase {
+        boolean visible;
+        int swings;
+
+        public void swingItem() { swings++; }
+        @Override public float getEyeHeight() { return 1.6F; }
+        @Override public boolean canEntityBeSeen(net.minecraft.entity.Entity target) { return visible; }
+        @Override public double getDistanceSqToEntity(net.minecraft.entity.Entity target) {
+            return target.posX * target.posX + target.posY * target.posY + target.posZ * target.posZ;
+        }
+    }
+
+    public static final class ReachTarget extends net.minecraft.entity.EntityLivingBase {
+        private final net.minecraft.util.AxisAlignedBB box;
+
+        ReachTarget(double distance) {
+            posZ = distance + 0.4D;
+            box = new net.minecraft.util.AxisAlignedBB(-0.3D, 0.0D, distance + 0.1D,
+                    0.3D, 1.8D, distance + 0.7D);
+        }
+
+        public boolean canBeCollidedWith() { return true; }
+        public float getCollisionBorderSize() { return 0.1F; }
+        @Override public net.minecraft.util.AxisAlignedBB getEntityBoundingBox() { return box; }
     }
 
     /** 取包含两个片段之间的源码，避免匹配到别的模块里的同名调用。 */
@@ -108,8 +191,8 @@ public final class ReachDebugTest {
         String gui = readText("mc/GuiOpenMaverClickGui.java");
         check("autoclicker exposes one dual-handle CPS range",
                 gui.contains("Setting.range(\"CPS\""));
-        check("reach exposes a 0..3.0 distance slider instead of EXTRA",
-                gui.contains("Setting.slider(\"DISTANCE\", 0.0F, 3.0F, 0.05F, 2, \" m\"")
+        check("reach exposes a 0..5.0 distance slider instead of EXTRA",
+                gui.contains("Setting.slider(\"DISTANCE\", 0.0F, 5.0F, 0.05F, 2, \" m\"")
                         && !gui.contains("Setting.slider(\"EXTRA\""));
         check("range widget keeps the low handle under the high handle",
                 gui.contains("binding.set(Math.min(stepped(percent, 0.0D), bindingHigh.get()));"));
@@ -142,11 +225,12 @@ public final class ReachDebugTest {
         String previous = System.getProperty("openmaver.features");
         try {
             System.setProperty("openmaver.features", tmp.getAbsolutePath());
+            OpenMaverFeatures.setReachDistance(5.0F);
             OpenMaverFeatures.setReachDebugChat(true);
             OpenMaverFeatures.flushSettings();
             check("reach.debug=true is persisted", read(tmp).contains("reach.debug=true"));
-            check("reach distance is persisted as an absolute value",
-                    read(tmp).contains("reach.distance="));
+            check("5m reach distance is persisted as an absolute value",
+                    read(tmp).contains("reach.distance=5.0"));
             check("no legacy reach.extra is written back",
                     !read(tmp).contains("reach.extra="));
 
@@ -163,14 +247,32 @@ public final class ReachDebugTest {
             check("reload keeps reach tuning next to the debug switch",
                     Math.abs(OpenMaverFeatures.getReachDistance() - 2.5F) < 1.0E-4F
                             && Math.abs(OpenMaverFeatures.getReachChance() - 55.0F) < 1.0E-4F);
-            // 旧配置只有 reach.extra：迁移后等价于 3.0 + extra，并被 3.0 截断。
+            List<String> header = ReachDebug.drain();
+            check("reload re-announces with the new cap/chance",
+                    has(header, "DEBUG ON") && has(header, "cap=2.50m") && has(header, "chance=55%"));
+            write(tmp, "settings.version=22\nreach.distance=5.0\n");
+            reload();
+            check("reload preserves the 5m endpoint", OpenMaverFeatures.getEffectiveReachDistance() == 5.0F);
+            write(tmp, "settings.version=22\nreach.distance=8.0\n");
+            reload();
+            check("reload clamps distances above 5m", OpenMaverFeatures.getReachDistance() == 5.0F);
+            write(tmp, "settings.version=22\nreach.distance=-1.0\n");
+            reload();
+            check("reload clamps negative distances to zero", OpenMaverFeatures.getReachDistance() == 0.0F);
+            // 旧配置只有 reach.extra：迁移后等价于 3.0 + extra，上限为 5 米。
             write(tmp, "settings.version=22\nreach.extra=0.2\nreach.debug=true\n");
             reload();
             check("legacy reach.extra migrates to an absolute distance",
-                    Math.abs(OpenMaverFeatures.getReachDistance() - 3.0F) < 1.0E-4F);
-            List<String> header = ReachDebug.drain();
-            check("reload re-announces with the new cap/chance",
-                    has(header, "DEBUG ON") && has(header, "chance=55%"));
+                    Math.abs(OpenMaverFeatures.getReachDistance() - 3.2F) < 1.0E-4F);
+            write(tmp, "settings.version=22\nreach.extra=4.0\n");
+            reload();
+            check("legacy migration respects the 5m limit", OpenMaverFeatures.getReachDistance() == 5.0F);
+            write(tmp, "settings.version=22\nreach.distance=4.5\nreach.extra=0.2\n");
+            reload();
+            check("absolute distance takes precedence over legacy extra", OpenMaverFeatures.getReachDistance() == 4.5F);
+            write(tmp, "settings.version=22\n");
+            reload();
+            check("missing distance retains the 3m default", OpenMaverFeatures.getReachDistance() == 3.0F);
         } finally {
             OpenMaverFeatures.setReachDebugChat(false);
             if (previous == null) {

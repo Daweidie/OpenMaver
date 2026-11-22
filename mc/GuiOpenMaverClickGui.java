@@ -410,6 +410,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             Entry entry = new Entry(module, cat);
             if ("AutoSprint".equals(module.getName())) {
                 addSprintSettings(entry);
+            } else if ("KeepSprint".equals(module.getName())) {
+                addKeepSprintSettings(entry);
             } else if ("AutoClicker".equals(module.getName())) {
                 addAutoClickerSettings(entry);
             } else if ("Reach".equals(module.getName())) {
@@ -765,6 +767,32 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }));
     }
 
+    /**
+     * KeepSprint：默认移动朝向对齐；OMNI BOOST / PAUSE 仅控制旧模式。
+     */
+    private void addKeepSprintSettings(Entry entry) {
+        entry.settings.add(Setting.check("ROTATE", new Binding() {
+            public double get() { return KeepSprintFeature.isRotate() ? 1.0D : 0.0D; }
+            public void set(double value) { KeepSprintFeature.setRotate(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("OMNI BOOST", new Binding() {
+            public double get() { return KeepSprintFeature.isSpeedBoost() ? 1.0D : 0.0D; }
+            public void set(double value) { KeepSprintFeature.setSpeedBoost(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("PAUSE SNEAK", new Binding() {
+            public double get() { return KeepSprintFeature.isPauseSneak() ? 1.0D : 0.0D; }
+            public void set(double value) { KeepSprintFeature.setPauseSneak(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("PAUSE ITEM", new Binding() {
+            public double get() { return KeepSprintFeature.isPauseItem() ? 1.0D : 0.0D; }
+            public void set(double value) { KeepSprintFeature.setPauseItem(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("HIT RESEND", new Binding() {
+            public double get() { return KeepSprintFeature.isAttackResend() ? 1.0D : 0.0D; }
+            public void set(double value) { KeepSprintFeature.setAttackResend(value > 0.5D); }
+        }));
+    }
+
     private void addSprintSettings(Entry entry) {
         entry.settings.add(Setting.check("ONLY FORWARD", new Binding() {
             public double get() { return OpenMaverFeatures.isSprintOnlyForward() ? 1.0D : 0.0D; }
@@ -820,9 +848,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private void addReachSettings(Entry entry) {
-        // 距离直接是攻击距离本身（0 ~ 3.0 米），不再有“3.0 + EXTRA”；
-        // profile 的 2.97 / 2.99 上限在运行期再压一次。
-        entry.settings.add(Setting.slider("DISTANCE", 0.0F, 3.0F, 0.05F, 2, " m", new Binding() {
+        // 距离直接是攻击距离本身（0 ~ 5.0 米），与运行期上限一致。
+        entry.settings.add(Setting.slider("DISTANCE", 0.0F, 5.0F, 0.05F, 2, " m", new Binding() {
             public double get() { return OpenMaverFeatures.getReachDistance(); }
             public void set(double value) { OpenMaverFeatures.setReachDistance((float) value); }
         }));
@@ -4562,6 +4589,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 if ("AutoSprint".equals(module.getName())) {
                     return OpenMaverFeatures.isSprintOnlyForward()
                             ? "AUTO  ·  FORWARD" : "AUTO  ·  OMNI";
+                }
+                if ("KeepSprint".equals(module.getName())) {
+                    return KeepSprintFeature.getSummary();
                 }
                 if ("AutoClicker".equals(module.getName())) {
                     return OpenMaverFeatures.getAutoClickerCpsMin() + "-"

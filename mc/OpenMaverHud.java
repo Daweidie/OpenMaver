@@ -487,6 +487,9 @@ public final class OpenMaverHud {
         if ("SafeWalk".equals(name)) {
             return SafeWalkFeature.getSummary();
         }
+        if ("KeepSprint".equals(name)) {
+            return KeepSprintFeature.getSummary();
+        }
         if ("Velocity".equals(name)) {
             return AttackReduceFeature.getSummary();
         }

@@ -2,7 +2,7 @@ import net.minecraft.client.settings.GameSettings;
 import net.minecraft.util.MovementInputFromOptions;
 
 /**
- * 在原版 {@code updatePlayerMoveState()} 之后插入 Scaffold 的静默转向与 MoveFix。
+ * 在原版 {@code updatePlayerMoveState()} 之后插入各模块的输入与静默转向。
  *
  * <p>Forge 1.8.9 的 ClientTickEvent.START 早于玩家自己的
  * {@code movementInput.updatePlayerMoveState()}，所以在 START 里改
@@ -34,5 +34,7 @@ public final class ScaffoldMovementInput extends MovementInputFromOptions {
         // 神桥复用同一个 hook：它的 aim 与 MoveFix 也必须落在 moveFlying() 之前。
         GodBridgeFeature.afterMovementInput(this);
         AttackReduceFeature.afterMovementInput(this);
+        // 低优先级：其它 aim / 输入模块开启时 KeepSprint 整体让位。
+        KeepSprintFeature.afterMovementInput(this);
     }
 }

@@ -3,7 +3,7 @@
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
 > 说明：本仓库包含**基础设施骨架**（JNI 桥接、配置、日志、模块基类、Forge 事件桥接）
-> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Telly 跑跳搭路、Scaffold2 教材搭路辅助、GodBridge 神桥、SafeWalk 方块边缘潜行、AttackReduce、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、Inventory Manager 自动整理背包 / 自动穿甲、FPS / CPS 统计）
+> 与基础功能模块（Aim Assist、Player ESP、AutoSprint、AutoClicker、KillAura、Reach、Criticals、Scaffold、Telly 跑跳搭路、Scaffold2 教材搭路辅助、GodBridge 神桥、SafeWalk 方块边缘潜行、KeepSprint 全方向疾跑、AttackReduce、FastPlace、FakePlayer、Target HUD、Player X-Ray、Motion Blur、Chest ESP、Chest Stealer 开箱搬运、Inventory Manager 自动整理背包 / 自动穿甲、FPS / CPS 统计）
 > 以及 `legit / balanced / aggressive` 三档 Grim 对测 profile。
 > 请仅在你拥有或获得明确授权的服务器上进行测试。
 
@@ -398,12 +398,12 @@ debug.enabled=false         # true 时写入 logs/openmaver-debug.log
 
 | profile | Reach 实际上限 | Aim 单 tick 上限 | AutoClicker / KillAura | FastPlace | Placement rotation |
 |---|---|---|---|---|---|
-| `legit` | 3.00（Grim 扩张箱） | yaw 18° / pitch 12° | 使用配置 CPS（1~20），抖动+停顿 | 完全不改 `rightClickDelayTimer` | 仅真实准星 |
-| `balanced`（默认） | 3.00（Grim 扩张箱） | yaw 35° / pitch 20° | 使用配置 CPS（1~20），抖动+停顿 | 最快 2 tick + 2/3 抖动 | Scaffold 直接走 onPlayerRightClick |
-| `aggressive` | ≤3.30（仅对比测试） | 上限放宽 | 使用配置 CPS（1~20） | 完全按 DELAY，允许压到 0 | 同左（Scaffold 始终直接发包） |
+| `legit` | 配置值 0~5.00（原版扩张箱） | yaw 18° / pitch 12° | 使用配置 CPS（1~20），抖动+停顿 | 完全不改 `rightClickDelayTimer` | 仅真实准星 |
+| `balanced`（默认） | 配置值 0~5.00（原版扩张箱） | yaw 35° / pitch 20° | 使用配置 CPS（1~20），抖动+停顿 | 最快 2 tick + 2/3 抖动 | Scaffold 直接走 onPlayerRightClick |
+| `aggressive` | 配置值 0~5.00（原版扩张箱） | 上限放宽 | 使用配置 CPS（1~20） | 完全按 DELAY，允许压到 0 | 同左（Scaffold 始终直接发包） |
 
-> `bypass.enabled=false` 会恢复旧的对比行为（Reach 最高 5.9），**不要**在正式
-> 对测中关闭。`aggressive` 会主动越过 Grim 的 Reach 阈值，只用于记录 flag 差异。
+> Reach 的距离独立使用 `reach.distance`（0~5 米），各 profile 与
+> `bypass.enabled=false` 下均直接生效。KillAura 仍保留其原有 profile 距离上限。
 
 **阈值依据（Grim 2.0，commit `f9b801a`）**
 
@@ -608,6 +608,28 @@ IO 失败只记录一次并自动停用 debug。
 - 回归测试：`tools/safewalk-test/run.sh`（61 项：决策表、滞回、方向换算、探针几何、
   配置往返、只写按键不写 motion/rotation、接线与 GUI 断言）。
 - 实现说明：`design/SAFEWALK_HANDOFF.md`。
+
+### KeepSprint 全方向疾跑（移动方向转向）
+
+- 模块：`movement.keepsprint`，默认关闭、不绑定热键。开启后默认使用 `ROTATE`：
+  在原版更新按键后、移动物理前，将 yaw 对齐本次移动方向，输入改为前进。
+  后退转 180°，侧移转 ±90°，斜向按方向转 45° / 135°；保持原来的世界移动方向。
+- 本 tick 的跳跃、移动物理、原版 C03 使用同一个 yaw，C03 发出后的
+  `ClientTickEvent.END` 恢复镜头。pitch 不变，不额外构造移动包，不写 motion。
+- 只使用原版疾跑 modifier，ROTATE 会摘掉旧 OMNI 补偿，不额外放大空中速度。
+  潜行、使用物品、撞墙、低饱食度、失明、骑乘、飞行、死亡、GUI 时让位。
+  斜向变为单一前进键，速度使用原版前进输入的 0.98 阻尼。
+- Scaffold / Scaffold2 / Telly / GodBridge / KillAura 开启时显示 `YIELD`，不争用输入与朝向。
+  Velocity 空闲时与 KeepSprint 共存，仅实际写入输入或转向的 tick 显示 `YIELD VELOCITY`，
+  接管结束后自动恢复。其它 mod 的自定义 MovementInput 保留，显示 `NO HOOK`，
+  不自动退回旧的速度补偿。
+- 设置写在 `config/openmaver.properties`：`keepSprint.rotate=true`（缺省也为 true），
+  ClickGUI 对应 `ROTATE`。关闭后使用旧 OMNI；`OMNI BOOST` / `PAUSE SNEAK` /
+  `PAUSE ITEM` 只控制旧模式。`HIT RESEND` 控制攻击后的 C0B 冲刺恢复，两模式共用。
+- 构建：`cmake --build build -j 4`；回归：`bash tools/keepsprint-test/run.sh`。
+  测试包含打包后的 SRG 输入 hook、八方向切换、移动朝向/速度、C03 边界和镜头恢复。
+  这些是离线验证，Grim `Simulation` 的联机结果仍需实测。
+- 实现说明：`design/KEEPSPRINT_HANDOFF.md`。
 
 ### Velocity 防击退
 
@@ -980,38 +1002,32 @@ IO 失败只记录一次并自动停用 debug。
 
 - 配置路径：`combat.reach`，默认关闭，默认键位 **K**，位于 ClickGUI 的 **Combat** 分类。
 - 行为：每次**新的攻击/挥击**按 `CHANCE` 掷一次随机数。命中几率时，本次挥击会在
-  profile 允许的距离内做自定义视线射线检测，找到最近且可见的生物后通过
+  配置的距离内做自定义视线射线检测，找到最近且可见的生物后通过
   `PlayerControllerMP.attackEntity` 发送 `C02PacketUseEntity`；
   未命中几率时，本次挥击完全使用原版距离。
 - 设置项（ClickGUI 中展开 Reach）：
-  - `DISTANCE`：`reach.distance`，0.00~3.00 米，默认 `3.00`。**这就是攻击距离本身**，
-    不再有“3.0 + EXTRA”这一层；数值会被 profile 上限再压一次（`balanced` 2.97 /
-    `aggressive` 2.99）。调到 0 等于关闭补刀距离。旧配置的 `reach.extra` 会自动
-    迁移成 `3.0 + extra`（并按 3.0 截断）。
+  - `DISTANCE`：`reach.distance`，0.00~5.00 米，步长 `0.05`，默认 `3.00`。
+    **这就是攻击距离本身**，各 profile 均直接使用设定值。调到 0 等于关闭补刀距离。
+    旧配置的 `reach.extra` 会自动迁移成 `3.0 + extra`（并按 0~5 米截断）。
   - `CHANCE`：`reach.chance`，1~100 %，默认 `100`。
   - `DEBUG CHAT`：`reach.debug`，默认 `false`。开启后每次挥击的决策链直接写聊天框：
-    - `SWING p=0 chance=100% dist=3.00 cap=2.97 BALANCED`：识别到一次新挥击，
+    - `SWING p=0 chance=100% dist=5.00 cap=5.00 BALANCED`：识别到一次新挥击，
       带本次的 CHANCE / DISTANCE / 实际上限 / profile；
     - `SKIP chance 42% >= 55%`：概率未命中，本次保持原版距离；
     - `SKIP vanilla-hit ENTITY`：原版射线已命中实体/方块，Reach 不补刀；
     - `SKIP hurt Steve`：目标还在受击无敌帧，服务端会丢弃这次 C02；
     - `SKIP attack slot used`：本 tick 已经有 Aura / AutoClicker 的实体攻击，让位；
-    - `SKIP no target scan=37 cap=2.97`：扫描完实体表没有满足距离/可见性的目标；
-    - `HIT Steve dist=2.87/2.97 border=0.10 yaw=12.5 pitch=-4.2 anim=c0a swing=1`：
+    - `SKIP no target scan=37 cap=5.00`：扫描完实体表没有满足距离/可见性的目标；
+    - `HIT Steve dist=4.87/5.00 border=0.10 yaw=12.5 pitch=-4.2 anim=c0a swing=1`：
       真正发给服务端的 C02，`dist` 是眼睛到扩张箱的射线距离；每次补刀都先发
       `C0A`（`anim=c0a`），`swing=1` 表示原版挥击动画本来就在进行；
     - `1s swing=4 hit=3 skip=1`：每秒一行汇总。
     聊天框每秒最多 10 行（`HIT` 与关键跳过不受限），全部事件仍写入
     `logs/openmaver.log`（`util.Logger.debug`，模块名 `Reach`）。
-    回归测试：`bash tools/reach-test/run.sh`（29 项：行格式、限流、聊天历史、
-    包序结构、ClickGUI 结构、配置持久化与热重载）。
-- 距离上限（`0.1` 扩张箱度量，与 1.8 原版 hitbox 语义一致）：
-  - `legit/balanced`：**2.97**，`aggressive`：**2.99**。Grim `Reach` 对 1.8 客户端
-    使用 `maxReach=3.0`，把目标 AABB 扩张 `0.0005 + 0.1 [+ 0.03]`，并取
-    “当前 look / 上一 tick look”两条射线的最小值；我方射线就是服务端已收到的
-    rotation，所以只要这里的眼距 ≤ 3.0，Grim 测出来必然 ≤ 3.0。
-    折算回真实命中箱约 3.07~3.09 格（旧版 3.30 上限实际是 3.20 格，必吃 `Reach`）。
-  - `bypass.enabled=false`：保留旧的 5.9 上限，仅作历史对比。
+    回归测试：`bash tools/reach-test/run.sh`（0~5 米边界、各 profile 实际攻击、
+    可见性、行格式、限流、聊天历史、包序结构、ClickGUI 结构、配置持久化与热重载）。
+- 距离上限：**5.00 米**，按眼睛到目标扩张箱的射线长度计算（原版 hitbox margin
+  为 `0.1`）。滑块、配置热重载、HUD 与实际射线共用此范围；5 米边界包含在内。
 - 实现说明（已核对实际 1.8.9 字节码与 Grim 2.0 `combat/Reach`、`packetorder/PacketOrderB`、`misc/Post`）：
   - `EntityRenderer.getMouseOver` 在生存模式会把 `getBlockReachDistance()`（4.5）
     用作射线长度，但只要实体距离超过 3 格就会丢弃目标；这是原版实体瞄准的硬限制。
@@ -1534,6 +1550,7 @@ public final class Example extends Module {
 | 类 | 配置路径 |
 |---|---|
 | `module.movement.AutoSprint` | `movement.autosprint` |
+| `module.movement.KeepSprint` | `movement.keepsprint` |
 | `module.combat.AimAssist` | `combat.aimassist` |
 | `module.combat.Reach` | `combat.reach` |
 | `module.combat.Criticals` | `combat.criticals` |

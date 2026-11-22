@@ -60,23 +60,11 @@ public final class OpenMaverFeatures {
     /** START 阶段发生反射/类型错误时只停用该阶段，避免拖垮整个 tick 桥。 */
     private static boolean tickStartFailed;
 
-    /**
-     * Grim 对 1.8 客户端的 Reach 语义（2.0 分支 {@code combat/Reach.java}）：
-     * 目标 AABB 先扩张 {@code Reach.threshold(0.0005) + 1.8 hitbox(0.1)}，
-     * 有位置移动包时再加 {@code movementThreshold(0.03)}，然后要求
-     * {@code minDistance <= ENTITY_INTERACTION_RANGE(3.0)}；
-     * {@code minDistance} 取「当前 look」与「上一 tick look」两条射线的较小值。
-     *
-     * <p>我方射线只用 0.1（1.8 原版 hitbox margin）扩张箱，且方向就是服务端
-     * 已收到的 rotation，因此<b>只要我方测得的距离 ≤ 3.0，Grim 的 minDistance
-     * 必然 ≤ 3.0</b>；多出来的 0.03 只可能让 Grim 更宽松。所以这里把上限压在
-     * 3.0 以下，留 0.01~0.03 给服务端目标位置延迟。
-     */
-    private static final double REACH_GRIM_BOX_MARGIN = 0.1D;
-    private static final double REACH_VANILLA_BOX_MARGIN = 0.1D;
-    /** profile 允许的扩张箱距离上限（Grim 的 maxReach 是 3.0）。 */
-    private static final double REACH_SAFE_CAP = 2.97D;
-    private static final double REACH_AGGRESSIVE_CAP = 2.99D;
+    /** 1.8 原版实体命中箱扩张量；Reach 距离按眼睛到扩张箱的射线长度计算。 */
+    private static final double REACH_BOX_MARGIN = 0.1D;
+    /** KillAura 的 profile 距离上限；Reach 独立使用 0~5 米配置。 */
+    private static final double KILL_AURA_SAFE_CAP = 2.97D;
+    private static final double KILL_AURA_AGGRESSIVE_CAP = 2.99D;
 
     // Aim Assist（数值范围与 GUI 滑块一致）
     private static float aimSpeed = 0.35F;
@@ -259,7 +247,7 @@ public final class OpenMaverFeatures {
     private static final Random AUTOCLICKER_RANDOM = new Random();
 
     // Reach（攻击距离）
-    /** Reach 的实际攻击距离（0 ~ 3.0 米）；profile 上限在运行期再截断。 */
+    /** Reach 的实际攻击距离（0 ~ 5.0 米），各 profile 均直接使用配置值。 */
     private static float reachDistance = 3.0F;
     private static float reachChance = 100.0F;
     /** ClickGUI 的 CHAT DEBUG：把 Reach 的每次挥击/跳过/命中写进聊天框。 */
@@ -270,8 +258,8 @@ public final class OpenMaverFeatures {
     private static final Random REACH_RANDOM = new Random();
     /** 1.8.9 原版实体目标上限（EntityRenderer.getMouseOver 的硬编码）。 */
     private static final double REACH_BASE_DISTANCE = 3.0D;
-    /** 关闭 bypass 时保留旧的对比行为；默认 profile 下不会用到。 */
-    private static final double REACH_MAX_DISTANCE = 5.9D;
+    /** Reach 滑块、配置与实际射线的统一距离上限。 */
+    private static final double REACH_MAX_DISTANCE = 5.0D;
 
     // ==================================================================
     // Criticals（ALWAYS 刀暴 / 强制暴击）
@@ -519,6 +507,8 @@ public final class OpenMaverFeatures {
     }
 
     public static void onTick(Minecraft mc) {
+        // KeepSprint 的朝向必须保留到原版 C03 发出，再归还渲染相机。
+        KeepSprintFeature.onTickEnd(mc);
         // Scaffold 的 tick 内换视角：C03 已在 tick 中间发出，这里在渲染前
         // 把 rotation 恢复成相机，同时让 F5 身体保留服务端 aim。
         ScaffoldFeature.onTickEnd(mc);
@@ -1113,7 +1103,7 @@ public final class OpenMaverFeatures {
      * 但 1.8.9 的该方法是根据 GameType 动态计算的，并不存在
      * {@code blockReachDistance} 字段可供反射修改；随后只要实体距离超过 3 格，
      * 原版就会把目标丢弃。因此这里采用自定义视线射线：命中 CHANCE 时在
-     * profile 允许的距离内寻找最近的可见生物，通过
+     * 配置的距离内寻找最近的可见生物，通过
      * {@code PlayerControllerMP.attackEntity} 发送 {@code C02PacketUseEntity}；
      * 未命中时完全保持原版 3 格。
      *
@@ -1190,12 +1180,10 @@ public final class OpenMaverFeatures {
     }
 
     /**
-     * 在 profile 允许的距离内寻找最近的可见生物并攻击一次。
+     * 在配置的距离内寻找最近的可见生物并攻击一次。
      *
-     * <p>距离按 Grim 的 1.8 Reach 语义计算：把目标 AABB 按
-     * {@link #REACH_GRIM_BOX_MARGIN}（1.8 原版 hitbox margin）扩张后，
-     * 眼睛到扩张箱的距离不得超过 {@link #REACH_SAFE_CAP}，这个值已经压在
-     * Grim 的 {@code maxReach=3.0} 以下，折算回真实命中箱约 3.07~3.09 格。
+     * <p>目标 AABB 按 {@link #REACH_BOX_MARGIN}（1.8 原版 hitbox margin）
+     * 扩张后，眼睛到扩张箱的射线距离不超过配置值（0~5 米）。
      */
     private static void attackNearestEntityInReach(Minecraft mc, Object player, Object world) {
         // 本 tick 已经有实体攻击（Aura / AutoClicker / Velocity）时不再补刀：
@@ -1219,26 +1207,9 @@ public final class OpenMaverFeatures {
         }
 
         boolean safe = safeProfile();
-        double maxDistance;
-        double borderValue;
-        // DISTANCE 直接就是攻击距离本身（0 ~ 3.0 米），不再有“3.0 + extra”这一层；
-        // profile 只负责最后再压一次上限。
-        double configured = Math.max(0.0D, Math.min(REACH_BASE_DISTANCE, reachDistance));
-        if (!bypassEnabled) {
-            // 关闭 bypass：保留旧的对比行为（允许配置值直接生效）。
-            if (configured <= 0.0D) {
-                ReachDebug.skip("distance=0 (bypass off)");
-                return;
-            }
-            maxDistance = Math.min(REACH_MAX_DISTANCE, configured);
-            borderValue = REACH_VANILLA_BOX_MARGIN;
-        } else if (bypassProfile == PROFILE_AGGRESSIVE) {
-            maxDistance = Math.min(REACH_AGGRESSIVE_CAP, configured);
-            borderValue = REACH_VANILLA_BOX_MARGIN;
-        } else {
-            maxDistance = Math.min(REACH_SAFE_CAP, configured);
-            borderValue = REACH_GRIM_BOX_MARGIN;
-        }
+        // DISTANCE 在所有 profile 下直接生效，与 GUI / HUD 使用同一个上限。
+        double maxDistance = getEffectiveReachDistance();
+        double borderValue = REACH_BOX_MARGIN;
         if (maxDistance <= 0.0D) {
             ReachDebug.skip("cap<=0");
             return;
@@ -1259,7 +1230,8 @@ public final class OpenMaverFeatures {
         double dirZ = Math.cos(yaw) * Math.cos(pitch);
 
         Object bestTarget = null;
-        double bestDistance = maxDistance;
+        // rayBoxDistance 已按 maxDistance 裁剪，保留恰好命中距离上限的目标。
+        double bestDistance = Double.POSITIVE_INFINITY;
         for (int i = 0; i < entities.size(); i++) {
             Object candidate = entities.get(i);
             if (!(candidate instanceof EntityLivingBase) || candidate == player) {
@@ -2388,9 +2360,9 @@ public final class OpenMaverFeatures {
             return configured;
         }
         if (bypassProfile == PROFILE_AGGRESSIVE) {
-            return Math.min(REACH_AGGRESSIVE_CAP, configured);
+            return Math.min(KILL_AURA_AGGRESSIVE_CAP, configured);
         }
-        return Math.min(REACH_SAFE_CAP, configured);
+        return Math.min(KILL_AURA_SAFE_CAP, configured);
     }
 
     private static long nextKillAuraIntervalNanos() {
@@ -2828,7 +2800,7 @@ public final class OpenMaverFeatures {
         // 旧配置只有 reach.extra（3.0 基础上的额外量），迁移成绝对距离。
         float storedExtra = readFloat(values, "reach.extra", 0.0F);
         reachDistance = clamp(readFloat(values, "reach.distance",
-                (float) REACH_BASE_DISTANCE + storedExtra), 0.0F, (float) REACH_BASE_DISTANCE);
+                (float) REACH_BASE_DISTANCE + storedExtra), 0.0F, (float) REACH_MAX_DISTANCE);
         reachChance = clamp(readFloat(values, "reach.chance", 100.0F), 1.0F, 100.0F);
         reachDebugChat = readBoolean(values, "reach.debug", false);
         ReachDebug.setEnabled(reachDebugChat);
@@ -2996,6 +2968,7 @@ public final class OpenMaverFeatures {
         GodBridgeFeature.load(values);
         Scaffold2Feature.load(values);
         SafeWalkFeature.load(values);
+        KeepSprintFeature.load(values);
         AttackReduceFeature.load(values);
         killAuraRange = clamp(readFloat(values, "killaura.range", 3.0F), 3.0F, 6.0F);
         killAuraCpsMin = clamp(readInt(values, "killaura.cpsMin", 8, 20), 1, 20);
@@ -3024,6 +2997,7 @@ public final class OpenMaverFeatures {
         GodBridgeFeature.reset();
         Scaffold2Feature.reset();
         SafeWalkFeature.reset();
+        KeepSprintFeature.reset();
         resetKillAuraState();
     }
 
@@ -3073,16 +3047,9 @@ public final class OpenMaverFeatures {
         return profileName();
     }
 
-    /** 当前实际生效的实体攻击距离（Grim 扩张箱度量）。 */
+    /** 当前实际生效的实体攻击距离（0~5 米，原版扩张箱度量）。 */
     public static float getEffectiveReachDistance() {
-        double configured = Math.max(0.0D, Math.min(REACH_BASE_DISTANCE, reachDistance));
-        if (!bypassEnabled) {
-            return (float) Math.min(REACH_MAX_DISTANCE, configured);
-        }
-        if (bypassProfile == PROFILE_AGGRESSIVE) {
-            return (float) Math.min(REACH_AGGRESSIVE_CAP, configured);
-        }
-        return (float) Math.min(REACH_SAFE_CAP, configured);
+        return clamp(reachDistance, 0.0F, (float) REACH_MAX_DISTANCE);
     }
 
     public static boolean isDebugEnabled() {
@@ -3284,7 +3251,7 @@ public final class OpenMaverFeatures {
 
     public static float getReachDistance() { return reachDistance; }
     public static void setReachDistance(float value) {
-        reachDistance = clamp(value, 0.0F, (float) REACH_BASE_DISTANCE);
+        reachDistance = clamp(value, 0.0F, (float) REACH_MAX_DISTANCE);
         markDirty();
     }
 
@@ -3486,6 +3453,7 @@ public final class OpenMaverFeatures {
         GodBridgeFeature.reset();
         Scaffold2Feature.reset();
         SafeWalkFeature.reset();
+        KeepSprintFeature.reset();
         resetKillAuraState();
         criticalsSprintWasActive = false;
         criticalsLastAttackNanos = 0L;
@@ -3690,6 +3658,7 @@ public final class OpenMaverFeatures {
                     + "\n" + GodBridgeFeature.save()
                     + "\n" + Scaffold2Feature.save()
                     + "\n" + SafeWalkFeature.save()
+                    + "\n" + KeepSprintFeature.save()
                     + "\n" + AttackReduceFeature.save()
                     + "fakeplayer.count=" + fakePlayerCount
                     + "\nfakeplayer.distance=" + fakePlayerDistance

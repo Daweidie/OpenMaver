@@ -20,6 +20,10 @@
       "enabled": false,        // 示例模块 AutoSprint：默认关闭（链路验证时可临时改为 true）
       "key": "V"               // 绑定键位（按 V 切换）
     },
+    "keepsprint": {
+      "enabled": false,        // KeepSprint 全方向疾跑（纯发包、不转头）：默认关闭
+      "key": ""                // 在 ClickGUI 中开启或自行绑定热键
+    },
     "scaffold": {
       "enabled": false,        // Scaffold 搭桥（OpenZen 移植）：默认关闭
       "key": ""                // 不绑定默认热键

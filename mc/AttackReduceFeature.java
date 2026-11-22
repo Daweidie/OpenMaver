@@ -36,6 +36,10 @@ public final class AttackReduceFeature {
     private static Object cameraPlayer;
     private static float cameraYaw, cameraPitch, writtenYaw, writtenPitch;
     private static boolean cameraChanged;
+    // 只记录本次输入回调的实际接管，不能拿 Velocity 开关当成整个 tick 的互斥锁。
+    private static MovementInput claimedInput;
+    private static Object claimedPlayer;
+    private static int claimedTick = -1;
     static Float rotationYaw;
     private static float rotationPitch;
     private static String status = "IDLE";
@@ -114,6 +118,7 @@ public final class AttackReduceFeature {
     }
     private static void prepareTick(Minecraft mc) {
         tick++;
+        clearInputClaim();
         restoreCamera();
         Object player = read(mc, "thePlayer", "field_71439_g");
         Object world = read(mc, "theWorld", "field_71441_e");
@@ -160,6 +165,7 @@ public final class AttackReduceFeature {
             else current().onMotion();
         }
         restoreCamera();
+        clearInputClaim();
     }
 
     /** Netty 只转交包；世界与目标判断都发生在 Minecraft 主线程。 */
@@ -259,6 +265,7 @@ public final class AttackReduceFeature {
         schedule(s, new Runnable() { public void run() { if (session == s) stop(false); } });
     }
     private static void stop(boolean release) {
+        clearInputClaim();
         Session s = session;
         if (s != null) {
             if (!sameConnection(s)) s.closed = true;
@@ -270,6 +277,7 @@ public final class AttackReduceFeature {
     }
 
     static void afterMovementInput(MovementInput input) {
+        clearInputClaim();
         restoreCamera();
         Session s = session;
         if (s == null || !sameConnection(s) || !enabled()) return;
@@ -282,8 +290,30 @@ public final class AttackReduceFeature {
             moveFix(input, cameraYaw, writtenYaw);
             set(s.player, "rotationYaw", "field_70177_z", writtenYaw);
             set(s.player, "rotationPitch", "field_70125_A", writtenPitch); cameraChanged = true;
+            claimMovementInput(input);
         }
         current().onMotion();
+    }
+
+    /** 模式主动写入方向/跳跃时显式认领，输入值恰好相同也属于接管。 */
+    static void claimMovementInput(MovementInput input) {
+        Session s = session;
+        if (s == null || input == null) return;
+        claimedInput = input;
+        claimedPlayer = s.player;
+        claimedTick = tick;
+    }
+
+    static boolean ownsMovementInput(Object player, Object input) {
+        Session s = session;
+        return enabled() && s != null && sameConnection(s) && s.player == player
+                && claimedPlayer == player && claimedInput == input && claimedTick == tick;
+    }
+
+    private static void clearInputClaim() {
+        claimedInput = null;
+        claimedPlayer = null;
+        claimedTick = -1;
     }
     private static void moveFix(MovementInput input, float from, float to) {
         float scale = input.sneak ? 0.3F : 1;

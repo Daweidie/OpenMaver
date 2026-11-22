@@ -1,18 +1,18 @@
 package net.minecraft.client;
 
+import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.renderer.entity.RenderManager;
 import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.client.settings.GameSettings;
-import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.Session;
 import net.minecraft.world.World;
 
 public class Minecraft {
     public World theWorld;
-    public EntityPlayer thePlayer;
+    public EntityPlayerSP thePlayer;
     public GuiScreen currentScreen;
     public FontRenderer fontRendererObj;
     public RenderManager renderManager;

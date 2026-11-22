@@ -49,15 +49,25 @@ final class MixMode extends AntiKBMode {
     @Override void onStrafe(MovementInput input) {
         if (knockbackPacket == null) return;
         if (AttackReduceFeature.getMovementOverride()) {
-            if (sprintTick >= 1 && sprintTick <= 2 && AttackReduceFeature.onGround()) input.jump = true;
+            if (sprintTick >= 1 && sprintTick <= 2 && AttackReduceFeature.onGround()) {
+                AttackReduceFeature.claimMovementInput(input);
+                input.jump = true;
+            }
             if (sprintTick >= 1 && sprintTick <= 3) {
+                AttackReduceFeature.claimMovementInput(input);
                 double yaw = Math.toDegrees(Math.atan2(knockbackPacket.x(), -knockbackPacket.z()));
                 double delta = Math.toRadians(yaw - AttackReduceFeature.number(AttackReduceFeature.player(), "rotationYaw", "field_70177_z"));
                 double cos = Math.cos(delta), sin = Math.sin(delta);
                 input.moveForward = cos > 0.5 ? 1 : cos < -0.5 ? -1 : 0;
                 input.moveStrafe = sin > 0.5 ? -1 : sin < -0.5 ? 1 : 0;
-            } else if (sprintTick >= 4 && sprintTick <= 10) input.jump = false;
+            } else if (sprintTick >= 4 && sprintTick <= 10) {
+                AttackReduceFeature.claimMovementInput(input);
+                input.jump = false;
+            }
             if (sprintTick >= 10) sprintTick = -1;
-        } else if (AttackReduceFeature.number(AttackReduceFeature.player(), "hurtTime", "field_70737_aN") > 6 && !AttackReduceFeature.moduleEnabled("Scaffold")) input.jump = true;
+        } else if (AttackReduceFeature.number(AttackReduceFeature.player(), "hurtTime", "field_70737_aN") > 6 && !AttackReduceFeature.moduleEnabled("Scaffold")) {
+            AttackReduceFeature.claimMovementInput(input);
+            input.jump = true;
+        }
     }
 }

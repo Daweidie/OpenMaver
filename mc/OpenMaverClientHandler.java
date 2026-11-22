@@ -5,6 +5,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraftforge.client.event.GuiOpenEvent;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
+import net.minecraftforge.event.entity.player.AttackEntityEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.InputEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
@@ -132,6 +133,60 @@ public final class OpenMaverClientHandler {
         } catch (Throwable t) {
             failed = true;
             debug("client tick bridge disabled: " + t, t);
+        }
+    }
+
+    /**
+     * PlayerTickEvent：
+     * <ul>
+     *   <li>START：ROTATE 安装/准备输入 hook；旧 OMNI 模式预判速度补偿；</li>
+     *   <li>END：vanilla 已完成移动与速度计算，但 {@code onUpdateWalkingPlayer()}
+     *       （C0B / C03）还没有发送 —— 恢复冲刺状态、补空中速度、攻击后补包。</li>
+     * </ul>
+     * ROTATE 在输入回调里写 yaw，保留到原版 C03 后，由 ClientTick END 恢复相机。
+     */
+    @SubscribeEvent
+    public void onPlayerTick(TickEvent.PlayerTickEvent event) {
+        if (failed || event == null) {
+            return;
+        }
+        try {
+            Minecraft mc = Minecraft.getMinecraft();
+            // 运行期字段类型是 EntityPlayerSP；沿用桥接层的 MCP/SRG 反射读取，
+            // 避免宽泛编译 stub 生成 EntityPlayer 描述符后触发 NoSuchFieldError。
+            if (mc == null || event.player == null
+                    || event.player != readField(mc, "thePlayer", "field_71439_g")) {
+                return;
+            }
+            if (event.phase == TickEvent.Phase.START) {
+                KeepSprintFeature.onPlayerTickStart(mc, event.player);
+            } else if (event.phase == TickEvent.Phase.END) {
+                KeepSprintFeature.onPlayerTickEnd(event.player);
+            }
+        } catch (Throwable t) {
+            debug("keep sprint player tick", t);
+        }
+    }
+
+    /**
+     * AttackEntityEvent：1.8.9 的冲刺攻击会让本地和服务端都清掉冲刺，
+     * 而客户端的 serverSprintState 不会变化，vanilla 不会补 START_SPRINTING。
+     * 这里只记一个记号，由同一个 tick 的 PlayerTickEvent.END 在 C03 之前补包。
+     */
+    @SubscribeEvent
+    public void onAttackEntity(AttackEntityEvent event) {
+        if (failed || event == null) {
+            return;
+        }
+        try {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc == null || event.entityPlayer == null
+                    || event.entityPlayer != readField(mc, "thePlayer", "field_71439_g")) {
+                return;
+            }
+            KeepSprintFeature.onAttack(event.entityPlayer);
+        } catch (Throwable t) {
+            debug("keep sprint attack", t);
         }
     }
 

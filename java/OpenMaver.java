@@ -7,6 +7,7 @@ import module.combat.KillAura;
 import module.combat.Reach;
 import module.movement.AutoSprint;
 import module.movement.GodBridge;
+import module.movement.KeepSprint;
 import module.movement.SafeWalk;
 import module.movement.Scaffold;
 import module.movement.Scaffold2;
@@ -297,6 +298,10 @@ public final class OpenMaver {
     private static void registerModules() {
         // 示例模块：AutoSprint（配置路径 movement.autosprint）
         ModuleManager.register(new AutoSprint());
+
+        // 移动模块：KeepSprint 全方向疾跑（配置路径 movement.keepsprint；
+        // MC 侧逻辑在 mc/KeepSprintFeature，纯发包、不转头）
+        ModuleManager.register(new KeepSprint());
 
         // 战斗模块：AutoClicker（配置路径 combat.autoclicker）
         ModuleManager.register(new AutoClicker());

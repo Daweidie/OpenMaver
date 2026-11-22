@@ -76,11 +76,17 @@ final class NoXZMode extends AntiKBMode {
         if (attacksRemaining == 0) attackTarget = null;
     }
     @Override void onStrafe(MovementInput input) {
-        if (hitCounter > 0) input.moveForward = 1;
+        if (hitCounter > 0) {
+            AttackReduceFeature.claimMovementInput(input);
+            input.moveForward = 1;
+        }
         if (shouldJump) {
             shouldJump = false;
             if (AttackReduceFeature.onGround() && AttackReduceFeature.sprinting() && !AttackReduceFeature.ignored()
-                    && !Boolean.TRUE.equals(AttackReduceFeature.call(AttackReduceFeature.player(), "isPotionActive", "func_82165_m", Integer.valueOf(8)))) input.jump = true;
+                    && !Boolean.TRUE.equals(AttackReduceFeature.call(AttackReduceFeature.player(), "isPotionActive", "func_82165_m", Integer.valueOf(8)))) {
+                AttackReduceFeature.claimMovementInput(input);
+                input.jump = true;
+            }
         }
     }
     @Override void release() {
