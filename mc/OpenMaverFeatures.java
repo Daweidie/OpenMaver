@@ -14,9 +14,13 @@ import net.minecraft.util.AxisAlignedBB;
 import util.Logger;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
 
+import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Locale;
@@ -41,6 +45,97 @@ public final class OpenMaverFeatures {
     private static int settingsCheckTicks;
     private static long settingsModified = Long.MIN_VALUE;
     private static boolean settingsDirty;
+
+    // ==================================================================
+    // ClickGUI 开关键位（可在 SYSTEM → Settings 里切换并持久化）
+    // ==================================================================
+
+    /** LWJGL 2 键码 → 配置里保存的名字。默认沿用各家的右 Shift 习惯。 */
+    private static final String[] GUI_KEY_NAMES = {
+            "RSHIFT", "LSHIFT", "RCONTROL", "RMENU", "NUMPADENTER",
+            "SEMICOLON", "APOSTROPHE", "GRAVE", "TAB"};
+    private static final int[] GUI_KEY_CODES = {
+            Keyboard.KEY_RSHIFT, Keyboard.KEY_LSHIFT, Keyboard.KEY_RCONTROL,
+            Keyboard.KEY_RMENU, Keyboard.KEY_NUMPADENTER, Keyboard.KEY_SEMICOLON,
+            Keyboard.KEY_APOSTROPHE, Keyboard.KEY_GRAVE, Keyboard.KEY_TAB};
+    /** 面板上显示的名字（RMENU 在键盘上印的是右 Alt）。 */
+    private static final String[] GUI_KEY_LABELS = {
+            "RSHIFT", "LSHIFT", "RCTRL", "RALT", "NUM ENTER",
+            "SEMICOLON", "APOSTROPHE", "GRAVE", "TAB"};
+
+    /** 当前开关键位（LWJGL 键码）。 */
+    private static int guiKeyCode = Keyboard.KEY_RSHIFT;
+
+    /** 当前 ClickGUI 开关键位。 */
+    public static int getGuiKeyCode() {
+        return guiKeyCode;
+    }
+
+    /** 用于面板 / 日志显示的名字，例如 {@code RSHIFT}。 */
+    public static String getGuiKeyName() {
+        for (int i = 0; i < GUI_KEY_CODES.length; i++) {
+            if (GUI_KEY_CODES[i] == guiKeyCode) {
+                return GUI_KEY_LABELS[i];
+            }
+        }
+        String name = Keyboard.getKeyName(guiKeyCode);
+        return (name == null || name.isEmpty()) ? "KEY" + guiKeyCode : name;
+    }
+
+    /** 写回 openmaver.properties 用的名字（与 {@link #readGuiKey} 对称）。 */
+    private static String guiKeyNameForSave() {
+        for (int i = 0; i < GUI_KEY_CODES.length; i++) {
+            if (GUI_KEY_CODES[i] == guiKeyCode) {
+                return GUI_KEY_NAMES[i];
+            }
+        }
+        String name = Keyboard.getKeyName(guiKeyCode);
+        return (name == null || name.isEmpty()) ? "RSHIFT" : name;
+    }
+
+    /** 切到下一档键位并立即落盘（Settings 页的 GUI KEY 行点击时调用）。 */
+    public static void cycleGuiKey() {
+        int index = 0;
+        for (int i = 0; i < GUI_KEY_CODES.length; i++) {
+            if (GUI_KEY_CODES[i] == guiKeyCode) {
+                index = i;
+                break;
+            }
+        }
+        index = (index + 1) % GUI_KEY_CODES.length;
+        guiKeyCode = GUI_KEY_CODES[index];
+        markDirty();
+        saveSettings();
+    }
+
+    /** 配置里写的是名字（RSHIFT / LSHIFT / ...），解析失败保留原值。 */
+    private static int readGuiKey(Properties values, String key, int fallback) {
+        String raw = values.getProperty(key);
+        if (raw == null || raw.trim().isEmpty()) {
+            return fallback;
+        }
+        String name = raw.trim().toUpperCase(Locale.ROOT);
+        for (int i = 0; i < GUI_KEY_NAMES.length; i++) {
+            if (GUI_KEY_NAMES[i].equals(name)) {
+                return GUI_KEY_CODES[i];
+            }
+        }
+        int code = Keyboard.getKeyIndex(name);
+        return code > 0 ? code : fallback;
+    }
+
+    /**
+     * 强制把磁盘上的配置读回内存。
+     *
+     * <p>{@link #refreshSettings()} 平时每 20 tick 才看一次文件，导入配置文件后需要
+     * 立刻生效，所以这里把节流计数和时间戳清掉再读一遍。
+     */
+    public static void reloadSettingsNow() {
+        settingsDirty = false;
+        settingsModified = Long.MIN_VALUE;
+        settingsCheckTicks = 20;
+        refreshSettings();
+    }
 
     // ==================================================================
     // Grim 对测 profile
@@ -221,7 +316,7 @@ public final class OpenMaverFeatures {
             "slapSprintSync", "noxzAttacks", "noxzTx"};
 
     /** openmaver.properties 的结构版本，用于迁移旧默认值。 */
-    private static final int SETTINGS_VERSION = 22;
+    private static final int SETTINGS_VERSION = 23;
 
     /**
      * 1.8.9 服务端的受击无敌窗口是 10 tick（hurtResistantTime 20 -> 10 才会结算）。
@@ -247,9 +342,29 @@ public final class OpenMaverFeatures {
     private static final Random AUTOCLICKER_RANDOM = new Random();
 
     // Reach（攻击距离）
-    /** Reach 的实际攻击距离（0 ~ 5.0 米），各 profile 均直接使用配置值。 */
+    /** DISTANCE 滑块（0~5 米）：这就是实际攻击距离，除 GRIM CAP 外不再二次截断。 */
     private static float reachDistance = 3.0F;
     private static float reachChance = 100.0F;
+    /**
+     * GRIM CAP（原 GRIM CHECK）：开启时把实际攻击距离硬限制在 Grim 2.0
+     * {@code combat/Reach} 的 {@code ENTITY_INTERACTION_RANGE = 3.0} 以内。
+     * 默认关闭——3.0 已经是原版自己的攻击上限，开启后等于不增加距离，只是不越线。
+     */
+    private static boolean reachGrimCheck;
+    /** Grim 2.0 combat/Reach 的 ENTITY_INTERACTION_RANGE（眼睛到 0.1 扩张箱）。 */
+    private static final float REACH_GRIM_CAP = 3.0F;
+    /**
+     * Ping spoof：把出站事务确认压后多少毫秒（0 = 关闭）。服务端据此把目标
+     * 的“可能位置”并集成更长的区间，量出来的距离随之变短。
+     */
+    private static int reachPingSpoof;
+    /** 额外随机抖动（毫秒），让事务间隔看起来像真实网络抖动。 */
+    private static int reachPingJitter = 40;
+    /** 目标位置历史保留的 tick 数：Grim 的并集盒子最长就是事务窗口。 */
+    private static final int REACH_HISTORY_TICKS = 14;
+    /** entityId -> 最近若干 tick 的 (x,y,z)，用来重建服务端会用的并集盒子。 */
+    private static final Map<Integer, Deque<double[]>> reachHistory =
+            new HashMap<Integer, Deque<double[]>>();
     /** ClickGUI 的 CHAT DEBUG：把 Reach 的每次挥击/跳过/命中写进聊天框。 */
     private static boolean reachDebugChat;
     /** 上一次 tick 是否处于挥击动画中，用于识别“新的一次挥击”。 */
@@ -470,10 +585,13 @@ public final class OpenMaverFeatures {
             updateKillAura(mc);
             updateAutoClicker(mc);
             suppressVanillaDuplicateAttack(mc);
+            // Ping spoof 的事务队列每 tick 放行一次；放在 Reach 之前，
+            // 保证本 tick 的攻击看到的是已经刷新过的事务窗口。
+            TransactionDelayFeature.tick(mc);
             // Reach 必须和 AutoClicker 一样在 vanilla C03 之前发包：
             // Grim 1.8 的 PacketOrderB 只认「上一条 tick 包之后」的 C0A，
-            // 且 Post 会拒绝出现在移动包之后的 C02。放在这里还能保证射线用的
-            // rotation 就是服务端已经收到的那一帧（updateAimTarget 尚未改写）。
+            // 且 Post 会拒绝出现在移动包之后的 C02。当前相机可能已在渲染帧中
+            // 转动，因此 GRIM CHECK 还会用 lastReported 坐标/视角单独复核。
             updateReach(mc);
             boolean screenOpen = read(mc, "currentScreen", "field_71462_r", null) != null;
             if (screenOpen) {
@@ -1107,6 +1225,11 @@ public final class OpenMaverFeatures {
      * {@code PlayerControllerMP.attackEntity} 发送 {@code C02PacketUseEntity}；
      * 未命中时完全保持原版 3 格。
      *
+     * <p><b>距离来源</b>：{@code DISTANCE} 滑块（0~5 米）就是实际攻击上限，
+     * 不再被任何隐藏常量二次截断。{@code GRIM CAP} 打开时才把上限压到
+     * 3.00 米（Grim 2.0 {@code ENTITY_INTERACTION_RANGE}），默认关闭——3.00
+     * 与原版上限相同，开着等于不增加距离。
+     *
      * <p><b>CHANCE 语义</b>：按“每次新的挥击/攻击”掷一次随机数，而不是每帧。
      * 通过 {@code isSwingInProgress} / {@code swingProgressInt} 识别挥击开始或进度被
      * {@code swingItem()} 重置；高频点击时进度会持续停在 -1，同样按每次点击计算。
@@ -1151,6 +1274,7 @@ public final class OpenMaverFeatures {
             return;
         }
 
+        sampleReachHistory(world);
         boolean swinging = Boolean.TRUE.equals(
                 read(player, "isSwingInProgress", "field_82175_bq", Boolean.class));
         int swingProgress = (int) number(player, "swingProgressInt", "field_110158_av");
@@ -1164,7 +1288,7 @@ public final class OpenMaverFeatures {
             return;
         }
 
-        ReachDebug.swing(swingProgress, getEffectiveReachDistance(),
+        ReachDebug.swing(swingProgress, getEffectiveReachDistance(), configuredForDebug(),
                 bypassEnabled ? profileName() : "OFF");
 
         if (reachChance < 100.0F) {
@@ -1207,11 +1331,34 @@ public final class OpenMaverFeatures {
         }
 
         boolean safe = safeProfile();
-        // DISTANCE 在所有 profile 下直接生效，与 GUI / HUD 使用同一个上限。
-        double maxDistance = getEffectiveReachDistance();
+        // 两条上限分开算：
+        // - cameraCap：本地准星射线能用多长（就是 DISTANCE 滑块，0~5）；
+        // - serverCap：服务端结算时会计到的距离上限（GRIM CAP 时为 3.00）。
+        // 服务端量的是「上一条 tick 包的坐标 + 最近/当前 look」，所以只要你本帧
+        // 比上一帧更靠近目标（后撤、侧移、转身），cameraCap 就能合法地高于
+        // serverCap —— 这段差价是 Grim 自己的测量窗口白送的，不是越线。
+        double configured = clamp(reachDistance, 0.0F, (float) REACH_MAX_DISTANCE);
+        double cameraCap = configured;
+        double serverCap = getEffectiveReachDistance();
+        boolean riding = read(player, "ridingEntity", "field_70154_o", null) != null;
+        if (riding) {
+            // Grim 2.0 combat/Reach: `if (player.vehicle != null) return;`
+            // 骑乘时整条 Reach 检查直接跳过，只剩服务端 processUseEntity 的
+            // 6 格（可见目标）限制，所以这里放开到 DISTANCE。
+            serverCap = cameraCap;
+        }
+        double maxDistance = serverCap;
         double borderValue = REACH_BOX_MARGIN;
-        if (maxDistance <= 0.0D) {
+        if (cameraCap <= 0.0D) {
             ReachDebug.skip("cap<=0");
+            return;
+        }
+        // C02 和本 tick 的 C03 同 tick 发出，但一定排在 C03 之前，所以服务端
+        // 结算这次攻击时用的仍是**上一条 tick 包**里的坐标与视角。射线必须同时
+        // 满足这个“服务端已知姿态”，否则本地打中、服务端判 Hitboxes/隔空。
+        // lastReported 由 vanilla 在入队时更新，出站移动被暂存时它已经过期。
+        if (AttackReduceFeature.queuedMoves() > 0) {
+            ReachDebug.skip("movement queued");
             return;
         }
         List<?> entities = (List<?>) read(world, "loadedEntityList", "field_72996_f", List.class);
@@ -1229,9 +1376,29 @@ public final class OpenMaverFeatures {
         double dirY = -Math.sin(pitch);
         double dirZ = Math.cos(yaw) * Math.cos(pitch);
 
+        double[] reported = reachReportedRay(player);
+        if (reported == REACH_POSE_INVALID) {
+            ReachDebug.skip("reported pose invalid");
+            return;
+        }
+        if (reported == null) {
+            // 运行期取不到 lastReported*（映射缺失 / 非 Forge 环境）时不能把
+            // Reach 直接关死 —— 那正是“开了等于没开”的旧 bug。退回本 tick 的
+            // 相机姿态继续补刀，只提示一次。
+            reported = new double[] {eyeX, eyeY, eyeZ, dirX, dirY, dirZ};
+            OpenMaverDebug.noticeOnce("reach.reportedPose",
+                    "reach: lastReported pose unavailable, using the current camera pose");
+        }
+
         Object bestTarget = null;
-        // rayBoxDistance 已按 maxDistance 裁剪，保留恰好命中距离上限的目标。
+        double bestReported = Double.POSITIVE_INFINITY;
+        // 射线裁剪长度：至少覆盖本地上限，这样“被服务端上限削掉的目标”能单独
+        // 计数并出现在 SKIP 行里，而不是和“根本没瞄到”混在一起。
+        double scanDistance = Math.max(cameraCap, serverCap);
         double bestDistance = Double.POSITIVE_INFINITY;
+        int overCap = 0;
+        int reportedMisses = 0;
+        int reportedOutOfRange = 0;
         for (int i = 0; i < entities.size(); i++) {
             Object candidate = entities.get(i);
             if (!(candidate instanceof EntityLivingBase) || candidate == player) {
@@ -1259,20 +1426,41 @@ public final class OpenMaverFeatures {
             double halfZ = (number(box, "maxZ", "field_72334_f")
                     - number(box, "minZ", "field_72339_c")) * 0.5D;
             double halfDiagonal = Math.sqrt(halfX * halfX + halfY * halfY + halfZ * halfZ);
-            double centerLimit = maxDistance + borderValue + halfDiagonal;
+            double centerLimit = scanDistance + borderValue + halfDiagonal;
             if (distance(player, living) >= centerLimit * centerLimit) {
                 continue;
             }
             double entityBorder = 0.1D;
-            if (!safe) {
-                Object border = call(living, "getCollisionBorderSize", "func_70111_Y", "ao");
-                if (border instanceof Number) {
-                    entityBorder = ((Number) border).doubleValue();
-                }
+            // 1.8 hitbox margin：Entity.getCollisionBorderSize() == 0.1，
+            // 原版 EntityRenderer.getMouseOver 与 Grim 的距离判据都用这个扩张箱。
+            Object border = call(living, "getCollisionBorderSize", "func_70111_Y", "ao");
+            if (border instanceof Number) {
+                entityBorder = ((Number) border).doubleValue();
             }
             double hitDistance = rayBoxDistance(eyeX, eyeY, eyeZ, dirX, dirY, dirZ,
-                    maxDistance, box, safe ? borderValue : entityBorder);
-            if (hitDistance < 0.0D || hitDistance >= bestDistance) {
+                    scanDistance, box, entityBorder);
+            if (hitDistance < 0.0D) {
+                continue;
+            }
+            if (hitDistance > cameraCap) {
+                // 瞄得到但超过本地上限。
+                overCap++;
+                continue;
+            }
+            if (hitDistance >= bestDistance) {
+                continue;
+            }
+            double reportedDistance = rayBoxDistance(reported[0], reported[1], reported[2],
+                    reported[3], reported[4], reported[5], scanDistance,
+                    serverBoxFor(living, box), entityBorder);
+            if (reportedDistance < 0.0D) {
+                // 服务端会按上一条 tick 的视角判断，射线没打中就是 Hitboxes。
+                reportedMisses++;
+                continue;
+            }
+            if (reportedDistance > serverCap) {
+                // 服务端会计到的距离仍然超线：不发货。
+                reportedOutOfRange++;
                 continue;
             }
             // 与服务端 NetHandlerPlayServer.processUseEntity 一致：不可见目标只允许
@@ -1282,11 +1470,19 @@ public final class OpenMaverFeatures {
                 continue;
             }
             bestDistance = hitDistance;
+            bestReported = reportedDistance;
             bestTarget = living;
         }
         if (bestTarget == null) {
             ReachDebug.skip("no target scan=" + entities.size()
-                    + " cap=" + f2(maxDistance));
+                    + " cam=" + f2(cameraCap) + " srv=" + f2(serverCap)
+                    + " dist=" + f2(configured)
+                    + (riding ? " ride" : "")
+                    + (overCap > 0 ? " over-cap=" + overCap : "")
+                    + (reachGrimCheck && serverCap < cameraCap
+                            ? " grim-cap=" + f2(REACH_GRIM_CAP) : "")
+                    + (reportedMisses > 0 ? " reported-miss=" + reportedMisses : "")
+                    + (reportedOutOfRange > 0 ? " reported-range=" + reportedOutOfRange : ""));
             return;
         }
         Object nameObject = call(bestTarget, "getName", "func_70005_c_", null);
@@ -1331,20 +1527,142 @@ public final class OpenMaverFeatures {
             ReachDebug.skip("criticals deferred " + targetName);
             return;
         }
-        if (callVoid(controller, "attackEntity", "func_78764_a", "a", player, bestTarget)) {
+        boolean attacked = callVoid(controller, "attackEntity", "func_78764_a", "a", player, bestTarget);
+        if (attacked) {
             entityAttackUsedThisTick = true;
         }
         restoreCriticalsSprint(player, criticalsStopSprintSent);
+        if (!attacked) {
+            ReachDebug.skipImportant("attack failed " + targetName);
+            return;
+        }
         float hitYaw = (float) number(player, "rotationYaw", "field_70177_z");
         float hitPitch = (float) number(player, "rotationPitch", "field_70125_A");
         OpenMaverDebug.attack(targetName, bestDistance, maxDistance, hitYaw, hitPitch,
                 alreadySwinging);
-        ReachDebug.hit(targetName, bestDistance, maxDistance, borderValue,
-                hitYaw, hitPitch, alreadySwinging);
+        ReachDebug.hit(targetName, bestDistance, cameraCap, bestReported, serverCap,
+                borderValue, hitYaw, hitPitch, alreadySwinging);
     }
 
     private static String f2(double value) {
         return String.format(Locale.ROOT, "%.2f", value);
+    }
+
+    /** 上报姿态字段存在但数值非法（NaN / 越界 pitch）：本次不补刀。 */
+    private static final double[] REACH_POSE_INVALID = new double[0];
+
+    /** SWING 行里的相机上限（DISTANCE 原值）。 */
+    private static float configuredForDebug() {
+        return clamp(reachDistance, 0.0F, (float) REACH_MAX_DISTANCE);
+    }
+
+    /**
+     * 最近一次 vanilla 上报的眼睛坐标与 look 方向。
+     *
+     * @return 六元射线；字段完全缺失返回 {@code null}（调用方退回相机姿态）；
+     *         字段存在但数值非法返回 {@link #REACH_POSE_INVALID}
+     */
+    private static double[] reachReportedRay(Object player) {
+        String[][] names = {
+            {"lastReportedPosX", "field_175172_bI"},
+            {"lastReportedPosY", "field_175166_bJ"},
+            {"lastReportedPosZ", "field_175167_bK"},
+            {"lastReportedYaw", "field_175164_bL"},
+            {"lastReportedPitch", "field_175165_bM"}
+        };
+        double[] pose = new double[5];
+        for (int i = 0; i < names.length; i++) {
+            Object value = read(player, names[i][0], names[i][1], null);
+            if (!(value instanceof Number)) return null;
+            pose[i] = ((Number) value).doubleValue();
+            if (Double.isNaN(pose[i]) || Double.isInfinite(pose[i])) return REACH_POSE_INVALID;
+        }
+        if (Math.abs(pose[4]) > 90.0D) return REACH_POSE_INVALID;
+        double yaw = Math.toRadians(pose[3]);
+        double pitch = Math.toRadians(pose[4]);
+        return new double[] {pose[0], pose[1] + eyeHeight(player), pose[2],
+                -Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)};
+    }
+
+    /** 每 tick 记录一次目标位置，供 {@link #serverBoxFor} 重建事务窗口并集。 */
+    private static void sampleReachHistory(Object world) {
+        if (reachPingSpoof <= 0) {
+            if (!reachHistory.isEmpty()) reachHistory.clear();
+            return;
+        }
+        List<?> entities = (List<?>) read(world, "loadedEntityList", "field_72996_f", List.class);
+        if (entities == null) return;
+        java.util.Set<Integer> alive = new java.util.HashSet<Integer>();
+        for (int i = 0; i < entities.size(); i++) {
+            Object candidate = entities.get(i);
+            if (!(candidate instanceof EntityLivingBase)) continue;
+            EntityLivingBase living = (EntityLivingBase) candidate;
+            int id = (int) number(living, "entityId", "field_145783_c");
+            alive.add(id);
+            Deque<double[]> history = reachHistory.get(id);
+            if (history == null) {
+                history = new ArrayDeque<double[]>();
+                reachHistory.put(id, history);
+            }
+            AxisAlignedBB sampleBox = boundingBox(living);
+            if (sampleBox == null) continue;
+            history.addLast(new double[] {
+                (number(sampleBox, "minX", "field_72340_a")
+                        + number(sampleBox, "maxX", "field_72336_d")) * 0.5D,
+                (number(sampleBox, "minY", "field_72338_b")
+                        + number(sampleBox, "maxY", "field_72337_e")) * 0.5D,
+                (number(sampleBox, "minZ", "field_72339_c")
+                        + number(sampleBox, "maxZ", "field_72334_f")) * 0.5D
+            });
+            while (history.size() > REACH_HISTORY_TICKS) history.removeFirst();
+        }
+        if (reachHistory.size() > alive.size()) {
+            java.util.Iterator<Integer> it = reachHistory.keySet().iterator();
+            while (it.hasNext()) {
+                if (!alive.contains(it.next())) it.remove();
+            }
+        }
+    }
+
+    /**
+     * 服务端结算这条 C02 时会用的目标盒子。
+     *
+     * <p>Grim 拿 {@code PacketEntity.getPossibleCollisionBoxes()}：事务从发出到确认
+     * 之间的所有可能位置取并集。我们把「事务窗口 ≈ 1 tick + spoof 毫秒」里的位置
+     * 并进来，于是本地复核用的盒子和服务端用的一致；spoof 越大，并集越长，
+     * 服务端量出来的距离越短。
+     */
+    private static AxisAlignedBB serverBoxFor(EntityLivingBase entity, AxisAlignedBB box) {
+        if (reachPingSpoof <= 0) return box;
+        int window = 1 + reachPingSpoof / 50;
+        if (window > REACH_HISTORY_TICKS) window = REACH_HISTORY_TICKS;
+        Deque<double[]> history = reachHistory.get(
+                (int) number(entity, "entityId", "field_145783_c"));
+        if (history == null || history.size() <= 1) return box;
+        double halfX = (number(box, "maxX", "field_72336_d")
+                - number(box, "minX", "field_72340_a")) * 0.5D;
+        double halfY = (number(box, "maxY", "field_72337_e")
+                - number(box, "minY", "field_72338_b")) * 0.5D;
+        double halfZ = (number(box, "maxZ", "field_72334_f")
+                - number(box, "minZ", "field_72339_c")) * 0.5D;
+        double minX = number(box, "minX", "field_72340_a");
+        double minY = number(box, "minY", "field_72338_b");
+        double minZ = number(box, "minZ", "field_72339_c");
+        double maxX = number(box, "maxX", "field_72336_d");
+        double maxY = number(box, "maxY", "field_72337_e");
+        double maxZ = number(box, "maxZ", "field_72334_f");
+        int skip = history.size() - window;
+        int index = 0;
+        for (double[] position : history) {
+            if (index++ < skip) continue;
+            minX = Math.min(minX, position[0] - halfX);
+            maxX = Math.max(maxX, position[0] + halfX);
+            minY = Math.min(minY, position[1] - halfY);
+            maxY = Math.max(maxY, position[1] + halfY);
+            minZ = Math.min(minZ, position[2] - halfZ);
+            maxZ = Math.max(maxZ, position[2] + halfZ);
+        }
+        return new AxisAlignedBB(minX, minY, minZ, maxX, maxY, maxZ);
     }
 
     /** 射线与实体碰撞箱（向外扩张 border）的最近交点距离；未命中返回 -1。 */
@@ -1391,6 +1709,7 @@ public final class OpenMaverFeatures {
 
     private static void resetReachState() {
         // Reach 不做任何原版字段修改，只需清空挥击识别状态。
+        if (!reachHistory.isEmpty()) reachHistory.clear();
         reachWasSwinging = false;
         reachLastSwingProgress = Integer.MIN_VALUE;
     }
@@ -1436,8 +1755,27 @@ public final class OpenMaverFeatures {
                 return;
             }
         }
+        if (criticalsJumpAttackSource == CRITICALS_ATTACK_REACH) {
+            Module reach = ModuleManager.getModule("Reach");
+            if (reach == null || !reach.isEnabled()) {
+                resetCriticalsJumpState();
+                return;
+            }
+        }
         if (scaffoldOnGround(player) || !criticalPlayerIsFalling(player)
                 || !entityReadyForDamage(target)) {
+            return;
+        }
+
+        if (criticalsJumpAttackSource == CRITICALS_ATTACK_REACH) {
+            // JUMP 延迟跨 tick 后不复用旧目标：重新走距离、两条射线、包序和共享攻击名额。
+            resetCriticalsJumpState();
+            Object world = read(mc, "theWorld", "field_71441_e", null);
+            if (world != null && read(mc, "currentScreen", "field_71462_r", null) == null
+                    && !rightClickUsedThisTick
+                    && !Boolean.TRUE.equals(call(player, "isUsingItem", "func_71039_bw", "bS"))) {
+                attackNearestEntityInReach(mc, player, world);
+            }
             return;
         }
 
@@ -1468,15 +1806,6 @@ public final class OpenMaverFeatures {
             StatsHud.recordAutoClick(true, now);
             OpenMaverDebug.click("critical-jump", 0L, autoclickerCpsMax,
                     Mouse.isButtonDown(0), autoclickerMissStreak);
-            return;
-        }
-
-        if (source == CRITICALS_ATTACK_REACH) {
-            Object controller = read(mc, "playerController", "field_71442_b", null);
-            if (controller != null) {
-                callVoid(controller, "attackEntity", "func_78764_a", "a", player, target);
-                restoreCriticalsSprint(player, stopSprintSent);
-            }
             return;
         }
 
@@ -2802,6 +3131,19 @@ public final class OpenMaverFeatures {
         reachDistance = clamp(readFloat(values, "reach.distance",
                 (float) REACH_BASE_DISTANCE + storedExtra), 0.0F, (float) REACH_MAX_DISTANCE);
         reachChance = clamp(readFloat(values, "reach.chance", 100.0F), 1.0F, 100.0F);
+        reachGrimCheck = readBoolean(values, "reach.grimCheck", false);
+        reachPingSpoof = clamp(readInt(values, "reach.pingSpoof", 0, 400), 0, 400);
+        reachPingJitter = clamp(readInt(values, "reach.pingJitter", 40, 150), 0, 150);
+        if (settingsVersion < 23) {
+            // v22 及更早：GRIM CHECK 默认 true，而且把 DISTANCE 硬压到 2.97 米
+            // ——比原版自己的 3.0 还短，于是 Reach 永远打不出“额外”那一次，
+            // 滑块从 3.0 调到 5.0 完全没有变化（HIT 不出现，只有 SKIP）。
+            // v23 改成 GRIM CAP（3.00 米）并默认关闭；旧配置里的 true 是历史
+            // 默认值，一并迁成 false，升级后 DISTANCE 立即生效。
+            reachGrimCheck = false;
+            values.setProperty("reach.grimCheck", "false");
+            settingsDirty = true;
+        }
         reachDebugChat = readBoolean(values, "reach.debug", false);
         ReachDebug.setEnabled(reachDebugChat);
         criticalsMode = readCriticalsMode(values, "criticals.mode", CRITICALS_JUMP);
@@ -2992,6 +3334,7 @@ public final class OpenMaverFeatures {
         fakePlayerCount = clamp(readInt(values, "fakeplayer.count", 1, 5), 1, 5);
         fakePlayerDistance = clamp(readFloat(values, "fakeplayer.distance", 4.0F), 2.0F, 10.0F);
         fakePlayerShowName = readBoolean(values, "fakeplayer.showName", true);
+        guiKeyCode = readGuiKey(values, "ui.clickgui.key", guiKeyCode);
         resetAutoClickerTimers();
         ScaffoldFeature.reset();
         GodBridgeFeature.reset();
@@ -3047,9 +3390,15 @@ public final class OpenMaverFeatures {
         return profileName();
     }
 
-    /** 当前实际生效的实体攻击距离（0~5 米，原版扩张箱度量）。 */
+    /** 当前实际攻击上限：DISTANCE 直接生效，只有 GRIM CAP 会把它压到 3.00 米。 */
     public static float getEffectiveReachDistance() {
-        return clamp(reachDistance, 0.0F, (float) REACH_MAX_DISTANCE);
+        float configured = clamp(reachDistance, 0.0F, (float) REACH_MAX_DISTANCE);
+        return reachGrimCheck ? Math.min(configured, REACH_GRIM_CAP) : configured;
+    }
+
+    /** Grim 硬上限（3.00 米）；GUI / 文档用它说明 GRIM CAP 会削掉多少距离。 */
+    public static float getReachGrimCap() {
+        return REACH_GRIM_CAP;
     }
 
     public static boolean isDebugEnabled() {
@@ -3258,6 +3607,24 @@ public final class OpenMaverFeatures {
     public static float getReachChance() { return reachChance; }
     public static void setReachChance(float value) {
         reachChance = clamp(value, 1.0F, 100.0F);
+        markDirty();
+    }
+
+    public static boolean isReachGrimCheck() { return reachGrimCheck; }
+    public static void setReachGrimCheck(boolean value) {
+        reachGrimCheck = value;
+        markDirty();
+    }
+
+    public static int getReachPingSpoof() { return reachPingSpoof; }
+    public static void setReachPingSpoof(int value) {
+        reachPingSpoof = clamp(value, 0, 400);
+        markDirty();
+    }
+
+    public static int getReachPingJitter() { return reachPingJitter; }
+    public static void setReachPingJitter(int value) {
+        reachPingJitter = clamp(value, 0, 150);
         markDirty();
     }
 
@@ -3588,6 +3955,7 @@ public final class OpenMaverFeatures {
         }
         try (FileOutputStream out = new FileOutputStream(file)) {
             out.write(("settings.version=" + SETTINGS_VERSION
+                    + "\nui.clickgui.key=" + guiKeyNameForSave()
                     + "\naim=" + aimEnabled
                     + "\nesp=" + espEnabled
                     + "\nfastplace.delayTicks=" + fastPlaceDelayTicks
@@ -3632,6 +4000,9 @@ public final class OpenMaverFeatures {
                     + "\nautoclicker.humanize=" + autoclickerHumanize
                     + "\nreach.distance=" + reachDistance
                     + "\nreach.chance=" + Math.round(reachChance)
+                    + "\nreach.grimCheck=" + reachGrimCheck
+                    + "\nreach.pingSpoof=" + reachPingSpoof
+                    + "\nreach.pingJitter=" + reachPingJitter
                     + "\nreach.debug=" + reachDebugChat
                     + "\ncriticals.mode=" + CRITICALS_MODE_KEYS[
                             clamp(criticalsMode, CRITICALS_PACKET, CRITICALS_LAST)]
@@ -4709,6 +5080,11 @@ public final class OpenMaverFeatures {
         if ("field_70131_O".equals(srg)) return new String[] {mcp, srg, "K"};
         if ("field_70177_z".equals(srg)) return new String[] {mcp, srg, "y"};
         if ("field_70125_A".equals(srg)) return new String[] {mcp, srg, "z"};
+        if ("field_175172_bI".equals(srg)) return new String[] {mcp, srg, "bK"};
+        if ("field_175166_bJ".equals(srg)) return new String[] {mcp, srg, "bL"};
+        if ("field_175167_bK".equals(srg)) return new String[] {mcp, srg, "bM"};
+        if ("field_175164_bL".equals(srg)) return new String[] {mcp, srg, "bN"};
+        if ("field_175165_bM".equals(srg)) return new String[] {mcp, srg, "bO"};
         if ("field_72340_a".equals(srg)) return new String[] {mcp, srg, "a"};
         if ("field_72338_b".equals(srg)) return new String[] {mcp, srg, "b"};
         if ("field_72339_c".equals(srg)) return new String[] {mcp, srg, "c"};

@@ -13,6 +13,14 @@ public class Keyboard {
     public static final int KEY_SPACE = 57;
     // LWJGL 2 key table: left shift is 42, right shift is 54.
     public static final int KEY_RSHIFT = 54;
+    public static final int KEY_LSHIFT = 42;
+    public static final int KEY_SEMICOLON = 39;
+    public static final int KEY_APOSTROPHE = 40;
+    public static final int KEY_GRAVE = 41;
+    public static final int KEY_TAB = 15;
+    public static final int KEY_NUMPADENTER = 156;
+    /** LWJGL 2 里右 Alt 叫 KEY_RMENU（184），没有 KEY_RALT。 */
+    public static final int KEY_RMENU = 184;
     public static final int KEY_J = 36;
     public static final int KEY_M = 50;
     public static final int KEY_RCONTROL = 157;

@@ -69,7 +69,7 @@ constexpr obf::XorStr<sizeof("[OpenMaver] Core initialized\n")> kMsgInit(
     "[OpenMaver] Core initialized\n");
 constexpr obf::XorStr<sizeof("[OpenMaver] Core shutdown\n")> kMsgShutdown(
     "[OpenMaver] Core shutdown\n");
-constexpr obf::XorStr<sizeof("B2.1.2")> kVersion("B2.1.2");
+constexpr obf::XorStr<sizeof("B2.2.0")> kVersion("B2.2.0");
 
 // 核心是否已初始化（单线程初始化，简单布尔即可）
 bool g_initialized = false;
@@ -122,24 +122,24 @@ bool isInitialized() {
 // ===========================================================================
 extern "C" {
 
-void JNICALL Java_OpenMaver_init(JNIEnv* env, jclass clazz) {
+void JNICALL Java_OpenMaver_nativeInit(JNIEnv* env, jclass clazz) {
     // 本方法不需要使用 env / clazz，显式忽略以避免 -Wunused-parameter
     (void)env;
     (void)clazz;
     openmaver::coreInit();
 }
 
-void JNICALL Java_OpenMaver_shutdown(JNIEnv* env, jclass clazz) {
+void JNICALL Java_OpenMaver_nativeShutdown(JNIEnv* env, jclass clazz) {
     (void)env;
     (void)clazz;
     openmaver::coreShutdown();
 }
 
-jstring JNICALL Java_OpenMaver_getVersion(JNIEnv* env, jclass clazz) {
+jstring JNICALL Java_OpenMaver_nativeVersion(JNIEnv* env, jclass clazz) {
     (void)clazz;
 
     // 版本号同样以密文形式存放，运行时还原
-    char buf[obf::XorStr<sizeof("B2.1.2")>::length()];
+    char buf[obf::XorStr<sizeof("B2.2.0")>::length()];
     obf::decode(kVersion, buf);
     return env->NewStringUTF(buf);
 }

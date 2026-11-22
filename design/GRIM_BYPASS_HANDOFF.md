@@ -28,6 +28,31 @@ Grim 只会取当前/上一 tick look 的最小值，所以 ≤3.0 即必然不�
 > Round 2 修正：`aggressive=3.30` 实测在 3.12~3.17 的命中就是“真实 3.02~3.07 格”，
 > 一旦 `PacketOrderB` 不再取消攻击，`Reach` 会立刻接手 flag。
 
+### 1.1.1 Reach 的绕过面（源码级，2026-11 复核）
+
+Grim `combat/Reach`（2.0 分支源码）量的不是「客户端报的距离」：
+
+- `INTERACT_ENTITY` 入队，真正测量在下一条飞行包；坐标 `player.lastX/lastY/lastZ`、
+  视角 `lastXRot/xRot` + `lastYRot/yRot`。
+- 目标盒子 `PacketEntity.getPossibleCollisionBoxes()`：`onFirstTransaction`（服务端发 S32）
+  到 `onSecondTransaction`（收到 C0F）之间取 `combineCollisionBox(old, new)` 并集。
+- 扩张：1.8 `+0.1`、`Reach.threshold +0.0005`、上一包非位置包再 `+0.03`；
+  判据是所有「look × 眼高 × 可能盒」的最小距离 `> 3.0`。
+- 实时取消分支 `isKnownInvalid`：攻击包到达时点到盒最短距离 `> 3 + (0.03?)` 直接 cancel。
+- 提前返回：`CREATIVE` 与 `player.vehicle != null`。
+
+对应本仓库实现：
+
+| 手段 | 代码 | 说明 |
+|---|---|---|
+| 事务延迟 | `mc/TransactionDelayFeature.java` + `reach.pingSpoof/pingJitter` | 出站 C0F 压后，拉长并集窗口；FIFO、单包 ≤1.5s、断线清空 |
+| 相机/服务端分层上限 | `attackNearestEntityInReach` 的 `cameraCap` / `serverCap` | 相机 ≤ DISTANCE，上报姿态 ≤ 3.00；后撤/侧移白送一步 |
+| 载具 | `ridingEntity` 检测 | 2.0 直接 return；3.x 需复测 |
+| 0.03 不确定度 | 待接（出刀前补一条 C04） | +0.03 |
+
+> 3.x 的 alert 文案带 `type=...`，判据形状一致；载具与 1.8 hitbox 处理有重构，
+> 上线前用 `/grim verbose` 复测。
+
 ### 1.2 Aim
 
 - `AimDuplicateLook`：连续两次 rotation 完全相同（yaw/pitch 都不变）即 flag。

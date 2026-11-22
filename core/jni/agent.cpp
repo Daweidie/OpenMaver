@@ -177,9 +177,9 @@ jint startOpenMaver(JavaVM* vm, const char* options) {
 
     // 显式绑定 native 方法：不依赖 System.loadLibrary 的路径解析
     JNINativeMethod methods[] = {
-        {const_cast<char*>("init"),       const_cast<char*>("()V"),                  reinterpret_cast<void*>(&Java_OpenMaver_init)},
-        {const_cast<char*>("shutdown"),   const_cast<char*>("()V"),                  reinterpret_cast<void*>(&Java_OpenMaver_shutdown)},
-        {const_cast<char*>("getVersion"), const_cast<char*>("()Ljava/lang/String;"), reinterpret_cast<void*>(&Java_OpenMaver_getVersion)},
+        {const_cast<char*>("nativeInit"),  const_cast<char*>("()V"),                  reinterpret_cast<void*>(&Java_OpenMaver_nativeInit)},
+        {const_cast<char*>("nativeShutdown"), const_cast<char*>("()V"),               reinterpret_cast<void*>(&Java_OpenMaver_nativeShutdown)},
+        {const_cast<char*>("nativeVersion"), const_cast<char*>("()Ljava/lang/String;"), reinterpret_cast<void*>(&Java_OpenMaver_nativeVersion)},
     };
     if (env->RegisterNatives(clazz, methods, 3) != JNI_OK) {
         agentLog("RegisterNatives failed");

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Reach 聊天调试（ReachDebug）回归测试。
+# Reach 距离、上报视角与聊天调试回归测试。
 #
 # 验证：
-#   - SWING / SKIP / HIT 行的字段与中文说明一致（cap、extra、border、yaw/pitch、anim）
+#   - 0~5 米原始模式、独立 Grim 距离校验、MCP/SRG/obf 上报坐标与视角
+#   - SWING / SKIP / HIT 行字段（cap、distance、border、yaw/pitch、anim）
 #   - 聊天框每秒限流 10 行，HIT 等关键行不受限，日志历史不丢事件
 #   - reach.debug 写入 openmaver.properties，热重载能同步开关与 Reach 参数
 #
@@ -21,6 +22,21 @@ if [[ ! -d build/mc-classes || ! -d build/mcstubs-classes || ! -d build/java-cla
 fi
 
 classpath="build/mc-classes:build/java-classes:build/mcstubs-classes"
+# 事务延迟测试需要真实 netty（EmbeddedChannel）；mcstubs 里的 netty 只有签名。
+netty_jar="${OPENMAVER_NETTY_JAR:-$HOME/.local/share/PrismLauncher/libraries/io/netty/netty-all/4.0.23.Final/netty-all-4.0.23.Final.jar}"
+if [[ ! -f "$netty_jar" ]]; then
+    netty_jar="$(ls -1 "$HOME/.local/share/PrismLauncher/libraries"/io/netty/netty-all/*/netty-all-*.jar 2>/dev/null | head -1 || true)"
+fi
+runtime_cp="$classpath"
+if [[ -n "$netty_jar" && -f "$netty_jar" ]]; then
+    runtime_cp="$out_dir:$netty_jar:$classpath"
+else
+    echo "[reach-test] netty-all 未找到，跳过 TransactionDelayTest" >&2
+fi
 mkdir -p "$out_dir"
-javac -encoding UTF-8 -cp "$classpath" -d "$out_dir" tools/reach-test/ReachDebugTest.java
+javac -encoding UTF-8 -cp "$runtime_cp" -d "$out_dir" tools/reach-test/*.java
 java -cp "$out_dir:$classpath" ReachDebugTest
+java -cp "$out_dir:$classpath" ReachSyncTest
+if [[ -n "$netty_jar" && -f "$netty_jar" ]]; then
+    java -cp "$runtime_cp" TransactionDelayTest
+fi

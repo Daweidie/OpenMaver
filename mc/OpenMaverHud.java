@@ -472,7 +472,9 @@ public final class OpenMaverHud {
             return min == max ? Integer.toString(min) : min + "-" + max;
         }
         if ("Reach".equals(name)) {
-            return number(OpenMaverFeatures.getEffectiveReachDistance()) + "m";
+            // GRIM CAP 生效时标出来，避免 CAP 3.00 看起来像“距离没生效”。
+            return number(OpenMaverFeatures.getEffectiveReachDistance()) + "m"
+                    + (OpenMaverFeatures.isReachGrimCheck() ? "G" : "");
         }
         if ("Criticals".equals(name)) {
             return OpenMaverFeatures.getCriticalsModeName();

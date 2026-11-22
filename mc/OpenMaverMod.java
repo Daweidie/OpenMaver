@@ -33,7 +33,7 @@ public final class OpenMaverMod {
 
     public static final String MODID = "openmaver";
     public static final String NAME = "OpenMaver";
-    public static final String VERSION = "B2.1.2";
+    public static final String VERSION = "B2.2.0";
 
     /** 客户端事件处理器实例（init 阶段创建并注册）。 */
     private OpenMaverClientHandler clientHandler;

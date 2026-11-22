@@ -40,18 +40,18 @@ public final class ReachDebugTest {
                 has(header, "DEBUG ON") && has(header, "cap=5.00m")
                         && has(header, "dist=5.00") && has(header, "profile=BALANCED"));
 
-        ReachDebug.swing(0, 5.0D, "BALANCED");
+        ReachDebug.swing(0, 5.0D, 5.0D, "BALANCED");
         ReachDebug.skip("chance 42% >= 55%");
         ReachDebug.skipImportant("hurt Steve");
-        ReachDebug.hit("Steve", 4.87D, 5.0D, 0.1D, 12.5F, -4.2F, true);
+        ReachDebug.hit("Steve", 4.87D, 5.0D, 4.72D, 5.0D, 0.1D, 12.5F, -4.2F, true);
 
         List<String> lines = ReachDebug.drain();
-        check("swing line carries chance/distance/cap",
-                has(lines, "SWING p=0 chance=100% dist=5.00 cap=5.00 BALANCED"));
+        check("swing line carries chance/distance/camera/server caps",
+                has(lines, "SWING p=0 chance=100% dist=5.00 cam=5.00 srv=5.00 BALANCED"));
         check("chance miss is reported", has(lines, "SKIP chance 42% >= 55%"));
         check("hurt wait is reported as important", has(lines, "SKIP hurt Steve"));
         check("hit line carries distance/border/rotation",
-                has(lines, "HIT Steve dist=4.87/5.00 border=0.10 yaw=12.5 pitch=-4.2 anim=c0a swing=1"));
+                has(lines, "HIT Steve cam=4.87/5.00 srv=4.72/5.00 border=0.10 yaw=12.5 pitch=-4.2 anim=c0a swing=1"));
         check("history keeps every event without chat throttling",
                 has(ReachDebug.history(), "HIT Steve")
                         && has(ReachDebug.history(), "SKIP hurt Steve"));
@@ -89,6 +89,7 @@ public final class ReachDebugTest {
     }
 
     private static void distanceRange() throws Exception {
+        OpenMaverFeatures.setReachGrimCheck(false);
         Method auraRange = OpenMaverFeatures.class.getDeclaredMethod("effectiveKillAuraRange");
         auraRange.setAccessible(true);
         for (boolean bypass : new boolean[] {true, false}) {
@@ -148,7 +149,7 @@ public final class ReachDebugTest {
         }
     }
 
-    public static final class ReachPlayer extends net.minecraft.entity.EntityLivingBase {
+    public static class ReachPlayer extends net.minecraft.entity.EntityLivingBase {
         boolean visible;
         int swings;
 
@@ -213,7 +214,7 @@ public final class ReachDebugTest {
         check("log history keeps all 40 skips", count(ReachDebug.history(), "SKIP spam") == 40);
 
         for (int i = 0; i < 15; i++) {
-            ReachDebug.hit("Bot" + i, 2.5D, 3.0D, 0.1305D, 0.0F, 0.0F, false);
+            ReachDebug.hit("Bot" + i, 2.5D, 3.0D, 2.48D, 3.0D, 0.1305D, 0.0F, 0.0F, false);
         }
         check("hit lines bypass the chat throttle",
                 count(ReachDebug.drain(), "HIT Bot") == 15);
@@ -226,21 +227,30 @@ public final class ReachDebugTest {
         try {
             System.setProperty("openmaver.features", tmp.getAbsolutePath());
             OpenMaverFeatures.setReachDistance(5.0F);
+            OpenMaverFeatures.setReachGrimCheck(false);
             OpenMaverFeatures.setReachDebugChat(true);
             OpenMaverFeatures.flushSettings();
             check("reach.debug=true is persisted", read(tmp).contains("reach.debug=true"));
             check("5m reach distance is persisted as an absolute value",
                     read(tmp).contains("reach.distance=5.0"));
+            check("raw distance mode is persisted", read(tmp).contains("reach.grimCheck=false"));
             check("no legacy reach.extra is written back",
                     !read(tmp).contains("reach.extra="));
 
+            OpenMaverFeatures.setReachPingSpoof(120);
+            OpenMaverFeatures.setReachPingJitter(60);
+            OpenMaverFeatures.flushSettings();
+            check("ping spoof is persisted",
+                    read(tmp).contains("reach.pingSpoof=120")
+                            && read(tmp).contains("reach.pingJitter=60"));
+
             // 热重载：把配置换成 false 后调用私有 refreshSettings，验证 debug 通道同步关闭。
-            write(tmp, "settings.version=22\nreach.distance=3.0\nreach.chance=100\nreach.debug=false\n");
+            write(tmp, "settings.version=23\nreach.distance=3.0\nreach.chance=100\nreach.debug=false\n");
             reload();
             check("reload applies reach.debug=false",
                     !OpenMaverFeatures.isReachDebugChat() && !ReachDebug.isEnabled());
 
-            write(tmp, "settings.version=22\nreach.distance=2.50\nreach.chance=55\nreach.debug=true\n");
+            write(tmp, "settings.version=23\nreach.distance=2.50\nreach.chance=55\nreach.debug=true\n");
             reload();
             check("reload applies reach.debug=true",
                     OpenMaverFeatures.isReachDebugChat() && ReachDebug.isEnabled());
@@ -250,29 +260,56 @@ public final class ReachDebugTest {
             List<String> header = ReachDebug.drain();
             check("reload re-announces with the new cap/chance",
                     has(header, "DEBUG ON") && has(header, "cap=2.50m") && has(header, "chance=55%"));
-            write(tmp, "settings.version=22\nreach.distance=5.0\n");
+            write(tmp, "settings.version=23\nreach.distance=5.0\nreach.grimCheck=false\n");
             reload();
             check("reload preserves the 5m endpoint", OpenMaverFeatures.getEffectiveReachDistance() == 5.0F);
-            write(tmp, "settings.version=22\nreach.distance=8.0\n");
+            write(tmp, "settings.version=23\nreach.distance=5.0\nreach.pingSpoof=250\nreach.pingJitter=0\n");
+            reload();
+            check("reload applies ping spoof", OpenMaverFeatures.getReachPingSpoof() == 250
+                    && OpenMaverFeatures.getReachPingJitter() == 0);
+            write(tmp, "settings.version=23\nreach.distance=5.0\nreach.pingSpoof=900\nreach.pingJitter=900\n");
+            reload();
+            check("ping spoof clamps to 400/150", OpenMaverFeatures.getReachPingSpoof() == 400
+                    && OpenMaverFeatures.getReachPingJitter() == 150);
+            OpenMaverFeatures.setReachPingSpoof(0);
+            OpenMaverFeatures.setReachPingJitter(40);
+            write(tmp, "settings.version=23\nreach.distance=8.0\n");
             reload();
             check("reload clamps distances above 5m", OpenMaverFeatures.getReachDistance() == 5.0F);
-            write(tmp, "settings.version=22\nreach.distance=-1.0\n");
+            write(tmp, "settings.version=23\nreach.distance=-1.0\n");
             reload();
             check("reload clamps negative distances to zero", OpenMaverFeatures.getReachDistance() == 0.0F);
             // 旧配置只有 reach.extra：迁移后等价于 3.0 + extra，上限为 5 米。
-            write(tmp, "settings.version=22\nreach.extra=0.2\nreach.debug=true\n");
+            write(tmp, "settings.version=23\nreach.extra=0.2\nreach.debug=true\n");
             reload();
             check("legacy reach.extra migrates to an absolute distance",
                     Math.abs(OpenMaverFeatures.getReachDistance() - 3.2F) < 1.0E-4F);
-            write(tmp, "settings.version=22\nreach.extra=4.0\n");
+            write(tmp, "settings.version=23\nreach.extra=4.0\n");
             reload();
             check("legacy migration respects the 5m limit", OpenMaverFeatures.getReachDistance() == 5.0F);
-            write(tmp, "settings.version=22\nreach.distance=4.5\nreach.extra=0.2\n");
+            write(tmp, "settings.version=23\nreach.distance=4.5\nreach.extra=0.2\n");
             reload();
             check("absolute distance takes precedence over legacy extra", OpenMaverFeatures.getReachDistance() == 4.5F);
-            write(tmp, "settings.version=22\n");
+            write(tmp, "settings.version=23\n");
             reload();
             check("missing distance retains the 3m default", OpenMaverFeatures.getReachDistance() == 3.0F);
+            check("missing grimCheck defaults to off", !OpenMaverFeatures.isReachGrimCheck());
+            OpenMaverFeatures.setReachGrimCheck(true);
+            OpenMaverFeatures.markDirty();
+            OpenMaverFeatures.flushSettings();
+            check("Grim cap mode is persisted", read(tmp).contains("reach.grimCheck=true"));
+            write(tmp, "settings.version=23\nreach.distance=4.2\nreach.grimCheck=true\nbypass.enabled=false\n");
+            reload();
+            check("Grim cap limits the distance to 3.00m with global bypass off",
+                    OpenMaverFeatures.getReachDistance() == 4.2F
+                            && OpenMaverFeatures.getEffectiveReachDistance() == 3.0F);
+            // v22 及更早把 GRIM CHECK 默认写成 true 且硬压 2.97 米：升级时必须
+            // 自动解开，否则 DISTANCE 滑块依旧是摆设。
+            write(tmp, "settings.version=22\nreach.distance=4.2\nreach.grimCheck=true\n");
+            reload();
+            check("legacy grimCheck=true is migrated to off",
+                    !OpenMaverFeatures.isReachGrimCheck()
+                            && OpenMaverFeatures.getEffectiveReachDistance() == 4.2F);
         } finally {
             OpenMaverFeatures.setReachDebugChat(false);
             if (previous == null) {
@@ -292,6 +329,10 @@ public final class ReachDebugTest {
         Field modified = OpenMaverFeatures.class.getDeclaredField("settingsModified");
         modified.setAccessible(true);
         modified.setLong(null, Long.MIN_VALUE);
+        // 迁移会置 settingsDirty；先清掉，确保每次 reload 都真的读文件。
+        Field dirty = OpenMaverFeatures.class.getDeclaredField("settingsDirty");
+        dirty.setAccessible(true);
+        dirty.setBoolean(null, false);
         Method refresh = OpenMaverFeatures.class.getDeclaredMethod("refreshSettings");
         refresh.setAccessible(true);
         refresh.invoke(null);

@@ -33,9 +33,13 @@ import java.util.Set;
 @SideOnly(Side.CLIENT)
 public final class OpenMaverClientHandler {
 
-    /** tick 轮询用的 RSHIFT 边沿状态（键盘事件之外的第二条路径）。 */
+    /** tick 轮询用的开关键边沿状态（键盘事件之外的第二条路径）。 */
     private boolean rightShiftDown = false;
     private long lastToggleNanos = 0L;
+    /** 按键桥出错日志的限流时间戳。 */
+    private long lastKeyErrorNanos = 0L;
+    /** 第一帧键盘事件只打印一次键名，方便确认右 Shift 实际报的是哪个键码。 */
+    private boolean firstKeyLogged = false;
 
     /**
      * 已经按下、尚未收到释放事件的按键。
@@ -49,9 +53,8 @@ public final class OpenMaverClientHandler {
     /** 是否已经处理过「首次进入世界」。 */
     private boolean worldEntered = false;
 
-    /** 出错后停用，避免每帧刷屏 / 反复抛异常。 */
+    /** 出错后停用，避免每帧刷屏 / 反复抛异常（按键路径不再受此限制）。 */
     private boolean failed = false;
-    private boolean keyFailed = false;
     private boolean renderTickFailed = false;
     private boolean motionBlurFailed = false;
     private boolean tickSeen = false;
@@ -66,7 +69,12 @@ public final class OpenMaverClientHandler {
         }
         String text = line.toString();
         System.err.println(text);
-        try (FileOutputStream out = new FileOutputStream("/tmp/openmaver-events.log", true)) {
+        // 事件日志跟着系统临时目录走：写死 /tmp 在 Windows 上会静默失败，
+        // 于是「别人那边没反应」时连一行排查线索都拿不到。
+        String logPath = System.getProperty("openmaver.events.log",
+                System.getProperty("java.io.tmpdir", ".") + java.io.File.separator
+                        + "openmaver-events.log");
+        try (FileOutputStream out = new FileOutputStream(logPath, true)) {
             out.write((text + System.lineSeparator()).getBytes("UTF-8"));
         } catch (Throwable ignored) {
             // Diagnostics must not interfere with the game loop.
@@ -75,6 +83,15 @@ public final class OpenMaverClientHandler {
 
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
+        // 轮询兜底放在最前面，且自带 try/catch：
+        // 即使别的功能在 tick 里抛过一次异常把 failed 置位，开关键位也还能用。
+        if (event != null && event.phase == TickEvent.Phase.END) {
+            try {
+                pollClickGui();
+            } catch (Throwable t) {
+                logThrottled("clickgui poll", t);
+            }
+        }
         if (failed) {
             return;
         }
@@ -128,7 +145,6 @@ public final class OpenMaverClientHandler {
                 debug("world/player available; starting core", null);
                 onEnterWorld();
             }
-            pollClickGui();
             ModuleManager.onTick();
         } catch (Throwable t) {
             failed = true;
@@ -238,7 +254,7 @@ public final class OpenMaverClientHandler {
     }
 
     /**
-     * 键盘事件路径：RSHIFT 开关 ClickGUI，其余按键匹配模块绑定键位。
+     * 键盘事件路径：开关键位开关 ClickGUI，其余按键匹配模块绑定键位。
      *
      * <p>Forge 的 {@link InputEvent.KeyInputEvent} 能拿到每一次按下/释放，不会像 tick
      * 轮询那样漏掉快速点按。tick 里仍保留一条轮询兜底路径，两条路径共享
@@ -246,14 +262,21 @@ public final class OpenMaverClientHandler {
      *
      * <p>允许从暂停菜单（{@code GuiIngameMenu}）直接打开：窗口失去焦点后 Minecraft
      * 会自动暂停并弹出该菜单，此时不应要求玩家先点「回到游戏」。
+     *
+     * <p><b>不要在这里永久停用整条按键桥</b>：早先的实现遇到一次异常就把
+     * {@code keyFailed} 置位，那之后所有按键（包括开关键）在本局游戏里彻底失效，
+     * 玩家只会看到「按了没反应」。现在改为限流记录日志并继续处理后续事件。
      */
     @SubscribeEvent
     public void onKeyInput(InputEvent.KeyInputEvent event) {
-        if (failed || keyFailed) {
-            return;
-        }
         try {
             int key = Keyboard.getEventKey();
+            if (!firstKeyLogged) {
+                firstKeyLogged = true;
+                debug("first key event: code=" + key + " name=" + Keyboard.getKeyName(key)
+                        + ", clickgui key=" + OpenMaverFeatures.getGuiKeyName()
+                        + " (" + OpenMaverFeatures.getGuiKeyCode() + ")", null);
+            }
             if (!Keyboard.getEventKeyState()) {
                 heldKeys.remove(Integer.valueOf(key));
                 return;
@@ -263,15 +286,24 @@ public final class OpenMaverClientHandler {
             if (!heldKeys.add(Integer.valueOf(key))) {
                 return;
             }
-            if (key == Keyboard.KEY_RSHIFT) {
+            if (key == OpenMaverFeatures.getGuiKeyCode()) {
                 toggleClickGui("event");
                 return;
             }
             toggleModuleKey(key);
         } catch (Throwable t) {
-            keyFailed = true;
-            debug("key bridge disabled: " + t, t);
+            logThrottled("key bridge", t);
         }
+    }
+
+    /** 出错时最多 2 秒记一条，避免某个坏掉的键每帧刷日志。 */
+    private void logThrottled(String where, Throwable error) {
+        long now = System.nanoTime();
+        if (now - lastKeyErrorNanos < 2_000_000_000L) {
+            return;
+        }
+        lastKeyErrorNanos = now;
+        debug(where + " error (continuing): " + error, error);
     }
 
     /** 清理丢失释放事件的按键，防止窗口失焦后某个键永远无法再次触发。 */
@@ -321,7 +353,8 @@ public final class OpenMaverClientHandler {
 
     /** tick 轮询兜底：即使 KeyInputEvent 因环境原因没送达，也能开关。 */
     private void pollClickGui() {
-        boolean down = Keyboard.isKeyDown(Keyboard.KEY_RSHIFT);
+        int guiKey = OpenMaverFeatures.getGuiKeyCode();
+        boolean down = Keyboard.isKeyDown(guiKey);
         if (down && !rightShiftDown) {
             toggleClickGui("poll");
         }
@@ -334,17 +367,31 @@ public final class OpenMaverClientHandler {
             return;
         }
         Minecraft mc = Minecraft.getMinecraft();
-        if (mc == null || readField(mc, "theWorld", "field_71441_e") == null) {
+        if (mc == null) {
+            return;
+        }
+        if (readField(mc, "theWorld", "field_71441_e") == null) {
+            // 还没进世界：不是故障，但记一行方便排查「按了没反应」。
+            if (OpenMaverFeatures.isDebugEnabled()) {
+                debug("clickgui ignored (" + source + "): not in world yet", null);
+            }
             return;
         }
         lastToggleNanos = now;
-        GuiScreen current = (GuiScreen) readField(mc, "currentScreen", "field_71462_r");
-        debug("RSHIFT pressed (" + source + "); currentScreen="
-                + (current == null ? "null" : current.getClass().getName()), null);
-        if (current instanceof GuiOpenMaverClickGui) {
-            ((GuiOpenMaverClickGui) current).closeGui();
-        } else if (current == null || isPauseMenu(current)) {
-            mc.displayGuiScreen(new GuiOpenMaverClickGui(current));
+        try {
+            GuiScreen current = (GuiScreen) readField(mc, "currentScreen", "field_71462_r");
+            debug("clickgui key " + OpenMaverFeatures.getGuiKeyName() + " (" + source
+                    + "); currentScreen="
+                    + (current == null ? "null" : current.getClass().getName()), null);
+            if (current instanceof GuiOpenMaverClickGui) {
+                ((GuiOpenMaverClickGui) current).closeGui();
+            } else if (current == null || isPauseMenu(current)) {
+                mc.displayGuiScreen(new GuiOpenMaverClickGui(current));
+            }
+        } catch (Throwable t) {
+            // GUI 构造 / 首次布局在个别显卡/驱动上会抛异常，这里只记录，
+            // 不能让异常冒到 tick 桥把整客户端停掉。
+            logThrottled("clickgui toggle", t);
         }
     }
 

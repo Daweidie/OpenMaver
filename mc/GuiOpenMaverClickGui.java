@@ -200,6 +200,13 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private float scrollVisual;
     /** 壁纸页文件列表的滚动偏移。 */
     private int wallpaperScroll;
+
+    /** Configs 页：当前输入 / 选中的档案名（不含 .cfg）。 */
+    private String profileName = "";
+    /** Configs 页：名字输入框是否获得焦点（获得焦点时键盘输入写进名字）。 */
+    private boolean profileFieldFocused;
+    /** Configs 页档案列表的滚动偏移。 */
+    private int configScroll;
     private long lastAnimationAt;
     private long frameNow;
     private float openProgress;
@@ -848,7 +855,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private void addReachSettings(Entry entry) {
-        // 距离直接是攻击距离本身（0 ~ 5.0 米），与运行期上限一致。
+        // DISTANCE 就是实际攻击距离；GRIM CAP 会把它压到 3.00 米（Grim 上限）。
         entry.settings.add(Setting.slider("DISTANCE", 0.0F, 5.0F, 0.05F, 2, " m", new Binding() {
             public double get() { return OpenMaverFeatures.getReachDistance(); }
             public void set(double value) { OpenMaverFeatures.setReachDistance((float) value); }
@@ -856,6 +863,20 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         entry.settings.add(Setting.slider("CHANCE", 1.0F, 100.0F, 1.0F, 0, " %", new Binding() {
             public double get() { return OpenMaverFeatures.getReachChance(); }
             public void set(double value) { OpenMaverFeatures.setReachChance((float) value); }
+        }));
+        // 默认关闭：3.00 米等于原版上限，开着就不会多打任何距离。
+        entry.settings.add(Setting.check("GRIM CAP", new Binding() {
+            public double get() { return OpenMaverFeatures.isReachGrimCheck() ? 1 : 0; }
+            public void set(double value) { OpenMaverFeatures.setReachGrimCheck(value > 0.5D); }
+        }));
+        // Ping spoof：压后事务确认，放大服务端的“可能位置”窗口。0 = 关闭。
+        entry.settings.add(Setting.slider("PING SPOOF", 0.0F, 400.0F, 10.0F, 0, " ms", new Binding() {
+            public double get() { return OpenMaverFeatures.getReachPingSpoof(); }
+            public void set(double value) { OpenMaverFeatures.setReachPingSpoof((int) Math.round(value)); }
+        }));
+        entry.settings.add(Setting.slider("SPOOF JITTER", 0.0F, 150.0F, 5.0F, 0, " ms", new Binding() {
+            public double get() { return OpenMaverFeatures.getReachPingJitter(); }
+            public void set(double value) { OpenMaverFeatures.setReachPingJitter((int) Math.round(value)); }
         }));
         entry.settings.add(Setting.check("DEBUG CHAT", new Binding() {
             public double get() { return OpenMaverFeatures.isReachDebugChat() ? 1 : 0; }
@@ -1693,6 +1714,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     press("colsys:" + hit.systemId);
                     OpenMaverFeatures.playUiClick(1.0F);
                     systemPage = hit.systemId;
+                    profileFieldFocused = false;
+                    configScroll = 0;
                     modeAt = System.currentTimeMillis();
                     layout();
                 }
@@ -2218,39 +2241,340 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
     }
 
-    private void drawConfigsPage(FontRenderer font, int x, int y, int w, int h) {
-        int cardH = h >= 250 ? 84 : 70;
-        roundRect(x, y, w, cardH, 9, withAlpha(0xFFFFFF, 0x14));
-        roundRect(x + 1, y + 1, w - 2, cardH - 2, 8, CARD_FILL);
-        Gui.drawRect(x + 12, y + 1, x + w - 12, y + 2, withAlpha(0xFFFFFF, 0x12));
+    // ------------------------------------------------------------------
+    // Configs 页：配置档案（保存到 xxx / 导入 xxx / 删除 / 打开目录）
+    // ------------------------------------------------------------------
 
-        int titleY = y + (cardH - 26) / 2;
-        hud(font, "Default", x + 14, titleY, TEXT);
-        hud(font, ".jsonc", x + 14 + hudWidth(font, "Default"), titleY, FAINT);
+    /** 名字输入框高度。 */
+    private static final int CFG_FIELD_H = 26;
+    /** 操作按钮高度。 */
+    private static final int CFG_BTN_H = 22;
+    /** 档案行高度。 */
+    private static final int CFG_ROW_H = 26;
+    private static final int CFG_ROW_GAP = 4;
+    private static final int CFG_BTN_GAP = 6;
+    private static final int CFG_DEL_W = 18;
+    private static final int CFG_ROW_SAVE_W = 34;
 
-        int barW = w - 28;
-        int barY = y + cardH - 22;
-        roundRect(x + 14, barY, barW, 5, 2, withAlpha(0xFFFFFF, 0x12));
-        int enabled = enabledCount();
-        int total = entries.size();
-        if (enabled > 0 && total > 0) {
-            int fill = Math.max(1, barW * enabled / total);
-            roundRect(x + 14, barY, fill, 5, 2, withAlpha(ACCENT, 0xD8));
-            roundRect(x + 14, barY, fill, 2, 1, withAlpha(0xFFFFFF, 0x30));
-            fillCircle(x + 13 + fill, barY + 2, 3, withAlpha(ACCENT, 0x30));
-        }
+    private static final String[] CFG_BUTTONS = {"NEW", "SAVE", "LOAD", "DEL", "FOLDER"};
+    private static final int CFG_ERR = 0xFFE5826E;
 
-        int rowH = h >= 250 ? 44 : 38;
-        int stride = rowH + 6;
-        int rowY = y + cardH + 16;
-        drawConfigFile(font, x, rowY, w, rowH, "default.jsonc");
-        drawConfigFile(font, x, rowY + stride, w, rowH, "openmaver.properties");
+    private int configsFieldY() {
+        return panelY + HEADER_H + 8;
     }
 
-    private void drawConfigFile(FontRenderer font, int x, int y, int w, int h, String name) {
-        roundRect(x, y, w, h, 8, withAlpha(0xFFFFFF, 0x07));
-        roundRect(x, y + 2, 2, h - 4, 1, withAlpha(ACCENT, 0x66));
-        hud(font, name, x + 12, y + (h - 11) / 2 + 1, TEXT);
+    private int configsButtonsY() {
+        return configsFieldY() + CFG_FIELD_H + 8;
+    }
+
+    /** 列表标题（SAVED PROFILES）的基线。 */
+    private int configsListTop() {
+        return configsButtonsY() + CFG_BTN_H + 10;
+    }
+
+    private int configsRowsTop() {
+        return configsListTop() + 14;
+    }
+
+    private int configsStatusY() {
+        return panelY + panelH - FOOTER_H - 8;
+    }
+
+    private int configsListBottom() {
+        return Math.max(configsRowsTop() + CFG_ROW_H, configsStatusY() - 6);
+    }
+
+    private int configsRowStride() {
+        return CFG_ROW_H + CFG_ROW_GAP;
+    }
+
+    private int configsMaxScroll() {
+        int visible = Math.max(1, configsListBottom() - configsRowsTop());
+        int content = ConfigProfiles.listNames().size() * configsRowStride();
+        return Math.max(0, content - visible);
+    }
+
+    private void clampConfigScroll() {
+        configScroll = clampInt(configScroll, 0, configsMaxScroll());
+    }
+
+    /** 一行里 5 个操作按钮的等宽布局（绘制与点击共用）。 */
+    private int configsButtonWidth() {
+        int count = CFG_BUTTONS.length;
+        return Math.max(30, (listW - CFG_BTN_GAP * (count - 1)) / count);
+    }
+
+    private int configsButtonsX() {
+        int count = CFG_BUTTONS.length;
+        int total = configsButtonWidth() * count + CFG_BTN_GAP * (count - 1);
+        return listX + Math.max(0, (listW - total) / 2);
+    }
+
+    private void drawConfigsPage(FontRenderer font, int x, int y, int w, int h) {
+        long now = frameNow != 0L ? frameNow : System.currentTimeMillis();
+        clampConfigScroll();
+
+        // ---------------- 名字输入框 ----------------
+        int fieldY = configsFieldY();
+        boolean fieldHovered = isHovered(lastMouseX, lastMouseY, x, fieldY, w, CFG_FIELD_H);
+        ControlAnim fieldAnim = control("cfg:field", fieldHovered, profileFieldFocused, now);
+        roundRect(x, fieldY, w, CFG_FIELD_H, 8,
+                withAlpha(0xFFFFFF, Math.round(0x0A + 0x08 * fieldAnim.hover)));
+        roundRect(x + 1, fieldY + 1, w - 2, CFG_FIELD_H - 2, 7, FIELD_SOLID);
+        if (profileFieldFocused) {
+            roundRect(x + 1, fieldY + 1, w - 2, CFG_FIELD_H - 2, 7,
+                    withAlpha(ACCENT, 0x08));
+        }
+        Gui.drawRect(x + 12, fieldY + 1, x + w - 12, fieldY + 2,
+                withAlpha(0xFFFFFF, Math.round(0x10 + 0x10 * fieldAnim.hover)));
+
+        int suffixW = microWidth(font, ConfigProfiles.EXTENSION);
+        int textY = fieldY + (CFG_FIELD_H - 11) / 2 + 1;
+        int textMax = Math.max(20, w - 24 - suffixW - 8);
+        if (profileName == null || profileName.trim().isEmpty()) {
+            hud(font, "profile name", x + 12, textY, 0xFF596272);
+        } else {
+            hud(font, ellipsizeHud(font, profileName, textMax), x + 12, textY, TEXT);
+        }
+        micro(font, ConfigProfiles.EXTENSION,
+                x + w - 12 - suffixW, fieldY + (CFG_FIELD_H - 8) / 2,
+                profileFieldFocused ? withAlpha(ACCENT, 0xAA) : FAINT);
+        if (profileFieldFocused && ((now / 480L) % 2L == 0L)) {
+            String shown = (profileName == null || profileName.trim().isEmpty())
+                    ? "" : ellipsizeHud(font, profileName, textMax);
+            int caretX = x + 12 + (shown.isEmpty() ? 0 : hudWidth(font, shown));
+            Gui.drawRect(caretX + 1, fieldY + 9, caretX + 2, fieldY + CFG_FIELD_H - 9, ACCENT);
+        }
+
+        // ---------------- 操作按钮 ----------------
+        int by = configsButtonsY();
+        int bw = configsButtonWidth();
+        int bx = configsButtonsX();
+        for (int i = 0; i < CFG_BUTTONS.length; i++) {
+            drawConfigButton(font, bx + i * (bw + CFG_BTN_GAP), by, bw, CFG_BTN_H,
+                    CFG_BUTTONS[i], i == 1, i, now);
+        }
+
+        // ---------------- 档案列表 ----------------
+        List<String> names = ConfigProfiles.listNames();
+        int listTop = configsRowsTop();
+        int listBottom = configsListBottom();
+        micro(font, "SAVED PROFILES", x + 2, configsListTop(), FAINT);
+        String summary = names.size() + (names.size() == 1 ? " PROFILE" : " PROFILES")
+                + " / " + enabledCount() + " ON";
+        summary = ellipsizeMicro(font, summary, Math.max(40, w / 2));
+        micro(font, summary, x + w - 2 - microWidth(font, summary), configsListTop(),
+                0xFF596272);
+
+        if (names.isEmpty()) {
+            roundRect(x, listTop, w, Math.max(CFG_ROW_H, listBottom - listTop), 8,
+                    withAlpha(0xFFFFFF, 0x06));
+            micro(font, "No profiles yet.", x + 12, listTop + 10, 0xFF7C8798);
+            micro(font, "Type a name above, then press SAVE.", x + 12, listTop + 24,
+                    0xFF596272);
+        } else {
+            pushScissor(x, listTop, w, Math.max(1, listBottom - listTop));
+            int rowTop = listTop - configScroll;
+            for (int i = 0; i < names.size(); i++) {
+                if (rowTop + CFG_ROW_H > listTop && rowTop < listBottom) {
+                    drawConfigRow(font, x, rowTop, w, names.get(i), now);
+                }
+                rowTop += configsRowStride();
+            }
+            popScissor();
+        }
+
+        // ---------------- 结果提示 ----------------
+        String message = ConfigProfiles.status();
+        if (message != null && !message.isEmpty()) {
+            int color = ConfigProfiles.statusIsError() ? CFG_ERR : 0xFF9FB4C8;
+            micro(font, ellipsizeMicro(font, message, w - 4), x + 2, configsStatusY(), color);
+        } else {
+            micro(font, ellipsizeMicro(font, ConfigProfiles.folderPath(), w - 4),
+                    x + 2, configsStatusY(), 0xFF596272);
+        }
+    }
+
+    private void drawConfigButton(FontRenderer font, int x, int y, int w, int h,
+            String label, boolean primary, int index, long now) {
+        boolean hovered = isHovered(lastMouseX, lastMouseY, x, y, w, h);
+        ControlAnim anim = control("cfg:btn:" + index, hovered, primary, now);
+        int fill = primary
+                ? withAlpha(ACCENT, Math.round(0x1C + 0x14 * anim.hover))
+                : withAlpha(0xFFFFFF, Math.round(0x0A + 0x0C * anim.hover));
+        roundRect(x, y, w, h, 7, fill);
+        if (anim.press > 0.01F) {
+            roundRect(x, y, w, h, 7, withAlpha(0xFFFFFF, Math.round(0x0A * anim.press)));
+        }
+        String shown = ellipsizeMicro(font, label, w - 8);
+        micro(font, shown, x + (w - microWidth(font, shown)) / 2, y + (h - 8) / 2,
+                primary ? withAlpha(ACCENT, 0xF0)
+                        : blendColor(TEXT_2, TEXT, anim.hover * 0.7F));
+    }
+
+    private void drawConfigRow(FontRenderer font, int x, int y, int w, String name, long now) {
+        boolean current = name != null && name.equals(ConfigProfiles.sanitize(profileName));
+        boolean hovered = isHovered(lastMouseX, lastMouseY, x, y, w, CFG_ROW_H);
+        ControlAnim anim = control("cfg:row:" + name, hovered, current, now);
+
+        int fill = current ? withAlpha(ACCENT, Math.round(0x12 + 0x08 * anim.hover))
+                : withAlpha(0xFFFFFF, Math.round(0x06 + 0x08 * anim.hover));
+        roundRect(x, y, w, CFG_ROW_H, 7, fill);
+        if (current) {
+            roundRect(x, y + 5, 2, CFG_ROW_H - 10, 1, withAlpha(ACCENT, 0xC8));
+        }
+
+        int delX = x + w - 10 - CFG_DEL_W;
+        int saveX = delX - 4 - CFG_ROW_SAVE_W;
+        int textX = x + 12;
+        int textMax = Math.max(30, saveX - textX - 8);
+
+        String label = ellipsizeHud(font, name, textMax);
+        hud(font, label, textX, y + (CFG_ROW_H - 11) / 2 + 1,
+                current ? TEXT : (hovered ? 0xFFE4EBF6 : TEXT_2));
+        int stampX = textX + hudWidth(font, label) + 6;
+        String stamp = ConfigProfiles.savedAtText(name);
+        if (stampX + microWidth(font, stamp) < saveX - 6) {
+            micro(font, stamp, stampX, y + (CFG_ROW_H - 8) / 2, 0xFF596272);
+        }
+
+        // 覆盖保存
+        boolean saveHover = isHovered(lastMouseX, lastMouseY, saveX, y + 5,
+                CFG_ROW_SAVE_W, CFG_ROW_H - 10);
+        roundRect(saveX, y + 5, CFG_ROW_SAVE_W, CFG_ROW_H - 10, 5,
+                withAlpha(0xFFFFFF, saveHover ? 0x1C : 0x10));
+        micro(font, "SAVE", saveX + (CFG_ROW_SAVE_W - microWidth(font, "SAVE")) / 2,
+                y + (CFG_ROW_H - 8) / 2, saveHover ? TEXT : 0xFF8B96A6);
+
+        // 删除
+        boolean delHover = isHovered(lastMouseX, lastMouseY, delX, y + 5,
+                CFG_DEL_W, CFG_ROW_H - 10);
+        roundRect(delX, y + 5, CFG_DEL_W, CFG_ROW_H - 10, 5,
+                withAlpha(delHover ? CFG_ERR : 0xFFFFFF, delHover ? 0x2A : 0x10));
+        micro(font, "x", delX + (CFG_DEL_W - microWidth(font, "x")) / 2,
+                y + (CFG_ROW_H - 8) / 2, delHover ? 0xFFF2EE : 0xFF8B96A6);
+    }
+
+    /** Configs 页的按钮 / 行点击。 */
+    private void handleConfigsPageClick(int mouseX, int mouseY, int button) {
+        if (button != 0) {
+            return;
+        }
+        int x = listX;
+        int w = listW;
+
+        if (isHovered(mouseX, mouseY, x, configsFieldY(), w, CFG_FIELD_H)) {
+            profileFieldFocused = true;
+            press("cfg:field");
+            return;
+        }
+        profileFieldFocused = false;
+
+        int by = configsButtonsY();
+        int bw = configsButtonWidth();
+        int bx = configsButtonsX();
+        for (int i = 0; i < CFG_BUTTONS.length; i++) {
+            if (isHovered(mouseX, mouseY, bx + i * (bw + CFG_BTN_GAP), by, bw, CFG_BTN_H)) {
+                press("cfg:btn:" + i);
+                handleConfigAction(i);
+                return;
+            }
+        }
+
+        int listTop = configsRowsTop();
+        int listBottom = configsListBottom();
+        if (!isHovered(mouseX, mouseY, x, listTop, w, Math.max(1, listBottom - listTop))) {
+            return;
+        }
+        List<String> names = ConfigProfiles.listNames();
+        int rowTop = listTop - configScroll;
+        for (int i = 0; i < names.size(); i++) {
+            String name = names.get(i);
+            if (rowTop + CFG_ROW_H <= listTop || rowTop >= listBottom
+                    || !isHovered(mouseX, mouseY, x, rowTop, w, CFG_ROW_H)) {
+                rowTop += configsRowStride();
+                continue;
+            }
+            int delX = x + w - 10 - CFG_DEL_W;
+            int saveX = delX - 4 - CFG_ROW_SAVE_W;
+            if (isHovered(mouseX, mouseY, delX, rowTop + 5, CFG_DEL_W, CFG_ROW_H - 10)) {
+                ConfigProfiles.delete(name);
+                if (name.equals(ConfigProfiles.sanitize(profileName))) {
+                    profileName = "";
+                }
+                clampConfigScroll();
+                return;
+            }
+            if (isHovered(mouseX, mouseY, saveX, rowTop + 5, CFG_ROW_SAVE_W, CFG_ROW_H - 10)) {
+                profileName = name;
+                ConfigProfiles.save(name);
+                clampConfigScroll();
+                return;
+            }
+            profileName = name;
+            ConfigProfiles.load(name);
+            clampConfigScroll();
+            return;
+        }
+    }
+
+    /** NEW / SAVE / LOAD / DEL / FOLDER。 */
+    private void handleConfigAction(int index) {
+        switch (index) {
+            case 0:
+                profileName = ConfigProfiles.suggestName();
+                profileFieldFocused = true;
+                ConfigProfiles.clearStatus();
+                break;
+            case 1:
+                if (profileName == null || profileName.trim().isEmpty()) {
+                    profileName = ConfigProfiles.suggestName();
+                }
+                ConfigProfiles.save(profileName);
+                break;
+            case 2:
+                ConfigProfiles.load(profileName == null ? "" : profileName);
+                break;
+            case 3:
+                ConfigProfiles.delete(profileName == null ? "" : profileName);
+                break;
+            default:
+                ConfigProfiles.openFolder();
+                break;
+        }
+        clampConfigScroll();
+    }
+
+    /** Configs 页输入名字时的按键处理；返回 true 表示已消费。 */
+    private boolean handleConfigFieldKey(char typedChar, int keyCode) {
+        if (!"configs".equals(systemPage) || !profileFieldFocused) {
+            return false;
+        }
+        if (keyCode == Keyboard.KEY_ESCAPE) {
+            profileFieldFocused = false;
+            return true;
+        }
+        if (keyCode == Keyboard.KEY_RETURN) {
+            if (profileName == null || profileName.trim().isEmpty()) {
+                profileName = ConfigProfiles.suggestName();
+            }
+            ConfigProfiles.save(profileName);
+            clampConfigScroll();
+            return true;
+        }
+        if (keyCode == Keyboard.KEY_BACK) {
+            if (profileName != null && !profileName.isEmpty()) {
+                profileName = profileName.substring(0, profileName.length() - 1);
+            }
+            return true;
+        }
+        if (typedChar >= 32 && typedChar != 127) {
+            String raw = (profileName == null ? "" : profileName) + typedChar;
+            profileName = ConfigProfiles.sanitize(raw.length() > 39
+                    ? raw.substring(0, 39) : raw);
+            return true;
+        }
+        return false;
     }
 
     private int systemSettingsRowH() {
@@ -2458,7 +2782,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             micro(font, name, right - pillW + 8, controlY + 4,
                     withAlpha(ACCENT, Math.round(0xEE)));
         } else {
-            String value = "RSHIFT";
+            String value = OpenMaverFeatures.getGuiKeyName();
             int valueW = microWidth(font, value);
             roundRect(right - valueW - 12, controlY, valueW + 12, 16, 5,
                     withAlpha(0xFFFFFF, Math.round(0x10 + 0x0C * hover)));
@@ -2909,13 +3233,14 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         Gui.drawRect(left + width / 5, y, right - width / 5, y + 1,
                 withAlpha(0xFFFFFF, 0x07));
 
+        String guiKey = OpenMaverFeatures.getGuiKeyName();
         if (systemPage != null) {
-            drawHint(font, right - keycapWidth(font, "RSHIFT") - 6
-                    - microWidth(font, "CLOSE"), y + 7, "RSHIFT", "CLOSE");
+            drawHint(font, right - keycapWidth(font, guiKey) - 6
+                    - microWidth(font, "CLOSE"), y + 7, guiKey, "CLOSE");
             return;
         }
 
-        int closeW = keycapWidth(font, "RSHIFT") + 6 + microWidth(font, "CLOSE");
+        int closeW = keycapWidth(font, guiKey) + 6 + microWidth(font, "CLOSE");
         int expandW = keycapWidth(font, "RMB") + 6 + microWidth(font, "EXPAND");
         int toggleW = keycapWidth(font, "LMB") + 6 + microWidth(font, "TOGGLE");
 
@@ -2931,7 +3256,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         if (totalW >= toggleW + 14 + expandW) {
             cx = drawHint(font, cx, y + 7, "RMB", "EXPAND") + 14;
             if (totalW >= toggleW + 14 + expandW + 14 + closeW) {
-                drawHint(font, cx, y + 7, "RSHIFT", "CLOSE");
+                drawHint(font, cx, y + 7, guiKey, "CLOSE");
             }
         }
     }
@@ -3162,10 +3487,12 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 filter = 0;
                 searchQuery = "";
                 searchFocused = false;
+                profileFieldFocused = false;
                 selectSetting = null;
                 selectEntry = null;
                 scroll = 0;
                 wallpaperScroll = 0;
+                configScroll = 0;
                 press("sysnav:" + systemPage);
                 return true;
             }
@@ -3175,6 +3502,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     private void handleSystemPageClick(int mouseX, int mouseY, int button) {
         if (button != 0) {
+            return;
+        }
+        if ("configs".equals(systemPage)) {
+            handleConfigsPageClick(mouseX, mouseY, button);
             return;
         }
         if ("wallpaper".equals(systemPage)) {
@@ -3202,6 +3533,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 int next = (OpenMaverFeatures.getBypassProfile() + 1)
                         % BYPASS_PROFILES.length;
                 OpenMaverFeatures.setBypassProfile(next);
+            } else if (i == 3) {
+                OpenMaverFeatures.cycleGuiKey();
             }
             press("sysrow:" + i);
             return;
@@ -3438,6 +3771,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             }
             if (systemPage == null) {
                 scrollColumn(lastMouseX, lastMouseY, wheel);
+            } else if ("configs".equals(systemPage)
+                    && isHovered(lastMouseX, lastMouseY, listX, configsRowsTop(),
+                            listW, Math.max(1, configsListBottom() - configsRowsTop()))) {
+                configScroll = clampInt(configScroll - Integer.signum(wheel) * 20,
+                        0, configsMaxScroll());
             } else if ("wallpaper".equals(systemPage)
                     && isHovered(lastMouseX, lastMouseY, listX, wallpaperListTop(),
                             listW, Math.max(1, wallpaperListBottom() - wallpaperListTop()))) {
@@ -3457,6 +3795,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
         if (closing) {
+            return;
+        }
+        // Configs 页正在输入档案名：所有按键先给输入框，别落到搜索框 / ESC 关闭上。
+        if (handleConfigFieldKey(typedChar, keyCode)) {
             return;
         }
         if (keyCode == Keyboard.KEY_ESCAPE) {
@@ -3539,6 +3881,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         selectSetting = null;
         selectEntry = null;
         searchFocused = false;
+        profileFieldFocused = false;
         OpenMaverFeatures.flushSettings();
     }
 
@@ -4600,7 +4943,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 }
                 if ("Reach".equals(module.getName())) {
                     return "CAP " + format(OpenMaverFeatures.getEffectiveReachDistance(), 2)
-                            + " m  ·  " + Math.round(OpenMaverFeatures.getReachChance()) + "%";
+                            + " m" + (OpenMaverFeatures.isReachGrimCheck() ? "  ·  GRIM" : "")
+                            + (OpenMaverFeatures.getReachPingSpoof() > 0
+                                    ? "  ·  PING+" + OpenMaverFeatures.getReachPingSpoof() : "")
+                            + "  ·  " + Math.round(OpenMaverFeatures.getReachChance()) + "%";
                 }
                 if ("Criticals".equals(module.getName())) {
                     String mode = OpenMaverFeatures.getCriticalsModeName();

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# OpenMaver B2.1.2 —— 顶层构建脚本
+# OpenMaver B2.2.0 —— 顶层构建脚本
 #
 # 技术栈：C++17（关闭异常/RTTI） + Java 8 + JNI，使用 CMake 构建。
 #
@@ -214,6 +214,11 @@ if(Java_Development_FOUND)
         COMMAND ${CMAKE_COMMAND} -E make_directory "${OPENMAVER_NATIVE_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:openmaver_core>" "${OPENMAVER_NATIVE_DIR}/"
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/mc/mcmod.info" "${OPENMAVER_MOD_STAGE}/mcmod.info"
+        # 默认配置随 jar 分发：首次运行由 OpenMaver.ensureDefaultConfig() 释放到游戏目录，
+        # 否则别人只拿到一个 jar 时模块全关、键位为空，看起来就是「装上了没反应」。
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${OPENMAVER_MOD_STAGE}/openmaver/config"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/config/default.jsonc"
+                "${OPENMAVER_MOD_STAGE}/openmaver/config/default.jsonc"
         COMMAND "${Java_JAR_EXECUTABLE}" cf "${OPENMAVER_MOD_JAR}"
                 -C "${OPENMAVER_MC_REOBF_DIR}" .
                 -C "${OPENMAVER_JAVA_CLASSES_DIR}" .
@@ -235,8 +240,12 @@ if(Java_Development_FOUND)
 
     # 用 custom_target（每次构建都重新打包），避免新增类文件后旧 jar 不更新
     add_custom_target(openmaver_core_jar ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/core-res/openmaver/config"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/config/default.jsonc"
+                "${CMAKE_BINARY_DIR}/core-res/openmaver/config/default.jsonc"
         COMMAND "${Java_JAR_EXECUTABLE}" cf "${OPENMAVER_CORE_JAR}"
                 -C "${OPENMAVER_JAVA_CLASSES_DIR}" .
+                -C "${CMAKE_BINARY_DIR}/core-res" .
         DEPENDS openmaver_java
         COMMENT "打包 openmaver-core.jar（供 JVMTI agent 加入 bootstrap 搜索路径）"
         VERBATIM

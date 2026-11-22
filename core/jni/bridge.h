@@ -23,14 +23,14 @@
 // Java 端在加载时找不到对应符号。
 extern "C" {
 
-// 对应 Java: private static native void init();
-OM_EXPORT void JNICALL Java_OpenMaver_init(JNIEnv* env, jclass clazz);
+// 对应 Java: private static native void nativeInit();
+OM_EXPORT void JNICALL Java_OpenMaver_nativeInit(JNIEnv* env, jclass clazz);
 
-// 对应 Java: private static native void shutdown();
-OM_EXPORT void JNICALL Java_OpenMaver_shutdown(JNIEnv* env, jclass clazz);
+// 对应 Java: private static native void nativeShutdown();
+OM_EXPORT void JNICALL Java_OpenMaver_nativeShutdown(JNIEnv* env, jclass clazz);
 
-// 对应 Java: private static native String getVersion();
-OM_EXPORT jstring JNICALL Java_OpenMaver_getVersion(JNIEnv* env, jclass clazz);
+// 对应 Java: private static native String nativeVersion();
+OM_EXPORT jstring JNICALL Java_OpenMaver_nativeVersion(JNIEnv* env, jclass clazz);
 
 } // extern "C"
 

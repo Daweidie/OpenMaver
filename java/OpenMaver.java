@@ -52,8 +52,8 @@ public final class OpenMaver {
     /** 项目名（日志模块名 / mod 名称）。 */
     public static final String NAME = "OpenMaver";
 
-    /** 版本号，与本地核心库返回的值保持一致。 */
-    public static final String VERSION = "B2.1.2";
+    /** 版本号（与 mc/mcmod.info、本地核心库一致）；本地库缺失时日志里显示这个。 */
+    public static final String VERSION = "B2.2.0";
 
     /** 默认配置路径（相对当前工作目录；在 .minecraft 下即为 .minecraft/config/default.jsonc）。 */
     private static final String DEFAULT_CONFIG_PATH = "config/default.jsonc";
@@ -74,12 +74,67 @@ public final class OpenMaver {
      * </ol>
      * 若本地库已由 JVMTI agent 载入并 RegisterNatives 绑定，此处失败会被吞掉。
      */
+    /**
+     * 本地库是否已经被判定为不可用。
+     *
+     * <p>只有 Linux x64 的 {@code libopenmaver_core.so} 随 jar 分发；Windows / macOS 上
+     * 没有对应二进制。以前这里会直接 {@code UnsatisfiedLinkError} 打断 {@code start()}，
+     * 结果是「作者机器能跑、别人装上什么都不显示」——功能全部在 Java 侧，
+     * 采集不到 native 就退化成 java-only 模式继续跑。
+     */
+    private static volatile boolean nativeDead;
+
     static {
         try {
             loadNativeCore();
         } catch (Throwable t) {
-            System.out.println("[OpenMaver] 本地库已由 agent 提供或加载失败: " + t);
+            System.out.println("[OpenMaver] 本地库不可用，将使用 java-only 模式: " + t);
         }
+    }
+
+    /** 调用 native init；失败一次后永久走 java-only，不再重复尝试。 */
+    private static boolean coreInit() {
+        if (nativeDead) {
+            return false;
+        }
+        try {
+            nativeInit();
+            return true;
+        } catch (Throwable t) {
+            nativeDead = true;
+            System.out.println("[OpenMaver] native core 不可用（java-only 模式继续）: " + t);
+            return false;
+        }
+    }
+
+    /** 关闭 native 核心；java-only 模式下为空操作。 */
+    private static void coreShutdown() {
+        if (nativeDead) {
+            return;
+        }
+        try {
+            nativeShutdown();
+        } catch (Throwable t) {
+            nativeDead = true;
+        }
+    }
+
+    /**
+     * 当前版本号：优先问 native（agent 注入时由 RegisterNatives 绑定的那份），
+     * 本地库缺失时回退到 Java 常量，保证日志里永远有版本可看。
+     */
+    public static String getVersion() {
+        if (!nativeDead) {
+            try {
+                String version = nativeVersion();
+                if (version != null && !version.isEmpty()) {
+                    return version;
+                }
+            } catch (Throwable t) {
+                nativeDead = true;
+            }
+        }
+        return VERSION;
     }
 
     private static void loadNativeCore() throws IOException {
@@ -161,11 +216,11 @@ public final class OpenMaver {
     // native 方法（由 core/jni/bridge.cpp 导出）
     // ------------------------------------------------------------------
 
-    private static native void init();
+    private static native void nativeInit();
 
-    private static native void shutdown();
+    private static native void nativeShutdown();
 
-    private static native String getVersion();
+    private static native String nativeVersion();
 
     // ------------------------------------------------------------------
     // 运行期状态
@@ -201,7 +256,7 @@ public final class OpenMaver {
             return;
         }
         System.err.println("[OpenMaver] start begin");
-        init();
+        coreInit();
         Logger.info(NAME, "版本 " + getVersion() + " 启动完成");
         loadConfig();
         registerModules();
@@ -247,7 +302,7 @@ public final class OpenMaver {
         stopDriverLoop();
         started = false;
         ModuleManager.disableAll();
-        shutdown();
+        coreShutdown();
         Logger.info(NAME, "已退出");
     }
 
@@ -267,6 +322,7 @@ public final class OpenMaver {
 
     private static void loadConfig() {
         String configPath = System.getProperty("openmaver.config", DEFAULT_CONFIG_PATH);
+        ensureDefaultConfig(configPath);
         try {
             Config config = new Config(configPath);
             config.load();
@@ -288,6 +344,45 @@ public final class OpenMaver {
         } catch (IOException e) {
             Config.setDefault(null);
             Logger.warn(NAME, "配置加载失败，使用默认值: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 首次运行时把 jar 内自带的 {@code default.jsonc} 释放到游戏目录。
+     *
+     * <p>早期版本只有把仓库里的 {@code config/default.jsonc} 手动拷进实例目录才能拿到
+     * 模块开关 / 默认键位；别人只拿到一个 jar 时配置为空，所有模块默认关闭、键位为空，
+     * 看起来就像「装上了但什么都不工作」。这里在缺文件时自动补一份，已有配置绝不覆盖。
+     */
+    private static void ensureDefaultConfig(String configPath) {
+        try {
+            java.io.File file = new java.io.File(configPath);
+            if (file.isFile()) {
+                return;
+            }
+            java.io.InputStream in = OpenMaver.class.getResourceAsStream(
+                    "/openmaver/config/default.jsonc");
+            if (in == null) {
+                return;
+            }
+            java.io.File parent = file.getParentFile();
+            if (parent != null && !parent.isDirectory()) {
+                parent.mkdirs();
+            }
+            java.io.FileOutputStream out = new java.io.FileOutputStream(file);
+            try {
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, read);
+                }
+            } finally {
+                out.close();
+                in.close();
+            }
+            Logger.info(NAME, "已释放默认配置: " + file.getAbsolutePath());
+        } catch (Throwable t) {
+            Logger.warn(NAME, "释放默认配置失败（继续使用内置默认值）: " + t);
         }
     }
 

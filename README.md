@@ -1,4 +1,4 @@
-# OpenMaver B2.1.2
+# OpenMaver B2.2.0
 
 私人服务器反作弊对测研究用的客户端骨架，适配 **Minecraft 1.8.9**（Forge 11.15.1.2318）。
 
@@ -160,6 +160,46 @@ mc/*.java --javac(对 MCP API)--> mc-classes --McpReobf(MCP->SRG)--> mc-classes-
 > 用 PrismLauncher 的 vanilla 实例直接实现不了——`mc/` 的事件（`TickEvent`、`RenderGameOverlayEvent` 等）
 > 全部来自 Forge，必须先给该实例装上 Forge。
 
+### 4) 把 jar 发给别人时：为什么「我这里能跑，他装上什么都不工作」
+
+平台能力（B2.2.0）：
+
+| 平台 | mod 模式（`mods/` 放 jar） | 注入模式（`inject-prism.sh` / `openmaver_injector`） | 本地核心库 |
+|---|---|---|---|
+| Linux x86_64 | ✅ | ✅（需要 JVMTI + `.so`） | ✅ 随 jar 携带 `native/linux/x64/libopenmaver_core.so` |
+| Windows x86_64 | ✅（java-only） | ❌ 注入器是 Linux 专用 | ❌ 无 `.dll`，自动降级 |
+| macOS（x64 / arm64） | ✅（java-only） | ❌ | ❌ 无 `.dylib`，自动降级 |
+| Linux arm64 | ✅（java-only） | ❌（无对应 `.so`） | ❌，自动降级 |
+
+历史上两个人拿到同一个 jar、只有作者能用，原因就三条，现在都已修掉：
+
+1. **本地库只有 Linux x64 一份。** 以前 `OpenMaver.start()` 直接调用 native `init()`，
+   Windows / macOS 上抛 `UnsatisfiedLinkError` → 进世界那一下被 `onClientTick` 的
+   `catch (Throwable) { failed = true; }` 捕获 → **tick 桥整条停掉**，HUD、功能、右下角提示
+   全都不出现，玩家看到的就是「装上了但什么都没有」。现在 `init()/shutdown()/getVersion()`
+   都走 Java 包装：native 拿不到就置 `nativeDead`，退回 **java-only 模式**继续跑
+   （功能本身全在 Java 侧，native 只负责 `Core initialized` 日志、版本号和 agent 注入）。
+2. **jar 不带 `config/default.jsonc`。** 以前只有把仓库里的配置手动拷进实例目录才有模块开关和
+   默认键位，别人只拿到一个 jar 时配置为空 → 所有模块 `enabled=false`、键位为空，
+   HUD 显示 `Loaded successfully, 0 features enabled!`。现在 `config/default.jsonc`
+   打进 jar 的 `/openmaver/config/`，首次启动由 `OpenMaver.ensureDefaultConfig()`
+   释放到游戏目录（已有配置**绝不覆盖**）。
+3. **装法叠加 / 装错环境。** `mods/` 里既有 mod jar 又注入了 `openmaver-mc.jar` 时，
+   两套 handler 各 toggle 一次 → 开关键看起来「按了没反应」；Lunar / vanilla 1.8.9 /
+   Forge 1.12.2 上 mod 根本不会被加载（`mc/` 全部依赖 Forge 1.8.9 的事件）。
+
+排查顺序（让对方按这个报日志）：
+
+1. 启动器 `latest.log`（或控制台）搜 `[OpenMaver]`：应有 `start begin` → `版本 B2.2.0 启动完成`
+   → `配置加载完成: .../config/default.jsonc` → 一串 `已注册模块 ...`。
+   只有 `start begin` 之后就断了 = jar 没被加载或 `mcmod.info` 不匹配。
+2. 进世界后右下角有没有 `Loaded successfully, x features enabled!`；没有就是事件桥没注册
+   （非 Forge 客户端 / 双份类加载 `LinkageError`）。
+3. 有提示但按开关键没反应 → 看 `%TEMP%\openmaver-events.log`（Linux 为
+   `$TMPDIR/openmaver-events.log`）：`first key event: code=.. name=..` 说明键盘上报的
+   键码是什么，`clickgui ignored ... not in world yet` / `currentScreen=GuiInventory` 会直接
+   指出当时的阻挡条件。
+
 ## 运行
 
 ### 独立启动 Minecraft
@@ -218,7 +258,7 @@ java -Djava.library.path=build/lib \
 
 ```
 [OpenMaver] Core initialized
-[2026-... ] [INFO] [OpenMaver] 版本 B2.1.2 启动完成
+[2026-... ] [INFO] [OpenMaver] 版本 B2.2.0 启动完成
 [2026-... ] [INFO] [OpenMaver] 配置加载完成: .../config/default.jsonc
 [2026-... ] [INFO] [OpenMaver] 独立运行模式：未检测到游戏主循环
 [OpenMaver] Core shutdown
@@ -242,7 +282,7 @@ java -Djava.library.path=build/lib \
 | `TickEvent.ClientTickEvent` (END) | `ModuleManager.onTick()` |
 | `RenderWorldLastEvent` | `ModuleManager.onRender()` |
 | `RenderGameOverlayEvent.Post` | `OpenMaverHud` 绘制右侧 ModuleList + 加载提示 |
-| RSHIFT（在游戏内） | 开关 `GuiOpenMaverClickGui` |
+| RSHIFT（在游戏内，可在 SYSTEM → Settings → GUI KEY 改键） | 开关 `GuiOpenMaverClickGui` |
 | 模块绑定键（如 `V`） | 切换对应模块的启用状态 |
 
 配置文件默认读取游戏工作目录下的 `config/default.jsonc`
@@ -294,7 +334,10 @@ java -Djava.library.path=build/lib \
   右上角依次为 **Fullscreen / Wallpaper / Quit Game**，悬停显示入口名称。
   头像从微软 / Mojang 官方服务异步获取，支持旧版 64×32 皮肤，失败时展示 Steve。
   背景可以替换成静态图片、动态 GIF 或 MP4 等视频，详见下面「主菜单壁纸」。
-- **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关。
+- **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关（默认键位，可在
+  SYSTEM → Settings 的 **GUI KEY** 行点一下切换：RSHIFT / LSHIFT / RCTRL / RALT / NUM ENTER /
+  SEMICOLON / APOSTROPHE / GRAVE / TAB，写进 `config/openmaver.properties` 的
+  `ui.clickgui.key`）。
   列布局和客户端设置页均只使用半透明背景遮罩，不对主菜单或游戏画面做整屏模糊。
   纯灰色面板 + 中性灰描边，全部强调色统一为白色；左侧 Combat / Movement / Render /
   Player / Misc 分类栏，以及 SYSTEM → Configs / Statistics / Wallpaper / Settings 页面
@@ -380,6 +423,34 @@ if (!worldEntered) {
 > 说明：HUD / ClickGUI 依赖 `net.minecraft.*`，由 Forge 的类加载器加载。
 > 除了随 mod 加载，**纯运行期注入**也能显示（见下面「注入也能显示 UI」一节）。
 
+### Configs 页：配置档案（保存 / 导入）
+
+ClickGUI 左栏 **SYSTEM → Configs** 是一套「配置文件」档案管理，对应 `mc/ConfigProfiles.java`：
+
+| 控件 | 作用 |
+|---|---|
+| 名字输入框 | 输入档案名（自动过滤非法字符、去掉 `.cfg` 后缀，最长 40 字），点一下获得焦点后直接打字 |
+| `NEW` | 填一个不冲突的默认名（`config_MM.dd`），并把光标放进输入框 |
+| `SAVE` | 把**当前内存状态**落盘后打包成 `config/profiles/<名字>.cfg`（同名覆盖） |
+| `LOAD` | 导入档案：还原两个配置文件 → 重载配置 → 按档案恢复模块开关 / 键位 |
+| `DEL` | 删除输入框里那个档案 |
+| `FOLDER` | 打开 `config/profiles/`（单文件，直接发给别人即可） |
+| 列表行 | 点名字 = 导入并选中；行内 `SAVE` = 用当前状态覆盖这个档案；行内 `x` = 删除 |
+
+档案是纯文本、三段式，便于手工 diff：
+
+```
+# OpenMaver profile v1
+# name: LF_Opal10.26
+@@FEATURES        <- config/openmaver.properties 原文（滑块 / 开关 / ui.clickgui.key）
+@@MODULES         <- config/default.jsonc 原文（模块 enabled / key）
+@@STATE           <- 保存时 GUI 里的实时模块状态：名字|on/off|键位
+```
+
+> 保存前会先 `flushSettings()` 把 GUI 里刚拖的滑块落盘，所以存下来的一定是当前值。
+> 导入会在同一个 tick 内完成 `Config.reload()` + `OpenMaverFeatures.reloadSettingsNow()`
+> + `ModuleManager.syncAll()`，不需要重启游戏。
+
 ## 功能模块
 
 模块开关与键位来自 `config/default.jsonc`，模块参数来自
@@ -398,12 +469,12 @@ debug.enabled=false         # true 时写入 logs/openmaver-debug.log
 
 | profile | Reach 实际上限 | Aim 单 tick 上限 | AutoClicker / KillAura | FastPlace | Placement rotation |
 |---|---|---|---|---|---|
-| `legit` | 配置值 0~5.00（原版扩张箱） | yaw 18° / pitch 12° | 使用配置 CPS（1~20），抖动+停顿 | 完全不改 `rightClickDelayTimer` | 仅真实准星 |
-| `balanced`（默认） | 配置值 0~5.00（原版扩张箱） | yaw 35° / pitch 20° | 使用配置 CPS（1~20），抖动+停顿 | 最快 2 tick + 2/3 抖动 | Scaffold 直接走 onPlayerRightClick |
-| `aggressive` | 配置值 0~5.00（原版扩张箱） | 上限放宽 | 使用配置 CPS（1~20） | 完全按 DELAY，允许压到 0 | 同左（Scaffold 始终直接发包） |
+| `legit` | 0~5.00；GRIM CAP 开启时 ≤3.00 | yaw 18° / pitch 12° | 使用配置 CPS（1~20），抖动+停顿 | 完全不改 `rightClickDelayTimer` | 仅真实准星 |
+| `balanced`（默认） | 0~5.00；GRIM CAP 开启时 ≤3.00 | yaw 35° / pitch 20° | 使用配置 CPS（1~20），抖动+停顿 | 最快 2 tick + 2/3 抖动 | Scaffold 直接走 onPlayerRightClick |
+| `aggressive` | 0~5.00；GRIM CAP 开启时 ≤3.00 | 上限放宽 | 使用配置 CPS（1~20） | 完全按 DELAY，允许压到 0 | 同左（Scaffold 始终直接发包） |
 
-> Reach 的距离独立使用 `reach.distance`（0~5 米），各 profile 与
-> `bypass.enabled=false` 下均直接生效。KillAura 仍保留其原有 profile 距离上限。
+> Reach 独立使用 `reach.distance`（0~5 米）与 `reach.grimCheck`（默认 false），
+> 包括 `bypass.enabled=false` 时也执行独立距离校验。KillAura 保留其原有 profile 距离上限。
 
 **阈值依据（Grim 2.0，commit `f9b801a`）**
 
@@ -1007,9 +1078,25 @@ IO 失败只记录一次并自动停用 debug。
   未命中几率时，本次挥击完全使用原版距离。
 - 设置项（ClickGUI 中展开 Reach）：
   - `DISTANCE`：`reach.distance`，0.00~5.00 米，步长 `0.05`，默认 `3.00`。
-    **这就是攻击距离本身**，各 profile 均直接使用设定值。调到 0 等于关闭补刀距离。
+    **这个值就是实际攻击上限**，没有任何隐藏常量再压一层；调到 0 等于关闭补刀距离。
     旧配置的 `reach.extra` 会自动迁移成 `3.0 + extra`（并按 0~5 米截断）。
   - `CHANCE`：`reach.chance`，1~100 %，默认 `100`。
+  - `PING SPOOF`：`reach.pingSpoof`，0~400 ms，默认 `0`（关闭）。把事务确认压后发出，
+    拉长服务端「目标可能位置」的窗口；`SPOOF JITTER`（`reach.pingJitter`，0~150 ms，
+    默认 `40`）给每次延迟加随机量，避免固定间隔。只影响出站 C0F，不改任何位置包。
+    开启后本地复核也会把目标最近 `1 + spoof/50` tick 的位置并进服务端盒子
+    （`serverBoxFor`），否则本地 3.00 上限会先把这类攻击挡掉、spoof 等于没开。
+    收益取决于目标位移：站着不动的目标并集不增长，收益为 0。
+  - `GRIM CAP`（旧名 `GRIM CHECK`）：`reach.grimCheck`，默认 `false`，独立于全局
+    bypass/profile。开启后实际距离取 `min(DISTANCE, 3.00)`——`3.00` 是 Grim 2.0
+    `combat/Reach` 的 `ENTITY_INTERACTION_RANGE`，也就是原版自己的上限，
+    所以开启后**不会再增加距离**，只是保证不越过 Grim 的判据。HUD 会显示 `3.00mG`、
+    GUI 摘要会显示 `· GRIM`，不会再有“滑块调了却没反应”的静默状态。
+    无论是否开启，攻击都要求当前准星射线与 `lastReportedPosX/Y/Z +
+    lastReportedYaw/Pitch`（服务端结算这条 C02 时使用的上一条 tick 姿态）两条射线
+    均命中同一目标、均满足距离；移动包被 Velocity 暂存时让位；
+    上报字段存在但为 NaN / pitch 越界时跳过本次补刀；字段整体缺失时退回相机姿态
+    并只提示一次，不会把 Reach 关死。
   - `DEBUG CHAT`：`reach.debug`，默认 `false`。开启后每次挥击的决策链直接写聊天框：
     - `SWING p=0 chance=100% dist=5.00 cap=5.00 BALANCED`：识别到一次新挥击，
       带本次的 CHANCE / DISTANCE / 实际上限 / profile；
@@ -1018,16 +1105,26 @@ IO 失败只记录一次并自动停用 debug。
     - `SKIP hurt Steve`：目标还在受击无敌帧，服务端会丢弃这次 C02；
     - `SKIP attack slot used`：本 tick 已经有 Aura / AutoClicker 的实体攻击，让位；
     - `SKIP no target scan=37 cap=5.00`：扫描完实体表没有满足距离/可见性的目标；
-    - `HIT Steve dist=4.87/5.00 border=0.10 yaw=12.5 pitch=-4.2 anim=c0a swing=1`：
-      真正发给服务端的 C02，`dist` 是眼睛到扩张箱的射线距离；每次补刀都先发
-      `C0A`（`anim=c0a`），`swing=1` 表示原版挥击动画本来就在进行；
+    - `HIT Steve cam=4.87/5.00 srv=4.72/5.00 border=0.10 yaw=12.5 pitch=-4.2 anim=c0a swing=1`：
+      本地 controller 攻击调用成功。`cam` 是本地准星射线距离 / `DISTANCE`，`srv` 是
+      服务端结算这条 C02 时会量到的距离 / 服务端上限（`GRIM CAP` 下是 3.00，骑乘时
+      等于 `DISTANCE`）；只有 `srv` 不超上限才可能不触发 Grim 的 Reach。每次补刀都先发
+      `C0A`（`anim=c0a`），`swing=1` 表示原版挥击动画本来就在进行。
+      `HIT` 不代表服务端已经接受攻击或结算伤害；controller 调用失败只记录 `SKIP attack failed`；
+    - `SKIP no target scan=37 cap=4.20 dist=4.20 over-cap=1`：有目标在射线上但超过了
+      实际上限；`over-cap` 单独计数，`grim-cap=3.00` 表示这是 GRIM CAP 削掉的；
+    - `SKIP no target ... reported-miss=1 reported-range=0`：当前准星能命中，已上报射线没命中；
+    - `SKIP reported pose invalid` / `SKIP movement queued`：上报姿态数值非法或移动尚在队列；
     - `1s swing=4 hit=3 skip=1`：每秒一行汇总。
     聊天框每秒最多 10 行（`HIT` 与关键跳过不受限），全部事件仍写入
     `logs/openmaver.log`（`util.Logger.debug`，模块名 `Reach`）。
-    回归测试：`bash tools/reach-test/run.sh`（0~5 米边界、各 profile 实际攻击、
-    可见性、行格式、限流、聊天历史、包序结构、ClickGUI 结构、配置持久化与热重载）。
-- 距离上限：**5.00 米**，按眼睛到目标扩张箱的射线长度计算（原版 hitbox margin
-  为 `0.1`）。滑块、配置热重载、HUD 与实际射线共用此范围；5 米边界包含在内。
+    回归测试：`bash tools/reach-test/run.sh`（0~5 米边界、Grim 独立校验、MCP/SRG/obf
+    上报视角、可见性、调试、包序、配置持久化与热重载、事务延迟队列）。
+- 距离上限 **5.00 米**；开启 `GRIM CAP` 时为 **3.00 米**。均按眼睛到目标扩张箱的
+  射线长度计算（原版 hitbox margin 为 `0.1`）。HUD / GUI 的 CAP 显示实际生效上限。
+  这属于发送前几何校验：服务端 1.8 的 `processUseEntity` 对**可见**目标允许 6 格
+  （`d0 = 36.0D`），只有不可见目标才收紧到 3 格，所以 4~5 米补刀在原版服务端是有效的；
+  Grim 侧仍按 3.0 判据，超过就会被 `combat/Reach` 盯上，这是距离与检测面的取舍。
 - 实现说明（已核对实际 1.8.9 字节码与 Grim 2.0 `combat/Reach`、`packetorder/PacketOrderB`、`misc/Post`）：
   - `EntityRenderer.getMouseOver` 在生存模式会把 `getBlockReachDistance()`（4.5）
     用作射线长度，但只要实体距离超过 3 格就会丢弃目标；这是原版实体瞄准的硬限制。
@@ -1042,12 +1139,45 @@ IO 失败只记录一次并自动停用 debug。
     `C0A -> C02 -> 本 tick C03`。
   - **阶段**：Reach 从 tick END 移到 `ClientTickEvent.START`（vanilla 发出 C03 之前）。
     既满足 `PacketOrderB`，也避开 Grim `Post`（移动包之后再发攻击/交互会被判
-    `failed Post`）；同时射线使用的 rotation 就是服务端已经收到的那一帧，
-    不会因为本 tick 的 Aim 改写而与服务端视角不一致（否则会变成 `Hitboxes`）。
+    `failed Post`）。C02 排在本 tick 的 C03 之前，服务端结算时用的是上一条 tick 包
+    里的坐标/视角，因此每条补刀都用 `lastReported*` 姿态再复核一次（与 GRIM CAP
+    开关无关）；Criticals JUMP 延迟补刀也重新经过同一条校验与挥击链路。
   - 每个 tick 共享一个实体攻击名额：Aura / AutoClicker / Velocity 已经攻击时
     Reach 直接让位，避免同 tick 两条 `C02`。
   - 使用物品或本 tick 已有右键动作时不做自定义攻击，避免 `MultiActionsA/F`。
   - 方块交互距离保持原版（生存 4.5 格），**本模块只扩展实体攻击/挥击距离**。
+
+### Reach 与 Grim 的绕过面
+
+Grim 的 `combat/Reach` 不是「你报多远就查多远」，它量的是另一套东西。按源码
+（[Grim 2.0 `Reach.java`](https://git.omada.cafe/amethystia/AutoCope/raw/commit/98b4b8fecfbd5e0ddc4f9c7f24388b769fa4a2f5/src/main/java/ac/grim/grimac/checks/impl/combat/Reach.java)）：
+
+- 攻击包（`INTERACT_ENTITY`）只把 entityId **入队**；真正的测量发生在**下一条飞行包**，
+  坐标用 `player.lastX/lastY/lastZ`（上一条移动包的坐标），视角用
+  `lastXRot/xRot` + `lastYRot/yRot` 两组。
+- 目标盒子取 `PacketEntity.getPossibleCollisionBoxes()`；事务没对齐时是
+  `combineCollisionBox(oldPossible, newPossible)`，即「事务窗口内目标可能走过的并集」。
+- 盒子扩张：1.8 客户端 `+0.1`（原版 hitbox margin）、`Reach.threshold +0.0005`、
+  上一包不是位置包再 `+0.03`。
+- 判据取所有「视角 × 眼高 × 可能盒子」组合的**最小**距离，`> 3.0` 才 flag；
+  射线完全没进盒子报 `Missed hitbox`。
+- 另一条实时分支 `isKnownInvalid`：攻击包到达时用「点到盒子」最短距离，
+  `> 3 + (位置包 ? 0.03 : 0)` 就直接取消这条 C02（`Reach.block-impossible-hits`，默认 true）。
+- 2.0 还有两个提前返回：`gamemode == CREATIVE` 和 `player.vehicle != null`。
+
+所以能在 3.0 之外拿到距离的只有四件事，本仓库都接上了：
+
+| 手段 | 实现 | 收益 | 代价 |
+|---|---|---|---|
+| 事务延迟（`PING SPOOF`） | 出站 `C0FPacketConfirmTransaction` 压后 100~400ms | 目标在「RTT+延迟」窗口里的位移，走位目标约 0.3~1.5 米 | RTT 抖动，Ping/Transaction 面能看到 |
+| 相机/服务端两层上限 | 相机 ≤ `DISTANCE`，上报姿态 ≤ 3.00 | 后撤/侧移一步的差价，0.1~0.35 米 | 朝目标走时反向收紧 |
+| 载具 | 检测 `ridingEntity` 后放开到 `DISTANCE` | 2.0 上整条 Reach 被跳过，上限回到服务端 6 格 | 3.x 已重构载具，需 `/grim verbose` 复测 |
+| 0.03 不确定度 | 出刀前先发一条视角包（C04） | +0.03 米盒子 | 几乎没有 |
+
+`PING SPOOF` 的原理就是第二行：`onFirstTransaction`（服务端发 S32）到
+`onSecondTransaction`（收到我们的 C0F）之间，Grim 只能认为目标在这段里任意位置；
+确认压得越久，并集越长，`minDistance` 越小。队列 FIFO、单包最多压 1.5 s、
+断线立即清空，因此不会制造事务乱序。
 
 ### Aim Assist 平滑瞄准
 
@@ -1375,6 +1505,12 @@ cd /home/zty/OpenMaver
 
 成功后：目标进程控制台出现 `[OpenMaver] 已注册游戏内 UI 到 Forge 事件总线`，
 **进入世界后右下角弹出「Loaded successfully, x features enabled!」，按 RSHIFT 打开 ClickGUI。**
+
+> 按键没反应时先看系统临时目录里的 `openmaver-events.log`（`java.io.tmpdir`，可用
+> `-Dopenmaver.events.log=路径` 覆盖）：里面有每次按键的键码、当前界面类名，
+> 以及 `first key event: code=... name=...` 这一行。右 Shift 若被驱动 / 串流软件上报成
+> `LSHIFT` / `RMENU`，把 Settings 里的 **GUI KEY** 切到对应档位即可；另外开关键只在
+> **已进入世界且没有别的界面打开** 时生效（暂停菜单除外）。
 `--follow` 会让注入器在注入成功后继续运行；指定日志文件时从当前文件末尾开始跟随新增行，目标游戏退出后监视结束。按 Ctrl+C 只结束注入器的监视，不影响游戏进程。未提供日志文件时只显示目标进程存活状态。
 
 > 原理：`OpenMaverMcBridge`（在 core jar 里）用 JVMTI 找到游戏的 `LaunchClassLoader`，
@@ -1446,7 +1582,7 @@ build/bin/openmaver_injector --re-self \
 > 请用 `--list` 确认，必要时显式 `--pid`。真实 MC 1.8.9 由启动器拉起时，
 > 命令行通常包含 `net.minecraft.launchwrapper.Launch`，会被稳定识别。
 
-目标进程的标准输出会打印 `[OpenMaver] Core initialized`、`版本 B2.1.2`、
+目标进程的标准输出会打印 `[OpenMaver] Core initialized`、`版本 B2.2.0`、
 `已注册模块 AutoSprint`、`独立驱动线程已启动` 等，表示注入成功。
 
 ### 自研 vs jattach：重复代码在哪
@@ -1482,7 +1618,7 @@ java -Djava.library.path=build/lib -cp build/java-classes OpenMaver
 
 ```
 [OpenMaver] Core initialized                                  # JNI 加载 ✓
-[INFO] [OpenMaver] 版本 B2.1.2 启动完成
+[INFO] [OpenMaver] 版本 B2.2.0 启动完成
 [INFO] [OpenMaver] 配置加载完成: .../config/default.jsonc       # Config 读取 ✓
 [INFO] [ModuleManager] 已注册模块 AutoSprint (configKey=movement.autosprint, enabled=false)
 [DEBUG] [OpenMaver] 调试查询 getModule("AutoSprint") -> movement.autosprint, enabled=false
@@ -1518,7 +1654,7 @@ java -Djava.library.path=build/lib -Dopenmaver.config=/tmp/om-enabled.jsonc \
 | 环节 | 验证点 |
 |---|---|
 | JNI 加载 | 控制台出现 `[OpenMaver] Core initialized` |
-| 云端库版本 | 日志中打印 `版本 B2.1.2` 与 `getVersion()` 一致 |
+| 云端库版本 | 日志中打印 `版本 B2.2.0` 与 `getVersion()` 一致 |
 | Config 读取 | 注册日志里的 `configKey=movement.autosprint` 与 `enabled=` 等于 jsonc 的值 |
 | 事件/循环触发 | `链路验证统计: tick 循环=… render 循环=…` 均大于 0 |
 | Module 基类驱动 | `enabled=true` 时出现 `onEnable` 与递增的 `tick #N`，退出时 `onDisable` |
