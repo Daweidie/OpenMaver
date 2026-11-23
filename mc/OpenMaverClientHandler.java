@@ -5,6 +5,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraftforge.client.event.GuiOpenEvent;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
+import net.minecraftforge.client.event.RenderLivingEvent;
 import net.minecraftforge.event.entity.player.AttackEntityEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.InputEvent;
@@ -421,6 +422,11 @@ public final class OpenMaverClientHandler {
             renderTickFailed = true;
             debug("render tick bridge disabled: " + t, t);
         }
+    }
+
+    @SubscribeEvent
+    public void onRenderNameTag(RenderLivingEvent.Specials.Pre<?> event) {
+        if (!failed) NameTagFeature.onRenderName(Minecraft.getMinecraft(), event);
     }
 
     @SubscribeEvent

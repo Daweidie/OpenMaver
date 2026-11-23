@@ -560,6 +560,7 @@ public final class OpenMaverFeatures {
         autoclickerClickedThisTick = false;
         placementsThisTick = 0;
         if (tickStartFailed) {
+            AntiBotFeature.onTick(mc);
             processPendingCriticalJump(mc);
             updateAutoClicker(mc);
             suppressVanillaDuplicateAttack(mc);
@@ -568,6 +569,7 @@ public final class OpenMaverFeatures {
         }
         try {
             refreshSettings();
+            AntiBotFeature.onTick(mc);
             clientTick++;
             ScaffoldFeature.tickCounter(clientTick);
             processPendingCriticalJump(mc);
@@ -937,6 +939,9 @@ public final class OpenMaverFeatures {
         //   C02 压到 0.2 倍伤害。CPS HUD 仍按配置显示。
         boolean entityHit = !miss && isEntityHit(hit);
         boolean blockHit = !miss && isBlockHit(hit);
+        if (entityHit && AntiBotFeature.isBot(read(hit, "entityHit", "field_72308_g", null))) {
+            return false;
+        }
         long interval = clickIntervalMillis(now);
         Object player = read(mc, "thePlayer", "field_71439_g", null);
         // 仅点击：准星在方块上时什么都不挖，只补一个挥手动画（真人点一下的观感）。
@@ -1011,7 +1016,8 @@ public final class OpenMaverFeatures {
     /** 统一 1.8 实体攻击：C0B（必要时）-> C0A -> C02，单 tick 共享攻击名额。 */
     static boolean attackEntity18(Minecraft mc, Object player, Object target) {
         Object controller = read(mc, "playerController", "field_71442_b", null);
-        if (controller == null || player == null || target == null || entityAttackUsedThisTick) {
+        if (controller == null || player == null || target == null || entityAttackUsedThisTick
+                || AntiBotFeature.isBot(target)) {
             return false;
         }
         if (!syncSprintBeforeAttack(player)
@@ -1405,7 +1411,7 @@ public final class OpenMaverFeatures {
                 continue;
             }
             EntityLivingBase living = (EntityLivingBase) candidate;
-            if (!alive(living)) {
+            if (!alive(living) || AntiBotFeature.isBot(living)) {
                 continue;
             }
             // 与原版 EntityRenderer.getMouseOver 一样，只考虑可碰撞实体。
@@ -1735,7 +1741,7 @@ public final class OpenMaverFeatures {
         Module criticals = ModuleManager.getModule("Criticals");
         Object player = read(mc, "thePlayer", "field_71439_g", null);
         if (criticals == null || !criticals.isEnabled() || player == null
-                || !alive(player) || !alive(target)) {
+                || !alive(player) || !alive(target) || AntiBotFeature.isBot(target)) {
             resetCriticalsJumpState();
             return;
         }
@@ -2758,7 +2764,7 @@ public final class OpenMaverFeatures {
     }
 
     private static boolean isValidKillAuraTarget(Object player, EntityLivingBase candidate) {
-        if (candidate == null || candidate == player || !alive(candidate)) {
+        if (candidate == null || candidate == player || !alive(candidate) || AntiBotFeature.isBot(candidate)) {
             return false;
         }
         if (!Boolean.TRUE.equals(
@@ -2957,6 +2963,9 @@ public final class OpenMaverFeatures {
         debugEnabled = readBoolean(values, "debug.enabled", false);
         OpenMaverDebug.setEnabled(debugEnabled);
         MaverWallpaper.load(values);
+        MaverPersonalization.load(values);
+        NameTagFeature.load(values);
+        AntiBotFeature.load(values);
         aimSpeed = clamp(readFloat(values, "aim.speed", 0.35F), 0.05F, 1.0F);
         aimRange = clamp(readFloat(values, "aim.range", 6.0F), 3.0F, 12.0F);
         aimFov = clamp(readFloat(values, "aim.fov", 180.0F), 30.0F, 180.0F);
@@ -3964,6 +3973,9 @@ public final class OpenMaverFeatures {
                     + "\nbypass.profile=" + PROFILE_KEYS[clamp(bypassProfile, PROFILE_LEGIT, PROFILE_AGGRESSIVE)]
                     + "\ndebug.enabled=" + debugEnabled
                     + "\n" + MaverWallpaper.save()
+                    + MaverPersonalization.save()
+                    + NameTagFeature.save()
+                    + AntiBotFeature.save()
                     + "aim.speed=" + aimSpeed
                     + "\naim.range=" + aimRange
                     + "\naim.fov=" + aimFov
@@ -4098,7 +4110,8 @@ public final class OpenMaverFeatures {
                     continue;
                 }
                 EntityLivingBase entity = (EntityLivingBase) candidate;
-                if (!alive(entity) || distance(player, entity) > espRangeSq) {
+                if (!alive(entity) || AntiBotFeature.shouldFilterRender(entity)
+                        || distance(player, entity) > espRangeSq) {
                     continue;
                 }
                 AxisAlignedBB box = boundingBox(entity);
@@ -4153,7 +4166,8 @@ public final class OpenMaverFeatures {
                 continue;
             }
             EntityPlayer player = (EntityPlayer) candidate;
-            if (!alive(player) || distance(self, player) > rangeSq) {
+            if (!alive(player) || AntiBotFeature.shouldFilterRender(player)
+                    || distance(self, player) > rangeSq) {
                 continue;
             }
             AxisAlignedBB box = boundingBox(player);
@@ -4210,6 +4224,7 @@ public final class OpenMaverFeatures {
         if (savedName.length() > 0) {
             player.setCustomNameTag("");
         }
+        NameTagFeature.beginSkinPass();
         try {
             GL11.glEnable(GL11.GL_DEPTH_TEST);
             GL11.glDepthMask(true);
@@ -4232,6 +4247,7 @@ public final class OpenMaverFeatures {
             call(renderManager, "renderEntitySimple", "func_147937_a", null,
                     player, Float.valueOf(partialTicks));
         } finally {
+            NameTagFeature.endSkinPass();
             if (savedName.length() > 0) {
                 player.setCustomNameTag(savedName);
             }
@@ -4326,6 +4342,7 @@ public final class OpenMaverFeatures {
         if (aimLockedTarget != null
                 && (aimLockedWorld != world || aimLockedPlayer != player
                         || !alive(aimLockedTarget)
+                        || AntiBotFeature.isBot(aimLockedTarget)
                         || distance(player, aimLockedTarget)
                                 >= (double) aimRange * aimRange)) {
             clearAimLock();
@@ -4371,7 +4388,7 @@ public final class OpenMaverFeatures {
                 continue;
             }
             EntityLivingBase living = (EntityLivingBase) candidate;
-            if (!alive(living)) {
+            if (!alive(living) || AntiBotFeature.isBot(living)) {
                 continue;
             }
             double distance = distance(player, living);

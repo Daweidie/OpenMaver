@@ -4,7 +4,7 @@
 It comes from `Noto-Sans-SC-Bold.zip` and supplies both Latin and Simplified
 Chinese glyphs.
 The file is kept here, outside `mc/resources`, so it is **not** packaged into
-`openmaver-mod.jar`; only the generated bitmap atlases under
+`openmaver-b2.2.0-YYYY-MM-DD.jar`; only the generated bitmap atlases under
 `mc/resources/assets/openmaver/font/` are shipped.
 
 `OpenSans-Regular.ttf`, `Smerkan-Bold.otf`, and `SourceCodePro-Regular.ttf`

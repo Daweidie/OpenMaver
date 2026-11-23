@@ -97,6 +97,10 @@ def legacy_disabled_mod_jar_path():
     return GAME_DIR / "mods/openmaver-mod.jar.disabled"
 
 
+def dated_build_mod_jars():
+    return sorted((GAME_DIR / "mods").glob("openmaver-b2.2.0-????-??-??.jar"))
+
+
 def disable_duplicate(target, disabled):
     """Forge rejects two jars with the same modid; keep only the canonical file."""
     if target.exists():
@@ -108,18 +112,21 @@ def disable_duplicate(target, disabled):
 
 
 def install_mod():
-    source = REPO / "build/openmaver-mod.jar"
-    if not source.is_file():
-        fail("missing build/openmaver-mod.jar; run ./launch-openmaver.sh")
+    artifacts = sorted((REPO / "build").glob("openmaver-b2.2.0-????-??-??.jar"))
+    source = artifacts[-1] if artifacts else None
+    if source is None or not source.is_file():
+        fail("missing build/openmaver-b2.2.0-YYYY-MM-DD.jar; run ./launch-openmaver.sh")
     mods_dir = GAME_DIR / "mods"
     mods_dir.mkdir(parents=True, exist_ok=True)
     target = mod_jar_path()
     disabled = disabled_mod_jar_path()
     if disabled.exists():
         disabled.unlink()
-    # Forge 1.8.9 aborts when both openmaver-mod.jar and OpenMaver.jar declare
+    # Forge 1.8.9 aborts when both a build artifact and OpenMaver.jar declare
     # the same modid, so move a directly-copied build artifact out of the way.
     disable_duplicate(legacy_mod_jar_path(), legacy_disabled_mod_jar_path())
+    for duplicate in dated_build_mod_jars():
+        disable_duplicate(duplicate, duplicate.with_name(duplicate.name + ".disabled"))
     if not target.exists() or source.read_bytes() != target.read_bytes():
         shutil.copy2(source, target)
     return target
@@ -146,6 +153,10 @@ def disable_mod():
     path = disable_duplicate(legacy_mod_jar_path(), legacy_disabled_mod_jar_path())
     if path is not None:
         disabled.append(path)
+    for duplicate in dated_build_mod_jars():
+        path = disable_duplicate(duplicate, duplicate.with_name(duplicate.name + ".disabled"))
+        if path is not None:
+            disabled.append(path)
     return disabled
 
 

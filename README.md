@@ -105,7 +105,7 @@ cmake --build build -j
 - 核心类 jar：`build/openmaver-core.jar`（供运行期注入的 agent 加入 bootstrap 搜索路径）
 - 自研注入器：`build/bin/openmaver_injector`（仅 UNIX）
 - 游戏内 UI jar：`build/openmaver-mc.jar`（**已 reobf 成 SRG**，供运行期注入用）
-- mod jar：`build/openmaver-mod.jar`（完整 mod：UI 类 + 核心类 + `mcmod.info` + 内置 `.so`）
+- mod jar：`build/openmaver-b2.2.0-YYYY-MM-DD.jar`（完整 mod：UI 类 + 核心类 + `mcmod.info` + 内置 `.so`，日期为构建日期）
 
 ### 2) 编译用 API：默认内置 stub，也可指向真实 Forge
 
@@ -145,8 +145,8 @@ mc/*.java --javac(对 MCP API)--> mc-classes --McpReobf(MCP->SRG)--> mc-classes-
 
 1. **装 Forge**：用官方安装器给 1.8.9 装 Forge（如 `1.8.9-forge1.8.9-11.15.1.2318-1.8.9`）。
    PrismLauncher 用户：右键 `1.8.9` 实例 → *Edit* → *Version* → *Install Forge* → 选 `11.15.1.2318`。
-2. 用上面的命令构建出 **`build/openmaver-mod.jar`**。
-3. 把 `openmaver-mod.jar` 放进该实例的 `mods/` 目录（`~/.minecraft/mods/` 或 Prism 实例的 `minecraft/mods/`）。
+2. 用上面的命令构建出 **`build/openmaver-b2.2.0-YYYY-MM-DD.jar`**。
+3. 把生成的版本日期 jar 放进该实例的 `mods/` 目录（`~/.minecraft/mods/` 或 Prism 实例的 `minecraft/mods/`）。
 4. 启动游戏 → 进入世界，右下角会出现「Loaded successfully, x features enabled!」。
 
 > **自带材质包**：Maver 内置 `2pimp v2 [16x]` 材质包
@@ -223,7 +223,7 @@ ViaForge 在 `--mod`、`--inject` 两种模式下都由 Forge 启动加载；进
 
 两种模式互斥，避免同一实例里同时从 mod jar 和注入 jar 各加载一套 `OpenMaver` 类：
 
-- `--mod`：把 `build/openmaver-mod.jar` 安装到 `minecraft/mods/OpenMaver.jar`，
+- `--mod`：把最新的 `build/openmaver-b2.2.0-YYYY-MM-DD.jar` 安装到 `minecraft/mods/OpenMaver.jar`，
   由 Forge 在启动时加载。
 - `--inject`：把已有的 `mods/OpenMaver.jar` 重命名为 `OpenMaver.jar.disabled`，
   不安装 mod；启动 Forge 后等待资源加载完成，再用 `openmaver-core.jar` +
@@ -267,7 +267,7 @@ java -Djava.library.path=build/lib \
 
 ### Minecraft 1.8.9 中
 
-装上 Forge 1.8.9 后，把构建好的 **`build/openmaver-mod.jar`** 放入 `mods/` 即可
+装上 Forge 1.8.9 后，把构建好的 **`build/openmaver-b2.2.0-YYYY-MM-DD.jar`** 放入 `mods/` 即可
 （本地库已随 jar 分发，**无需**再配 `-Djava.library.path`；安装步骤见上一节）。
 
 > 开发调试时也可以不打包，直接让 JVM 找到本地库，在启动器 JVM 参数中加：
@@ -290,7 +290,7 @@ java -Djava.library.path=build/lib \
 `-Dopenmaver.config=/绝对路径/config.jsonc`。
 
 > 本节描述的「把原生库放进 jar、首次运行解压再 `System.load`」已经实现（见
-> `OpenMaver` 的 `loadBundledNativeCore`）：`build/openmaver-mod.jar` 里就带着
+> `OpenMaver` 的 `loadBundledNativeCore`）：构建出的日期版本 jar 里就带着
 > `native/<os>/<arch>/libopenmaver_core.so`，开箱即用。
 
 ## 游戏内 UI（进入世界后）
@@ -339,15 +339,29 @@ java -Djava.library.path=build/lib \
   SEMICOLON / APOSTROPHE / GRAVE / TAB，写进 `config/openmaver.properties` 的
   `ui.clickgui.key`）。
   仅保留可拖动的列式界面：Combat / Movement / Render / Player / Misc，
-  以及独立的 **Config / Wallpaper** 浮动面板；旧版侧栏界面与 Client 列已移除。
-  深色半透明面板使用淡紫色选中行，Config 使用浅粉色圆角输入框和操作按钮。
+  以及独立的 **Config / Personalization** 浮动面板；旧版侧栏界面与 Client 列已移除。
+  Personalization 收纳 Wallpaper、Color 与 Text 设置；主题色会同步更新 ClickGUI 高亮和 Config 控件，HUD 上方闪烁文字也可自定义。
   拖动标题栏移动面板，点击或右键标题栏折叠，位置与折叠状态在本次游戏会话内保留。
   左键模块切换开关、右键展开滑块 / 选项 / 复选框；底部搜索支持直接输入与 `Ctrl+K`。
   所有面板都在内容溢出时单独滚动，主菜单与游戏画面均不使用整屏模糊。模块列表来自
   `ModuleManager`，Aim Assist、Player ESP、Grim Bypass、AutoSprint、AutoClicker、Reach、
   Criticals、FastPlace、Target HUD 与 Player X-Ray 的设置直接绑定 `OpenMaverFeatures`，参数写入
   `config/openmaver.properties`（拖拽结束与关闭 GUI 时落盘）。
-- **主菜单壁纸** `mc/MaverWallpaper.java`：ClickGUI 的独立 **Wallpaper** 浮动面板
+- **Anti Bot 反假人** `mc/AntiBotFeature.java`：在 **Combat → Anti Bot** 中开启（默认关闭）。
+  默认按 UUID 检查 Tab 名单，持续缺席 40 tick（约 2 秒）才判定为假人；Tab 信息恢复后立即解除。
+  右键可调整 `TAB CHECK`、`NAME CHECK`、`CHECK DELAY`（0–100 tick）和 `FILTER RENDER`。
+  名称格式校验默认关闭，开启后要求名字为 1–16 位英文字母、数字或下划线。
+  自动选敌 / 攻击（Aim Assist、KillAura、Reach、AutoClicker、Velocity）会忽略判定出的假人；
+  `FILTER RENDER` 同时让 Player ESP、Player X-Ray、Target HUD 和 NameTag 忽略它们，原版实体仍保留。
+  检测结果每 tick 更新，离开世界或重生后重新检测；Tab 数据尚未加载或不可读取时保留玩家。
+  服务器若主动从 Tab 隐藏真人，可关闭 `TAB CHECK`；拥有正常 Tab 记录和名字的假人无法仅靠这两项检查识别。
+  内置 FakePlayer 也会受 Tab 校验影响，训练时可关闭 Anti Bot。设置随 Config 配置保存。
+- **NameTag 玩家标签** `mc/NameTagFeature.java`：在 **Render → NameTag** 中开启，
+  玩家头顶显示名称、实时血量/血量上限与细血条，例如 `Steve 18/20 HP`。
+  血量从高到低依次显示为绿、橙、红色；默认范围 64 米，右键可调整距离、字号和穿墙显示。
+  开启后替换原版玩家名字，关闭后恢复；不显示自己、死亡或对自己不可见的玩家。
+  NameTag 与 Player X-Ray 同时启用时，透视模型的额外渲染不会重复绘制标签。
+- **主菜单壁纸** `mc/MaverWallpaper.java`：ClickGUI 的 **Personalization → Wallpaper** 面板
   （或主菜单右上角的图片图标）可以切换开始菜单背景：
 
   | 模式 | 效果 |

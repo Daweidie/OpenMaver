@@ -544,8 +544,8 @@ public final class GuiMaverMainMenu extends GuiScreen {
 
     private void layoutMenu() {
         float ui = uiScale();
-        int buttonW = Math.round(190.0F * ui);
-        int buttonH = Math.round(22.0F * ui);
+        int buttonW = Math.round(160.0F * ui);
+        int buttonH = Math.round(19.0F * ui);
         int gap = Math.max(3, Math.round(5.0F * ui));
         int x = (width - buttonW) / 2;
         int top = Math.round(height * 0.43F);
@@ -557,7 +557,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
         buttons.add(new MenuButton("Settings", ACTION_OPTIONS,
                 x, top + 2 * (buttonH + gap), buttonW, buttonH, 2, false));
 
-        int iconSize = Math.round(24.0F * ui);
+        int iconSize = Math.round(21.0F * ui);
         int iconGap = Math.max(3, Math.round(5.0F * ui));
         int pad = Math.round(12.0F * ui);
         int iconY = Math.round(10.0F * ui);

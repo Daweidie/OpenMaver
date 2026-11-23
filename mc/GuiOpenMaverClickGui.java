@@ -28,7 +28,7 @@ import java.util.Set;
  * 游戏内 ClickGUI（Forge 1.8.9 / {@link GuiScreen}）。
  *
  * <p>每个分类都是独立的可拖动、可折叠面板，右键模块展开设置。
- * Config 与 Wallpaper 也使用相同的列式布局，不再切换到侧栏式界面。
+ * Config 与 Personalization 也使用相同的列式布局，不再切换到侧栏式界面。
  * 所有控件由立即模式几何与打包字体绘制，支持运行期注入。
  *
  * <p>真实数据：模块来自 {@link ModuleManager}，Aim Assist / Player ESP 来自
@@ -279,6 +279,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 addTargetHudSettings(entry);
             } else if ("Player X-Ray".equals(module.getName())) {
                 addPlayerXraySettings(entry);
+            } else if ("NameTag".equals(module.getName())) {
+                addNameTagSettings(entry);
+            } else if ("AntiBot".equals(module.getName())) {
+                addAntiBotSettings(entry);
             } else if ("Motion Blur".equals(module.getName())) {
                 addMotionBlurSettings(entry);
             } else if ("Chest ESP".equals(module.getName())) {
@@ -431,6 +435,40 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         entry.settings.add(Setting.select("COLOR", XRAY_COLOR_NAMES, new Binding() {
             public double get() { return OpenMaverFeatures.getPlayerXrayColor(); }
             public void set(double value) { OpenMaverFeatures.setPlayerXrayColor((int) Math.round(value)); }
+        }));
+    }
+
+    private void addAntiBotSettings(Entry entry) {
+        entry.settings.add(Setting.check("TAB CHECK", new Binding() {
+            public double get() { return AntiBotFeature.isTabCheck() ? 1.0D : 0.0D; }
+            public void set(double value) { AntiBotFeature.setTabCheck(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.check("NAME CHECK", new Binding() {
+            public double get() { return AntiBotFeature.isNameCheck() ? 1.0D : 0.0D; }
+            public void set(double value) { AntiBotFeature.setNameCheck(value > 0.5D); }
+        }));
+        entry.settings.add(Setting.slider("CHECK DELAY", 0, 100, 5, 0, " ticks", new Binding() {
+            public double get() { return AntiBotFeature.getCheckDelay(); }
+            public void set(double value) { AntiBotFeature.setCheckDelay((int) value); }
+        }));
+        entry.settings.add(Setting.check("FILTER RENDER", new Binding() {
+            public double get() { return AntiBotFeature.isFilterRender() ? 1.0D : 0.0D; }
+            public void set(double value) { AntiBotFeature.setFilterRender(value > 0.5D); }
+        }));
+    }
+
+    private void addNameTagSettings(Entry entry) {
+        entry.settings.add(Setting.slider("RANGE", 8.0F, 128.0F, 4.0F, 0, " m", new Binding() {
+            public double get() { return NameTagFeature.getRange(); }
+            public void set(double value) { NameTagFeature.setRange((float) value); }
+        }));
+        entry.settings.add(Setting.slider("SCALE", 0.5F, 2.0F, 0.05F, 2, "x", new Binding() {
+            public double get() { return NameTagFeature.getScale(); }
+            public void set(double value) { NameTagFeature.setScale((float) value); }
+        }));
+        entry.settings.add(Setting.check("THROUGH WALLS", new Binding() {
+            public double get() { return NameTagFeature.isThroughWalls() ? 1.0D : 0.0D; }
+            public void set(double value) { NameTagFeature.setThroughWalls(value > 0.5D); }
         }));
     }
 
@@ -1066,17 +1104,24 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final int COL_SETTINGS_BG = 0xF015161A;
     private static final int COL_TITLE = 0xFFF2F3F6;
     private static final int COL_ROW_TEXT = 0xFFE3E5EB;
-    private static final int COL_ON_FILL = 0xFFB3B9F0;
-    private static final int COL_ON_HOVER = 0xFFC4C9F7;
-    private static final int COL_ON_TEXT = 0xFF1C2573;
     private static final int COL_DIM = 0xFF7C8494;
 
     private static final String CONFIG_COLUMN = "configs";
-    private static final String WALLPAPER_COLUMN = "wallpaper";
+    private static final String PERSONALIZATION_COLUMN = "personalization";
     private static final int CONFIG_W = 146;
-    private static final int WALLPAPER_W = 158;
-    private static final int CFG_PINK = 0xFFFFE2E3;
-    private static final int CFG_INK = 0xFF987E83;
+    private static final int PERSONALIZATION_W = 174;
+    private static final int[] THEME_PRESETS = {
+        0xFFB3B9F0, 0xFF83B4F5, 0xFF7EDCE2, 0xFF91D5B2,
+        0xFFEBC57C, 0xFFECA7C5, 0xFFEC9393, 0xFFC4CAD4
+    };
+    private static final String[] THEME_NAMES = {
+        "Violet", "Blue", "Cyan", "Mint", "Amber", "Rose", "Red", "Silver"
+    };
+    private String personalizationSection = "wallpaper";
+    private String personalizationField;
+    private String personalizationInput = "";
+    private boolean personalizationSelectAll;
+    private boolean personalizationInputError;
     private String tooltip;
 
     /** 列的位置 / 折叠状态在本次游戏会话内保留，重新打开 ClickGUI 不会复位。 */
@@ -1099,14 +1144,14 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int rowMaxBottom = y;
         for (int i = 0; i < CATEGORIES.length + 2; i++) {
             String id = i < CATEGORIES.length ? CATEGORIES[i].id
-                    : i == CATEGORIES.length ? CONFIG_COLUMN : WALLPAPER_COLUMN;
+                    : i == CATEGORIES.length ? CONFIG_COLUMN : PERSONALIZATION_COLUMN;
             String title = i < CATEGORIES.length ? CATEGORIES[i].name
-                    : i == CATEGORIES.length ? "Config" : "Wallpaper";
+                    : i == CATEGORIES.length ? "Config" : "Personalization";
             if (i < CATEGORIES.length && !hasEntries(id)) {
                 continue;
             }
             int w = Math.min(this.width, CONFIG_COLUMN.equals(id) ? CONFIG_W
-                    : WALLPAPER_COLUMN.equals(id) ? WALLPAPER_W : COL_W);
+                    : PERSONALIZATION_COLUMN.equals(id) ? PERSONALIZATION_W : COL_W);
             if (x + w > this.width - COL_GAP && x > COL_GAP) {
                 x = COL_GAP;
                 y = Math.min(rowMaxBottom + COL_GAP, Math.max(COL_TOP, this.height / 2));
@@ -1129,14 +1174,16 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private static boolean isUtilityColumn(Column column) {
-        return CONFIG_COLUMN.equals(column.id) || WALLPAPER_COLUMN.equals(column.id);
+        return CONFIG_COLUMN.equals(column.id) || PERSONALIZATION_COLUMN.equals(column.id);
     }
 
     private void focusInitialColumn() {
         if (initialColumn == null) {
             return;
         }
-        String id = "settings".equals(initialColumn) ? CONFIG_COLUMN : initialColumn;
+        String id = "settings".equals(initialColumn) ? CONFIG_COLUMN
+                : "wallpaper".equals(initialColumn) ? PERSONALIZATION_COLUMN : initialColumn;
+        if ("wallpaper".equals(initialColumn)) personalizationSection = "wallpaper";
         for (int i = 0; i < columns.size(); i++) {
             Column column = columns.get(i);
             if (id.equals(column.id)) {
@@ -1298,7 +1345,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             if (CONFIG_COLUMN.equals(column.id)) {
                 drawConfigColumn(font, column, x, rowY, alpha, bodyHoverable);
             } else {
-                drawWallpaperColumn(font, column, x, rowY, alpha, bodyHoverable);
+                drawPersonalizationColumn(font, column, x, rowY, alpha, bodyHoverable);
             }
         }
         for (int i = 0; i < rows; i++) {
@@ -1354,7 +1401,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private void drawColumnRow(FontRenderer font, int x, int y, String name, String keybind,
             float on, float hover, float press, boolean hasSettings, float expand, float alpha) {
         if (on > 0.01F) {
-            int fill = blendColor(COL_ON_FILL, COL_ON_HOVER, hover);
+            int fill = blendColor(MaverPersonalization.getColor(), MaverPersonalization.getHoverColor(), hover);
             Gui.drawRect(x, y, x + COL_W, y + COL_ROW_H, fade(fill, alpha * on));
         }
         if (hover > 0.01F && on < 0.99F) {
@@ -1364,13 +1411,13 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         if (press > 0.01F) {
             Gui.drawRect(x, y, x + COL_W, y + COL_ROW_H, fade(0x18FFFFFF, alpha * press));
         }
-        int textColor = blendColor(COL_ROW_TEXT, COL_ON_TEXT, on);
-        textColor = blendColor(textColor, on > 0.5F ? 0xFF0E1550 : 0xFFFFFFFF, hover * 0.5F);
+        int textColor = blendColor(COL_ROW_TEXT, MaverPersonalization.getTextColor(), on);
+        textColor = blendColor(textColor, on > 0.5F ? MaverPersonalization.getTextColor() : 0xFFFFFFFF, hover * 0.5F);
         // 悬停时文字轻轻右移 1.5px，增加手感。
         int textX = x + 7 + Math.round(hover * 1.5F);
         int right = x + COL_W - 6;
         if (hasSettings) {
-            int chevColor = blendColor(blendColor(COL_DIM, 0xFF39408A, on), textColor, expand);
+            int chevColor = blendColor(blendColor(COL_DIM, MaverPersonalization.getTextColor(), on), textColor, expand);
             drawChevronProgress(right - 3, y + COL_ROW_H / 2, expand, fade(chevColor, alpha));
             right -= 11;
         }
@@ -1378,7 +1425,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             String key = ellipsizeMicro(font, keybind, 30);
             int keyW = microWidth(font, key);
             micro(font, key, right - keyW, y + 5,
-                    fade(blendColor(COL_DIM, 0xFF4B5299, on), alpha));
+                    fade(blendColor(COL_DIM, MaverPersonalization.getTextColor(), on), alpha));
             right -= keyW + 4;
         }
         hud(font, ellipsizeHud(font, name, right - textX), textX, y + 4, fade(textColor, alpha));
@@ -1388,7 +1435,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             int h, float alpha, boolean hoverable) {
         long now = frameNow;
         Gui.drawRect(x, y, x + COL_W, y + h, fade(COL_SETTINGS_BG, alpha));
-        Gui.drawRect(x, y, x + 2, y + h, fade(COL_ON_FILL, alpha * 0.85F));
+        Gui.drawRect(x, y, x + 2, y + h, fade(MaverPersonalization.getColor(), alpha * 0.85F));
         int cx = x + 8;
         int cw = COL_W - 14;
         int cy = y + SET_PAD;
@@ -1412,7 +1459,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 roundRect(cx, trackY, cw, 3, 1, fade(0x26FFFFFF, alpha));
                 int fillW = (int) Math.round(cw * clamp01((float) setting.percent()));
                 if (fillW > 0) {
-                    roundRect(cx, trackY, fillW, 3, 1, fade(COL_ON_FILL, alpha));
+                    roundRect(cx, trackY, fillW, 3, 1, fade(MaverPersonalization.getColor(), alpha));
                 }
                 int thumbX = cx + fillW;
                 fillCircle(thumbX, trackY + 1, 3 + Math.round(hi), fade(0xFFFFFFFF, alpha));
@@ -1428,7 +1475,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 int lowX = cx + Math.round(cw * clamp01((float) setting.lowPercent()));
                 int highX = cx + Math.round(cw * clamp01((float) setting.highPercent()));
                 if (highX > lowX) {
-                    roundRect(lowX, trackY, highX - lowX, 3, 1, fade(COL_ON_FILL, alpha));
+                    roundRect(lowX, trackY, highX - lowX, 3, 1, fade(MaverPersonalization.getColor(), alpha));
                 }
                 fillTriangle(lowX + 4, trackY + 1, lowX, trackY - 2, lowX, trackY + 4,
                         fade(0xFFFFFFFF, alpha));
@@ -1439,7 +1486,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 micro(font, ellipsizeMicro(font, setting.label, cw / 2), cx, cy + 4, labelColor);
                 String value = ellipsizeMicro(font, setting.display(), cw / 2);
                 micro(font, value, cx + cw - microWidth(font, value), cy + 4,
-                        fade(blendColor(COL_ON_FILL, 0xFFFFFFFF, hi * 0.5F), alpha));
+                        fade(blendColor(MaverPersonalization.getColor(), 0xFFFFFFFF, hi * 0.5F), alpha));
                 addSettingHit(column, entry, setting, x, cy, sh, cx, cw);
             } else {
                 boolean checked = setting.checked();
@@ -1449,8 +1496,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 int by = cy + 3;
                 roundRect(bx, by, 8, 8, 2, fade(0x30FFFFFF, alpha));
                 if (box.active > 0.01F) {
-                    roundRect(bx, by, 8, 8, 2, fade(COL_ON_FILL, alpha * box.active));
-                    drawCheck(bx + 2, by + 4, fade(COL_ON_TEXT, alpha * box.active));
+                    roundRect(bx, by, 8, 8, 2, fade(MaverPersonalization.getColor(), alpha * box.active));
+                    drawCheck(bx + 2, by + 4, fade(MaverPersonalization.getTextColor(), alpha * box.active));
                 }
                 addSettingHit(column, entry, setting, x, cy, sh, cx, cw);
             }
@@ -1515,6 +1562,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     private void handleColumnClick(int mx, int my, int button) {
         profileFieldFocused = false;
+        finishPersonalizationInput();
         if (isHovered(mx, my, searchX, searchY, searchW, searchH)) {
             searchFocused = true;
             return;
@@ -1557,7 +1605,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 continue;
             }
             if (hit.action != null) {
-                if (button == 0) {
+                if (button == 0 || (button == 1 && "section".equals(hit.action))) {
                     handleUtilityAction(column, hit);
                 }
             } else if (hit.setting == null) {
@@ -1730,13 +1778,21 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
     }
 
-    // Config 与 Wallpaper 是同一套列面板；绘制和命中共用 Hit，不存在旧页面入口。
+    // Config 与 Personalization 是同一套列面板；绘制和命中共用 Hit，不存在旧页面入口。
 
     private int utilityContentHeight(Column column) {
         if (CONFIG_COLUMN.equals(column.id)) {
             return 74 + (configPreferences ? 72 : 0)
                     + Math.max(1, ConfigProfiles.listNames().size()) * COL_ROW_H + 18;
         }
+        int height = 6 + 3 * COL_ROW_H;
+        if ("wallpaper".equals(personalizationSection)) height += wallpaperContentHeight();
+        else if ("color".equals(personalizationSection)) height += 78;
+        else if ("text".equals(personalizationSection)) height += 70;
+        return height;
+    }
+
+    private int wallpaperContentHeight() {
         return 88 + Math.max(1, MaverWallpaper.listWallpapers().size()) * COL_ROW_H + 24;
     }
 
@@ -1761,14 +1817,14 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 && isHovered(lastMouseX, lastMouseY, innerX, y + 4, innerW, 22);
         ControlAnim field = control("cfg:field", fieldHover, profileFieldFocused, frameNow);
         roundRect(innerX, y + 4, innerW, 22, 7,
-                fade(blendColor(CFG_PINK, 0xFFFFF1F1, field.active), alpha));
+                fade(blendColor(MaverPersonalization.getColor(), MaverPersonalization.getHoverColor(), field.active), alpha));
         String label = profileName.isEmpty() ? "Profile name" : profileName + ConfigProfiles.EXTENSION;
         micro(font, ellipsizeMicro(font, label, innerW - 14), innerX + 7, y + 12,
-                fade(CFG_INK, alpha));
+                fade(MaverPersonalization.getTextColor(), alpha));
         if (profileFieldFocused && (frameNow / 480L) % 2L == 0L) {
             int caretX = innerX + 7 + Math.min(innerW - 16,
                     microWidth(font, profileName));
-            Gui.drawRect(caretX, y + 10, caretX + 1, y + 20, fade(CFG_INK, alpha));
+            Gui.drawRect(caretX, y + 10, caretX + 1, y + 20, fade(MaverPersonalization.getTextColor(), alpha));
         }
         column.hits.add(Hit.action("name", null, innerX, y + 4, innerW, 22));
 
@@ -1820,19 +1876,82 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 ConfigProfiles.statusIsError(), alpha, hoverable);
     }
 
-    private void drawWallpaperColumn(FontRenderer font, Column column, int x, int y,
+    private void drawPersonalizationColumn(FontRenderer font, Column column, int x, int y,
             float alpha, boolean hoverable) {
-        drawUtilityRow(font, column, "mode", "Mode", MaverWallpaper.getModeName(),
-                x, y + 4, alpha, hoverable, "Cycle panorama / static / dynamic");
-        drawUtilityRow(font, column, "fit", "Fit", MaverWallpaper.getFitName(),
-                x, y + 22, alpha, hoverable, "Cycle cover / contain / stretch");
-        drawUtilityRow(font, column, "source", "Source", MaverWallpaper.getDisplayName(),
-                x, y + 40, alpha, hoverable, "Current: " + MaverWallpaper.getDisplayName() + " · click to reset");
-        drawUtilityRow(font, column, "wallpaperFolder", "Folder", "OPEN",
-                x, y + 58, alpha, hoverable, "Open wallpapers folder and refresh files");
-        micro(font, "WALLPAPERS", x + 8, y + 79, fade(COL_DIM, alpha));
-        List<File> files = MaverWallpaper.listWallpapers();
-        int rowY = y + 88;
+        int innerX = x + 6;
+        int innerW = column.width - 12;
+        String[] sections = {"wallpaper", "color", "text"};
+        String[] labels = {"Wallpaper", "Color", "Text"};
+        int sectionW = (innerW - 4) / 3;
+        for (int i = 0; i < sections.length; i++) {
+            drawUtilityButton(font, column, "section", sections[i], innerX + i * (sectionW + 2),
+                    y + 4, sectionW, COL_ROW_H, labels[i], labels[i], false,
+                    sections[i].equals(personalizationSection), alpha, hoverable);
+        }
+        int bodyY = y + 24;
+        if ("color".equals(personalizationSection)) {
+            micro(font, "CLICKGUI THEME", innerX + 2, bodyY + 2, fade(COL_DIM, alpha));
+            int swatchY = bodyY + 15;
+            for (int i = 0; i < THEME_PRESETS.length; i++) {
+                int sx = innerX + 3 + i * 19;
+                boolean hovered = hoverable && isHovered(lastMouseX, lastMouseY, sx, swatchY, 15, 15);
+                boolean selected = MaverPersonalization.getColor() == THEME_PRESETS[i];
+                if (selected) roundRect(sx - 2, swatchY - 2, 19, 19, 7,
+                        fade(MaverPersonalization.getTextColor(), alpha * 0.85F));
+                roundRect(sx, swatchY, 15, 15, 5, fade(THEME_PRESETS[i], alpha));
+                if (hovered) tooltip = THEME_NAMES[i];
+                column.hits.add(Hit.action("themePreset", Integer.toString(i), sx, swatchY, 15, 15));
+            }
+            drawUtilityRow(font, column, "themeValue", "Theme", MaverPersonalization.getHexColor(),
+                    x, bodyY + 38, alpha, hoverable, "Click to enter a hex color such as #8B7CFF");
+            int fieldY = bodyY + 57;
+            boolean active = "color".equals(personalizationField);
+            roundRect(innerX, fieldY, innerW, 20, 5,
+                    fade(active ? personalizationInputError ? 0xFFE5826E
+                            : MaverPersonalization.getColor() : 0x302A2D36, alpha));
+            String value = active ? personalizationInput : "#RRGGBB  ·  click to edit";
+            micro(font, ellipsizeMicro(font, value, innerW - 12), innerX + 6, fieldY + 7,
+                    fade(active ? MaverPersonalization.getTextColor() : COL_ROW_TEXT, alpha));
+            column.hits.add(Hit.action("themeInput", null, innerX, fieldY, innerW, 20));
+            if (active && (frameNow / 480L) % 2L == 0L) {
+                int caretX = innerX + 6 + Math.min(innerW - 14, microWidth(font, personalizationInput));
+                Gui.drawRect(caretX, fieldY + 5, caretX + 1, fieldY + 15,
+                        fade(MaverPersonalization.getTextColor(), alpha));
+            }
+            drawUtilityButton(font, column, "themeReset", null, innerX, fieldY + 23, innerW, 16,
+                    "Reset theme", "Restore the default violet theme", false, false, alpha, hoverable);
+        } else if ("text".equals(personalizationSection)) {
+            micro(font, "FUNCTION BAR LABEL", innerX + 2, bodyY + 4, fade(COL_DIM, alpha));
+            int fieldY = bodyY + 20;
+            boolean active = "text".equals(personalizationField);
+            roundRect(innerX, fieldY, innerW, 23, 6,
+                    fade(active ? personalizationInputError ? 0xFFE5826E
+                            : MaverPersonalization.getColor() : 0x302A2D36, alpha));
+            String value = active ? personalizationInput : MaverPersonalization.getText();
+            micro(font, ellipsizeMicro(font, value, innerW - 12), innerX + 6, fieldY + 8,
+                    fade(active ? MaverPersonalization.getTextColor() : COL_ROW_TEXT, alpha));
+            column.hits.add(Hit.action("textInput", null, innerX, fieldY, innerW, 23));
+            if (active && (frameNow / 480L) % 2L == 0L) {
+                int caretX = innerX + 6 + Math.min(innerW - 14, microWidth(font, personalizationInput));
+                Gui.drawRect(caretX, fieldY + 6, caretX + 1, fieldY + 17,
+                        fade(MaverPersonalization.getTextColor(), alpha));
+            }
+            drawUtilityButton(font, column, "textReset", null, innerX, fieldY + 27, innerW, 16,
+                    "Reset text", "Restore Maver!", false, false, alpha, hoverable);
+            drawUtilityStatus(font, column, innerX + 2, fieldY + 49, innerW - 4,
+                    "Enter a label for the flashing HUD text", false, alpha, false);
+        } else {
+            drawUtilityRow(font, column, "mode", "Mode", MaverWallpaper.getModeName(),
+                    x, bodyY, alpha, hoverable, "Cycle panorama / static / dynamic");
+            drawUtilityRow(font, column, "fit", "Fit", MaverWallpaper.getFitName(),
+                    x, bodyY + 18, alpha, hoverable, "Cycle cover / contain / stretch");
+            drawUtilityRow(font, column, "source", "Source", MaverWallpaper.getDisplayName(),
+                    x, bodyY + 36, alpha, hoverable, "Current: " + MaverWallpaper.getDisplayName() + " · click to reset");
+            drawUtilityRow(font, column, "wallpaperFolder", "Folder", "OPEN",
+                    x, bodyY + 54, alpha, hoverable, "Open wallpapers folder and refresh files");
+            micro(font, "WALLPAPERS", x + 8, bodyY + 76, fade(COL_DIM, alpha));
+            List<File> files = MaverWallpaper.listWallpapers();
+            int rowY = bodyY + 84;
         if (files.isEmpty()) {
             micro(font, "No wallpapers · open Folder", x + 8, rowY + 5, fade(COL_DIM, alpha));
             rowY += COL_ROW_H;
@@ -1847,27 +1966,28 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         drawUtilityStatus(font, column, x + 8, rowY + 6, column.width - 16,
                 issue == null || issue.isEmpty() ? "PNG / JPG / GIF / WEBP / MP4" : issue,
                 issue != null && !issue.isEmpty(), alpha, hoverable);
+        }
     }
 
     private void drawUtilityButton(FontRenderer font, Column column, String action, String value,
-            int x, int y, int w, int h, String label, String hint, boolean pink,
+            int x, int y, int w, int h, String label, String hint, boolean themed,
             boolean selected, float alpha, boolean hoverable) {
         boolean hovered = hoverable && isHovered(lastMouseX, lastMouseY, x, y, w, h);
         ControlAnim anim = control(column.id + ":" + action + ":" + value, hovered, selected, frameNow);
-        int fill = pink ? blendColor(CFG_PINK, 0xFFFFF1F1, anim.hover)
-                : blendColor(selected ? COL_ON_FILL : 0x18FFFFFF,
-                        selected ? COL_ON_HOVER : 0x30FFFFFF, anim.hover);
-        roundRect(x, y, w, h, pink ? h / 2 : 3, fade(fill, alpha));
+        int fill = themed ? blendColor(MaverPersonalization.getColor(), MaverPersonalization.getHoverColor(), anim.hover)
+                : blendColor(selected ? MaverPersonalization.getColor() : 0x18FFFFFF,
+                        selected ? MaverPersonalization.getHoverColor() : 0x30FFFFFF, anim.hover);
+        roundRect(x, y, w, h, themed ? h / 2 : 3, fade(fill, alpha));
         if (anim.press > 0.01F) {
-            roundRect(x, y, w, h, pink ? h / 2 : 3, fade(0x24FFFFFF, alpha * anim.press));
+            roundRect(x, y, w, h, themed ? h / 2 : 3, fade(0x24FFFFFF, alpha * anim.press));
         }
-        int color = fade(pink ? CFG_INK : selected ? COL_ON_TEXT : COL_ROW_TEXT, alpha);
+        int color = fade(themed ? MaverPersonalization.getTextColor() : selected ? MaverPersonalization.getTextColor() : COL_ROW_TEXT, alpha);
         if ("refresh".equals(label) || "save".equals(label)
                 || "load".equals(label) || "delete".equals(label)) {
             drawActionIcon(label, x + w / 2, y + h / 2, color);
         } else {
             String shown = ellipsizeMicro(font, label, w - 10);
-            micro(font, shown, pink ? x + (w - microWidth(font, shown)) / 2 : x + 5,
+            micro(font, shown, themed ? x + (w - microWidth(font, shown)) / 2 : x + 5,
                     y + (h - 7) / 2, color);
         }
         if (hovered) {
@@ -1885,7 +2005,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int space = Math.max(8, w - microWidth(font, label) - 14);
         String shown = ellipsizeMicro(font, value, space);
         micro(font, shown, x + column.width - 10 - microWidth(font, shown), y + 4,
-                fade(COL_ON_FILL, alpha));
+                fade(MaverPersonalization.getDetailColor(), alpha));
         if (hovered) {
             tooltip = hint;
         }
@@ -1955,6 +2075,24 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     private void handleUtilityAction(Column column, Hit hit) {
         String action = hit.action;
+        if ("themeInput".equals(action)) {
+            personalizationField = "color";
+            personalizationInput = MaverPersonalization.getHexColor();
+            personalizationInputError = false;
+            personalizationSelectAll = true;
+            profileFieldFocused = false;
+            searchFocused = false;
+            return;
+        }
+        if ("textInput".equals(action)) {
+            personalizationField = "text";
+            personalizationInput = MaverPersonalization.getText();
+            personalizationInputError = false;
+            personalizationSelectAll = true;
+            profileFieldFocused = false;
+            searchFocused = false;
+            return;
+        }
         if ("name".equals(action)) {
             profileFieldFocused = true;
             searchFocused = false;
@@ -1999,6 +2137,23 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             OpenMaverFeatures.setBypassProfile((OpenMaverFeatures.getBypassProfile() + 1) % BYPASS_PROFILES.length);
         } else if ("guiKey".equals(action)) {
             OpenMaverFeatures.cycleGuiKey();
+        } else if ("section".equals(action)) {
+            personalizationSection = hit.value;
+            personalizationField = null;
+            column.scroll = 0;
+            column.state.collapsed = false;
+        } else if ("themePreset".equals(action)) {
+            try {
+                MaverPersonalization.setColor(THEME_PRESETS[Integer.parseInt(hit.value)]);
+            } catch (RuntimeException ignored) {
+                // A malformed hit cannot affect the active theme.
+            }
+        } else if ("themeReset".equals(action)) {
+            MaverPersonalization.setColor(MaverPersonalization.DEFAULT_COLOR);
+            personalizationInput = MaverPersonalization.getHexColor();
+        } else if ("textReset".equals(action)) {
+            MaverPersonalization.setText(MaverPersonalization.DEFAULT_TEXT);
+            personalizationInput = MaverPersonalization.getText();
         } else if ("mode".equals(action)) {
             MaverWallpaper.nextMode();
         } else if ("fit".equals(action)) {
@@ -2014,6 +2169,59 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 MaverWallpaper.setMode(MaverWallpaper.isAnimatedFile(hit.value)
                         ? MaverWallpaper.MODE_DYNAMIC : MaverWallpaper.MODE_STATIC);
             }
+        }
+    }
+
+    private boolean handlePersonalizationKey(char typedChar, int keyCode) {
+        if (personalizationField == null) return false;
+        if (keyCode == Keyboard.KEY_ESCAPE || keyCode == Keyboard.KEY_RETURN) {
+            finishPersonalizationInput();
+            return true;
+        }
+        if (keyCode == Keyboard.KEY_BACK) {
+            if (personalizationSelectAll) {
+                personalizationInput = "";
+                personalizationSelectAll = false;
+            } else if (!personalizationInput.isEmpty()) {
+                int start = personalizationInput.offsetByCodePoints(personalizationInput.length(), -1);
+                personalizationInput = personalizationInput.substring(0, start);
+            }
+            personalizationInputError = false;
+            return true;
+        }
+        if (typedChar >= 32 && typedChar != 127) {
+            if (personalizationField.equals("color")) {
+                if ("0123456789abcdefABCDEF#".indexOf(typedChar) < 0) return true;
+                int limit = 7;
+                if (personalizationSelectAll) personalizationInput = "";
+                if (personalizationInput.length() < limit) personalizationInput += typedChar;
+                personalizationSelectAll = false;
+            } else {
+                if (personalizationSelectAll) personalizationInput = "";
+                int remaining = MaverPersonalization.MAX_TEXT_LENGTH - personalizationInput.codePointCount(
+                        0, personalizationInput.length());
+                if (remaining > 0 && typedChar != 0xA7) personalizationInput += typedChar;
+                personalizationSelectAll = false;
+            }
+            personalizationInputError = false;
+            return true;
+        }
+        return true;
+    }
+
+    private void finishPersonalizationInput() {
+        if (personalizationField == null) return;
+        if ("text".equals(personalizationField)) {
+            MaverPersonalization.setText(personalizationInput);
+            personalizationInput = MaverPersonalization.getText();
+            personalizationField = null;
+            personalizationInputError = false;
+        } else if (MaverPersonalization.setHexColor(personalizationInput)) {
+            personalizationInput = MaverPersonalization.getHexColor();
+            personalizationField = null;
+            personalizationInputError = false;
+        } else {
+            personalizationInputError = true;
         }
     }
 
@@ -2115,6 +2323,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         if (closing) {
             return;
         }
+        if (handlePersonalizationKey(typedChar, keyCode)) return;
         if (handleConfigFieldKey(typedChar, keyCode)) {
             return;
         }
@@ -2162,6 +2371,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     @Override
     public void onGuiClosed() {
         Keyboard.enableRepeatEvents(false);
+        finishPersonalizationInput();
         OpenMaverFeatures.flushSettings();
         super.onGuiClosed();
     }
@@ -2179,6 +2389,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         pressColumn = null;
         searchFocused = false;
         profileFieldFocused = false;
+        finishPersonalizationInput();
         OpenMaverFeatures.flushSettings();
     }
 

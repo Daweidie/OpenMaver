@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import tempfile
+from datetime import date
 import unittest
 import zipfile
 from contextlib import redirect_stdout
@@ -142,7 +143,7 @@ class ViaForgeTest(unittest.TestCase):
             archive.writestr("libtest.so", b"test native")
         build = launcher.REPO / "build"
         build.mkdir(parents=True)
-        (build / "openmaver-mod.jar").write_bytes(b"test OpenMaver mod")
+        (build / ("openmaver-b2.2.0-{}.jar".format(date.today().isoformat()))).write_bytes(b"test OpenMaver mod")
         return launcher
 
     def test_mod_mode_installs_viaforge_before_java(self):

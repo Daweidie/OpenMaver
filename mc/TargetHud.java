@@ -145,6 +145,7 @@ public final class TargetHud {
                 || screen != null || !alive(player)
                 ? null
                 : crosshairTarget(mc, player);
+        if (AntiBotFeature.shouldFilterRender(target)) reset();
         boolean active = aimed != null;
 
         long frameNanos = lastFrameNanos == 0L ? 16_000_000L : now - lastFrameNanos;
@@ -223,7 +224,8 @@ public final class TargetHud {
     }
 
     private static boolean validTarget(EntityLivingBase entity, EntityPlayer self) {
-        if (entity == null || entity == self || !alive(entity)) {
+        if (entity == null || entity == self || !alive(entity)
+                || AntiBotFeature.shouldFilterRender(entity)) {
             return false;
         }
         if (OpenMaverFeatures.isTargetHudPlayersOnly() && !(entity instanceof EntityPlayer)) {

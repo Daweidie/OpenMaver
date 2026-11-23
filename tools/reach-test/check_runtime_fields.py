@@ -35,7 +35,9 @@ def main():
     for mcp, (srg, alias, descriptor) in expected.items():
         assert fields[srg] == alias, (mcp, srg, fields[srg])
         assert (alias, descriptor) in definition.fields, (mcp, alias, descriptor)
-    for path in (repo / "build/openmaver-mc.jar", repo / "build/openmaver-mod.jar"):
+    paths = [repo / "build/openmaver-mc.jar"]
+    paths.extend(sorted((repo / "build").glob("openmaver-b2.2.0-????-??-??.jar"))[-1:])
+    for path in paths:
         with ZipFile(path) as jar:
             cls = helpers.ClassFile(jar.read("OpenMaverFeatures.class"))
         strings = {entry[1] for entry in cls.pool if entry and entry[0] == 1}

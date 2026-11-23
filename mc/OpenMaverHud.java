@@ -48,7 +48,6 @@ public final class OpenMaverHud {
 
     private static final int MARGIN = 12;
     /** 原版主菜单风格的黄色标语，位于功能栏上方。 */
-    private static final String SPLASH_TEXT = "Maver!";
     private static final float SPLASH_ANGLE = -20.0F;
     private static final int SPLASH_GAP = 2;
     private static final int ROW_H = 20;
@@ -406,7 +405,9 @@ public final class OpenMaverHud {
 
     /** 使用 MC 像素字体、黄色阴影字与原版一秒周期的缩放脉冲。 */
     private static int renderModuleSplash(FontRenderer font, int screenW, long now) {
-        int textWidth = font.getStringWidth(SPLASH_TEXT);
+        String splash = MaverPersonalization.getText();
+        if (splash.isEmpty()) return MARGIN;
+        int textWidth = font.getStringWidth(splash);
         float fit = Math.min(64.0F, Math.max(1, screenW - MARGIN * 2))
                 / (textWidth + 32.0F);
         float maxScale = 1.8F * fit;
@@ -427,7 +428,7 @@ public final class OpenMaverHud {
             GL11.glTranslatef(centerX, centerY, 0.0F);
             GL11.glRotatef(SPLASH_ANGLE, 0.0F, 0.0F, 1.0F);
             GL11.glScalef(scale, scale, 1.0F);
-            font.drawStringWithShadow(SPLASH_TEXT, -(textWidth + 1) / 2.0F,
+            font.drawStringWithShadow(splash, -(textWidth + 1) / 2.0F,
                     -5.0F, 0xFFFFFF00);
         } finally {
             GL11.glPopMatrix();
@@ -515,6 +516,12 @@ public final class OpenMaverHud {
         }
         if ("Player X-Ray".equals(name)) {
             return Math.round(OpenMaverFeatures.getPlayerXrayRange()) + "m";
+        }
+        if ("NameTag".equals(name)) {
+            return Math.round(NameTagFeature.getRange()) + "m";
+        }
+        if ("AntiBot".equals(name)) {
+            return AntiBotFeature.getBotCount() + " blocked";
         }
         if ("Motion Blur".equals(name)) {
             return Math.round(OpenMaverFeatures.getMotionBlurStrength() * 100.0F) + "%";

@@ -96,6 +96,8 @@ public final class McpReobf {
         m(ENTITY, "getDistanceSqToEntity", "func_70068_e");
         m(ENTITY, "getDistanceToEntity", "func_70032_d");
         m(ENTITY, "getName", "func_70005_c_");
+        m(ENTITY, "isInvisibleToPlayer", "func_98034_c");
+        m(ENTITY, "isSneaking", "func_70093_af");
         m(ENTITY, "getEntityBoundingBox", "func_174813_aQ");
         m(ENTITY, "getEntityId", "func_145782_y");
         m(ENTITY, "setEntityId", "func_145769_d");
@@ -160,6 +162,10 @@ public final class McpReobf {
         f(RM, "viewerPosX", "field_78725_b");
         f(RM, "viewerPosY", "field_78726_c");
         f(RM, "viewerPosZ", "field_78723_d");
+        f(RM, "playerViewY", "field_78735_i");
+        f(RM, "playerViewX", "field_78732_j");
+        f("net/minecraft/client/settings/GameSettings", "hideGUI", "field_74319_N");
+        f("net/minecraft/client/settings/GameSettings", "thirdPersonView", "field_74320_O");
         f(MOP, "typeOfHit", "field_72313_a");
         f(MOP, "entityHit", "field_72308_g");
         m(MIFO, "updatePlayerMoveState", "func_78898_a");

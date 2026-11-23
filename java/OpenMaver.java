@@ -23,6 +23,8 @@ import module.render.Cps;
 import module.render.Fps;
 import module.render.FullBright;
 import module.render.MotionBlur;
+import module.render.NameTag;
+import module.combat.AntiBot;
 import module.render.PlayerXray;
 import module.render.TargetHud;
 import util.Logger;
@@ -410,6 +412,9 @@ public final class OpenMaver {
         // 战斗模块：KillAura 自动攻击（配置路径 combat.killaura；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new KillAura());
 
+        // 战斗模块：AntiBot 共享玩家筛选（检测在 MC 侧 AntiBotFeature）。
+        ModuleManager.register(new AntiBot());
+
         // 移动模块：Scaffold 自动搭路/神桥（配置路径 movement.scaffold；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new Scaffold());
 
@@ -454,6 +459,9 @@ public final class OpenMaver {
 
         // 渲染模块：Player X-Ray 玩家透视（配置路径 render.playerxray；MC 侧绘制在 OpenMaverFeatures）
         ModuleManager.register(new PlayerXray());
+
+        // 玩家头顶名称与实时血量（配置路径 render.nametag）。
+        ModuleManager.register(new NameTag());
 
         // 渲染模块：Motion Blur 运动模糊（配置路径 render.motionblur；MC 侧绘制在 mc/MotionBlur）
         ModuleManager.register(new MotionBlur());

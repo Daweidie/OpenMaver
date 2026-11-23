@@ -14,6 +14,8 @@ public class Entity {
     public float rotationPitch;
     private int entityId;
     public boolean isEntityAlive() { return true; }
+    public boolean isInvisibleToPlayer(net.minecraft.entity.player.EntityPlayer player) { return false; }
+    public boolean isSneaking() { return false; }
     public double getDistanceSqToEntity(Entity entity) { return 0.0D; }
     public double getDistanceToEntity(Entity entity) { return 0.0D; }
     public String getName() { return ""; }

@@ -2,6 +2,7 @@ package org.lwjgl.opengl;
 public class GL11 {
     public static final int GL_BLEND = 3042;
     public static final int GL_TEXTURE_2D = 3553;
+    public static final int GL_TEXTURE_BINDING_2D = 0x8069;
     public static final int GL_SRC_ALPHA = 770;
     public static final int GL_ONE_MINUS_SRC_ALPHA = 771;
     public static final int GL_QUADS = 7;

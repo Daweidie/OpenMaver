@@ -144,8 +144,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--minecraft-jar", type=Path, default=libraries / "com/mojang/minecraft/1.8.9/minecraft-1.8.9-client.jar")
     parser.add_argument("--forge-jar", type=Path, default=libraries / "net/minecraftforge/forge/1.8.9-11.15.1.2318-1.8.9/forge-1.8.9-11.15.1.2318-1.8.9-universal.jar")
-    parser.add_argument("artifacts", nargs="*", type=Path, default=[Path("build/openmaver-mc.jar"), Path("build/openmaver-mod.jar")])
+    parser.add_argument("artifacts", nargs="*", type=Path,
+                        default=[Path("build/openmaver-mc.jar")])
     args = parser.parse_args()
+    if not args.artifacts:
+        args.artifacts = [Path("build/openmaver-mc.jar")]
+    if len(sys.argv) == 1:
+        dated = sorted(Path("build").glob("openmaver-b2.2.0-????-??-??.jar"))
+        if dated:
+            args.artifacts.append(dated[-1])
     runtime = runtime_inputs(args.minecraft_jar, args.forge_jar)
     results = [check_artifact(path, runtime) for path in args.artifacts]
     return 0 if all(results) else 1

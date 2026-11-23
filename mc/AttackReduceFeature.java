@@ -369,6 +369,7 @@ public final class AttackReduceFeature {
         return "ENTITY".equals(String.valueOf(read(hit, "typeOfHit", "field_72313_a"))) ? read(hit, "entityHit", "field_72308_g") : null;
     }
     static boolean validTarget(Object target) {
+        if (AntiBotFeature.isBot(target)) return false;
         if (!(target instanceof EntityLivingBase) || target == player() || !OpenMaverFeatures.alive(target) || truth(target, "isSpectator", "func_175149_v")) return false;
         AxisAlignedBB box = OpenMaverFeatures.boundingBox(target);
         if (box == null) return false;

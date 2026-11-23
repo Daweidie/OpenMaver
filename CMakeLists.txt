@@ -107,7 +107,7 @@ if(Java_Development_FOUND)
     # 产物：
     #   build/mc-classes-reobf/   运行期可用的 SRG 类
     #   build/openmaver-mc.jar    仅 mc 类（运行期注入用）
-    #   build/openmaver-mod.jar   完整 mod（mc 类 + 核心类 + mcmod.info + native）
+    #   build/openmaver-b2.2.0-YYYY-MM-DD.jar 完整 mod（日期为打包日期）
     # =======================================================================
     set(OPENMAVER_MC_CLASSPATH "" CACHE STRING
         "Forge 1.8.9 开发环境 classpath（CMake 列表）。留空则用仓库内置 mcstubs 编译。")
@@ -121,7 +121,6 @@ if(Java_Development_FOUND)
     set(OPENMAVER_MC_CLASSES_DIR "${CMAKE_BINARY_DIR}/mc-classes")
     set(OPENMAVER_MC_REOBF_DIR "${CMAKE_BINARY_DIR}/mc-classes-reobf")
     set(OPENMAVER_MC_JAR "${CMAKE_BINARY_DIR}/openmaver-mc.jar")
-    set(OPENMAVER_MOD_JAR "${CMAKE_BINARY_DIR}/openmaver-mod.jar")
     set(OPENMAVER_MOD_STAGE "${CMAKE_BINARY_DIR}/mod-stage")
 
     file(GLOB_RECURSE OPENMAVER_MC_SOURCES CONFIGURE_DEPENDS
@@ -221,15 +220,18 @@ if(Java_Development_FOUND)
         COMMAND ${CMAKE_COMMAND} -E make_directory "${OPENMAVER_MOD_STAGE}/openmaver/config"
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/config/default.jsonc"
                 "${OPENMAVER_MOD_STAGE}/openmaver/config/default.jsonc"
-        COMMAND "${Java_JAR_EXECUTABLE}" cf "${OPENMAVER_MOD_JAR}"
-                -C "${OPENMAVER_MC_REOBF_DIR}" .
-                -C "${OPENMAVER_JAVA_CLASSES_DIR}" .
-                -C "${OPENMAVER_MOD_STAGE}" .
+        COMMAND "${CMAKE_COMMAND}"
+                "-DOPENMAVER_JAR_EXECUTABLE=${Java_JAR_EXECUTABLE}"
+                "-DOPENMAVER_OUTPUT_DIR=${CMAKE_BINARY_DIR}"
+                "-DOPENMAVER_MC_REOBF_DIR=${OPENMAVER_MC_REOBF_DIR}"
+                "-DOPENMAVER_JAVA_CLASSES_DIR=${OPENMAVER_JAVA_CLASSES_DIR}"
+                "-DOPENMAVER_MOD_STAGE=${OPENMAVER_MOD_STAGE}"
+                -P "${CMAKE_SOURCE_DIR}/cmake/PackageMod.cmake"
         DEPENDS openmaver_mc_reobf openmaver_core
-        COMMENT "打包 openmaver-mod.jar（可直接放入 mods/）"
+        COMMENT "打包 openmaver-b2.2.0-<日期>.jar（可直接放入 mods/）"
         VERBATIM
     )
-    message(STATUS "mod jar -> ${OPENMAVER_MOD_JAR} ; 注入用 mc jar -> ${OPENMAVER_MC_JAR}")
+    message(STATUS "mod jar -> ${CMAKE_BINARY_DIR}/openmaver-b2.2.0-<日期>.jar ; 注入用 mc jar -> ${OPENMAVER_MC_JAR}")
 
     # =======================================================================
     # 运行期注入：核心类 jar

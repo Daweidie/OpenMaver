@@ -52,6 +52,10 @@
 
   // 战斗相关模块
   "combat": {
+    "antibot": {
+      "enabled": false,        // 反假人：Tab 名单 / 可选名称校验，参数在 ClickGUI
+      "key": ""                // 默认不占用按键
+    },
     "aimassist": {
       "enabled": false,        // 瞄准辅助：默认关闭
       "key": "C",              // 绑定键位
@@ -108,6 +112,10 @@
     "playerxray": {
       "enabled": false,        // 玩家透视：默认关闭（按 J 切换）
       "key": "J"               // 绑定键位
+    },
+    "nametag": {
+      "enabled": false,        // 玩家头顶名称和实时血量（Render → NameTag）
+      "key": ""                // 默认不占用按键
     },
     "motionblur": {
       "enabled": false,        // 运动模糊：默认关闭（按 M 切换；静止时零开销）

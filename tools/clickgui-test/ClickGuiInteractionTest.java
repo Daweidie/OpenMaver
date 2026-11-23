@@ -4,6 +4,8 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.ByteArrayInputStream;
+import java.util.Properties;
 import java.util.List;
 import module.Module;
 import module.ModuleManager;
@@ -30,12 +32,37 @@ public final class ClickGuiInteractionTest {
         for (String category : new String[] {"movement", "render", "player", "misc"}) {
             ModuleManager.register(new Module(category + " Demo", category + ".demo") {});
         }
+        module.render.NameTag nameTag = new module.render.NameTag();
+        ModuleManager.register(nameTag);
+        module.combat.AntiBot antiBot = new module.combat.AntiBot();
+        ModuleManager.register(antiBot);
 
         GuiOpenMaverClickGui gui = open(null, null, 1200, 600);
-        check(columns(gui).size() == 7, "Five module categories plus Config and Wallpaper");
+        check(columns(gui).size() == 7, "Five module categories plus Config and Personalization");
         check(!HudFont.text.contains("Client") && !HudFont.text.contains("SYSTEM"), "Old navigation is absent");
         check(HudFont.text.contains("Config") && HudFont.text.contains("Wallpaper"), "New panels render");
+        Object renderColumn = column(gui, "render");
+        Object nameTagHit = entryHit(renderColumn, "Name Tag");
+        clickHit(gui, nameTagHit);
+        check(nameTag.isEnabled(), "NameTag can be enabled from Render");
+        gui.mouseClicked((Integer) get(nameTagHit, "x") + 20, (Integer) get(nameTagHit, "y") + 8, 1);
+        set(get(nameTagHit, "entry"), "expandProgress", 1F);
+        render(gui);
+        Object throughWalls = settingHit(renderColumn, "THROUGH WALLS");
+        clickHit(gui, throughWalls);
+        check(!NameTagFeature.isThroughWalls(), "NameTag depth setting changes from the expanded controls");
         Object combatColumn = column(gui, "combat");
+        Object antiBotHit = entryHit(combatColumn, "Anti Bot");
+        clickHit(gui, antiBotHit);
+        check(antiBot.isEnabled(), "Anti Bot can be enabled from Combat");
+        gui.mouseClicked((Integer) get(antiBotHit, "x") + 20, (Integer) get(antiBotHit, "y") + 8, 1);
+        set(get(antiBotHit, "entry"), "expandProgress", 1F);
+        render(gui);
+        clickHit(gui, settingHit(combatColumn, "NAME CHECK"));
+        check(AntiBotFeature.isNameCheck(), "Anti Bot detection controls change the real settings");
+        gui.mouseClicked((Integer) get(antiBotHit, "x") + 20, (Integer) get(antiBotHit, "y") + 8, 1);
+        set(get(antiBotHit, "entry"), "expandProgress", 0F);
+        render(gui);
         Object moduleHit = entryHit(combatColumn, "Combat Demo");
         clickHit(gui, moduleHit);
         check(combat.isEnabled(), "Left-click still toggles modules");
@@ -66,6 +93,8 @@ public final class ClickGuiInteractionTest {
         combat.setEnabled(false);
         click(gui, config, "load");
         check(combat.isEnabled(), "Load button restores module state");
+        check(nameTag.isEnabled() && !NameTagFeature.isThroughWalls(), "Profile load restores NameTag and its options");
+        check(antiBot.isEnabled() && AntiBotFeature.isNameCheck(), "Profile load restores Anti Bot and its detection settings");
         click(gui, config, "name");
         gui.keyTyped('\0', Keyboard.KEY_ESCAPE);
         check(!(Boolean) get(gui, "profileFieldFocused") && !(Boolean) get(gui, "closing"),
@@ -110,7 +139,21 @@ public final class ClickGuiInteractionTest {
         check((Boolean) get(get(config, "state"), "collapsed"), "Collapse persists when reopened");
         check((Integer) get(get(config, "state"), "x") == oldX + 30, "Position persists when reopened");
 
-        Object wallpaper = column(gui, "wallpaper");
+        Object wallpaper = column(gui, "personalization");
+        click(gui, wallpaper, "section", "color");
+        click(gui, wallpaper, "themePreset", "1");
+        check(MaverPersonalization.getColor() == 0xFF83B4F5, "Theme swatch updates the ClickGUI color");
+        click(gui, wallpaper, "themeInput");
+        gui.keyTyped('#', 0);
+        for (char c : "4C78D0".toCharArray()) gui.keyTyped(c, 0);
+        gui.keyTyped('\0', Keyboard.KEY_RETURN);
+        check("#4C78D0".equals(MaverPersonalization.getHexColor()), "Custom theme color accepts hex input");
+        click(gui, wallpaper, "section", "text");
+        click(gui, wallpaper, "textInput");
+        for (char c : "Maver Client".toCharArray()) gui.keyTyped(c, 0);
+        gui.keyTyped('\0', Keyboard.KEY_RETURN);
+        check("Maver Client".equals(MaverPersonalization.getText()), "HUD label accepts custom text");
+        click(gui, wallpaper, "section", "wallpaper");
         int mode = MaverWallpaper.getMode();
         click(gui, wallpaper, "mode");
         check(MaverWallpaper.getMode() != mode, "Wallpaper mode cycles in the new panel");
@@ -128,7 +171,7 @@ public final class ClickGuiInteractionTest {
         set(get(wallpaper, "state"), "collapsed", true);
         GuiScreen parent = new GuiScreen();
         gui = open(parent, "wallpaper", 400, 240);
-        wallpaper = column(gui, "wallpaper");
+        wallpaper = column(gui, "personalization");
         check(columns(gui).get(columns(gui).size() - 1) == wallpaper, "Wallpaper shortcut brings panel to front");
         check(!(Boolean) get(get(wallpaper, "state"), "collapsed"), "Wallpaper shortcut expands panel");
         for (Object col : columns(gui)) {
@@ -163,6 +206,12 @@ public final class ClickGuiInteractionTest {
         check(get(gui, "pressColumn") == config, "Scrolled content cannot steal a header click");
         Mouse.left = false;
         gui.onGuiClosed();
+        Properties persisted = new Properties();
+        persisted.load(new ByteArrayInputStream(Files.readAllBytes(root.resolve("features.properties"))));
+        check("#4C78D0".equals(persisted.getProperty("ui.theme.color")), "Theme color is saved to feature settings");
+        check("Maver Client".equals(persisted.getProperty("hud.splash.text")), "HUD label is saved to feature settings");
+        check("false".equals(persisted.getProperty("nametag.throughWalls")), "NameTag options are saved with feature settings");
+        check("true".equals(persisted.getProperty("antibot.nameCheck")), "Anti Bot options are saved with feature settings");
         System.out.println("ClickGUI interaction checks passed: " + checks);
     }
 
@@ -194,6 +243,9 @@ public final class ClickGuiInteractionTest {
     }
     private static void click(GuiOpenMaverClickGui gui, Object column, String action) throws Exception {
         clickValue(gui, column, action, null);
+    }
+    private static void click(GuiOpenMaverClickGui gui, Object column, String action, String value) throws Exception {
+        clickValue(gui, column, action, value);
     }
     private static Object entryHit(Object column, String name) throws Exception {
         for (Object hit : (List<?>) get(column, "hits")) {
