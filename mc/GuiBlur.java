@@ -62,14 +62,36 @@ public final class GuiBlur {
             + "uniform float uRadius;\n"
             + "uniform vec2 uUvMin;\n"
             + "uniform vec2 uUvSize;\n"
+            + "uniform float uLiquidGlass;\n"
             + "void main() {\n"
             + "    vec2 uv = gl_TexCoord[0].st;\n"
-            + "    vec4 sampled = texture2D(uTex, uUvMin + uv * uUvSize);\n"
-            + "    vec3 color = mix(sampled.rgb, uTint.rgb, uTint.a);\n"
             + "    vec2 p = vec2(uv.x, 1.0 - uv.y) * uHalf * 2.0 - uHalf;\n"
             + "    vec2 q = abs(p) - uHalf + uRadius;\n"
             + "    float dist = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - uRadius;\n"
             + "    float mask = 1.0 - smoothstep(-1.0, 0.5, dist);\n"
+            + "    vec2 sampleUv = uv;\n"
+            + "    float rim = 0.0;\n"
+            + "    float light = 0.0;\n"
+            + "    float shade = 0.0;\n"
+            + "    if (uLiquidGlass > 0.5) {\n"
+            + "        float depth = max(-dist, 0.0);\n"
+            + "        float bevel = 1.0 - smoothstep(0.0, 4.5, depth);\n"
+            + "        vec2 corner = max(q, 0.0);\n"
+            + "        vec2 normal;\n"
+            + "        if (length(corner) > 0.001) normal = normalize(corner) * sign(p);\n"
+            + "        else if (q.x > q.y) normal = vec2(sign(p.x), 0.0);\n"
+            + "        else normal = vec2(0.0, sign(p.y));\n"
+            + "        sampleUv += vec2(-normal.x, normal.y) * bevel * bevel * 2.8 / (uHalf * 2.0);\n"
+            + "        rim = 1.0 - smoothstep(0.25, 1.2, depth);\n"
+            + "        light = max(dot(normal, normalize(vec2(-0.45, -1.0))), 0.0);\n"
+            + "        shade = bevel * max(normal.y, 0.0) * 0.055;\n"
+            + "    }\n"
+            + "    vec4 sampled = texture2D(uTex, uUvMin + sampleUv * uUvSize);\n"
+            + "    vec3 color = mix(sampled.rgb, uTint.rgb, uTint.a);\n"
+            + "    if (uLiquidGlass > 0.5) {\n"
+            + "        color *= 1.0 - shade;\n"
+            + "        color = mix(color, vec3(1.0), 0.07 * uv.y + rim * (0.28 + 0.42 * light));\n"
+            + "    }\n"
             + "    gl_FragColor = vec4(color, uAlpha * mask);\n"
             + "}\n";
 
@@ -87,6 +109,7 @@ public final class GuiBlur {
     private static int drawRadiusLocation;
     private static int drawUvMinLocation;
     private static int drawUvSizeLocation;
+    private static int drawLiquidGlassLocation;
 
     private static int sourceTexture;
     private static int sourceWidth;
@@ -174,6 +197,11 @@ public final class GuiBlur {
         draw(x, y, w, h, radius, tintRgb, tintStrength, alpha, false);
     }
 
+    /** White translucent glass with a refractive bevel and a soft lit rim. */
+    public static void drawLiquidGlass(int x, int y, int w, int h, float radius) {
+        draw(x, y, w, h, radius, 0xF9FCFF, 0.66F, 0.94F, false, true);
+    }
+
     /**
      * 与 {@link #draw} 相同，但允许在抓屏前指定模糊强度。
      *
@@ -226,6 +254,11 @@ public final class GuiBlur {
 
     private static void draw(int x, int y, int w, int h, float radius,
             int tintRgb, float tintStrength, float alpha, boolean mirrorX) {
+        draw(x, y, w, h, radius, tintRgb, tintStrength, alpha, mirrorX, false);
+    }
+
+    private static void draw(int x, int y, int w, int h, float radius,
+            int tintRgb, float tintStrength, float alpha, boolean mirrorX, boolean liquidGlass) {
         if (w <= 0 || h <= 0 || alpha <= 0.001F) {
             return;
         }
@@ -271,6 +304,7 @@ public final class GuiBlur {
             GL20.glUniform1f(drawAlphaLocation, clamp01(alpha));
             GL20.glUniform2f(drawHalfLocation, w / 2.0F, h / 2.0F);
             GL20.glUniform1f(drawRadiusLocation, Math.max(0.0F, radius));
+            GL20.glUniform1f(drawLiquidGlassLocation, liquidGlass ? 1.0F : 0.0F);
             // Sample only the part of the screen that sits behind this rectangle.
             // Using 0..1 here would squeeze the whole framebuffer into every card.
             float u0 = x / (float) screenWidth;
@@ -354,6 +388,7 @@ public final class GuiBlur {
         drawRadiusLocation = GL20.glGetUniformLocation(drawProgram, "uRadius");
         drawUvMinLocation = GL20.glGetUniformLocation(drawProgram, "uUvMin");
         drawUvSizeLocation = GL20.glGetUniformLocation(drawProgram, "uUvSize");
+        drawLiquidGlassLocation = GL20.glGetUniformLocation(drawProgram, "uLiquidGlass");
         programsReady = true;
         return true;
     }

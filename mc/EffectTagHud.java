@@ -23,7 +23,6 @@ public final class EffectTagHud {
     private static final int MARGIN = 6;
     private static final int HEIGHT = 32;
     private static final int GAP = 5;
-    private static final float TEXT_SIZE = 0.85F;
 
     private EffectTagHud() {}
 
@@ -47,7 +46,7 @@ public final class EffectTagHud {
         for (PotionEffect effect : effects) {
             String name = effectName(effect);
             names.add(name);
-            width = Math.max(width, HudFont.getStringWidth(font, name, TEXT_SIZE) + 42);
+            width = Math.max(width, font.getStringWidth(name) + 42);
         }
         width = Math.min(width, Math.max(70, resolution.getScaledWidth() - MARGIN * 2));
         int stackHeight = effects.size() * (HEIGHT + GAP) - GAP;
@@ -65,7 +64,7 @@ public final class EffectTagHud {
             int cardY = y + (i % rows) * (HEIGHT + GAP);
             if (cardX + width > resolution.getScaledWidth() - MARGIN) break;
             // Draw all glass first, so later cards never sample already drawn text.
-            GuiBlur.draw(cardX, cardY, width, HEIGHT, 6.0F, 0x11141B, 0.80F, 0.94F);
+            GuiBlur.drawLiquidGlass(cardX, cardY, width, HEIGHT, 8.0F);
         }
         GlColor.restore();
         try (ModelRenderState ignored = new ModelRenderState()) {
@@ -90,12 +89,12 @@ public final class EffectTagHud {
                             icon % 8 * 18, 198 + icon / 8 * 18, 18, 18, 256, 256);
                     GlColor.restore();
                 }
-                String name = fit(font, names.get(i), width - 40);
-                HudFont.drawString(font, name, cardX + 34, cardY + 5, color, TEXT_SIZE);
-                int timeColor = effect.getDuration() <= 200 ? 0xFFFF6D79
-                        : effect.getDuration() <= 600 ? 0xFFFFC34D : 0xFFF0F1F5;
-                HudFont.drawString(font, effect.getIsPotionDurationMax() ? "∞" : duration(effect.getDuration()),
-                        cardX + 34, cardY + 18, timeColor, TEXT_SIZE);
+                String name = fit(font, names.get(i), width - 42);
+                font.drawString(name, cardX + 34, cardY + 6, 0xFF25313D);
+                int timeColor = effect.getDuration() <= 200 ? 0xFFB53342
+                        : effect.getDuration() <= 600 ? 0xFF8F550C : 0xFF53616D;
+                font.drawString(effect.getIsPotionDurationMax() ? "∞" : duration(effect.getDuration()),
+                        cardX + 34, cardY + 19, timeColor);
             }
         } finally {
             GlColor.restore();
@@ -134,9 +133,9 @@ public final class EffectTagHud {
     }
 
     private static String fit(FontRenderer font, String name, int width) {
-        if (HudFont.getStringWidth(font, name, TEXT_SIZE) <= width) return name;
+        if (font.getStringWidth(name) <= width) return name;
         while (!name.isEmpty()
-                && HudFont.getStringWidth(font, name + "…", TEXT_SIZE) > width) {
+                && font.getStringWidth(name + "…") > width) {
             name = name.substring(0, name.offsetByCodePoints(name.length(), -1));
         }
         return name + "…";

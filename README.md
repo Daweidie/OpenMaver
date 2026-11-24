@@ -362,8 +362,9 @@ java -Djava.library.path=build/lib \
   开启后替换原版玩家名字，关闭后恢复；不显示自己、死亡或对自己不可见的玩家。
   NameTag 与 Player X-Ray 同时启用时，透视模型的额外渲染不会重复绘制标签。
 - **Effect Tag 效果卡片** `mc/EffectTagHud.java`：在 **Render → Effect Tag** 中开关，
-  配置路径 `render.effecttag`，默认开启。屏幕左侧按效果排列圆角深色卡片，
-  显示游戏语言对应的名称、等级、彩色图标和剩余时间；30 秒内倒计时变为黄色，
+  配置路径 `render.effecttag`，默认开启。屏幕左侧按效果排列白色半透明流体玻璃圆角卡片，
+  带局部背景模糊、边缘折射和高光；使用原版 Minecraft 字体及深色文字，
+  显示游戏语言对应的名称、等级、彩色图标和剩余时间；30 秒内倒计时变为深黄色，
   10 秒内变为红色。没有效果时隐藏，并避开左上角 FPS / CPS 面板。
 - **主菜单壁纸** `mc/MaverWallpaper.java`：ClickGUI 的 **Personalization → Wallpaper** 面板
   （或主菜单右上角的图片图标）可以切换开始菜单背景：
