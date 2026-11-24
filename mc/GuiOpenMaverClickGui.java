@@ -259,6 +259,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 addCriticalsSettings(entry);
             } else if ("KillAura".equals(module.getName())) {
                 addKillAuraSettings(entry);
+            } else if ("BlockHit".equals(module.getName())) {
+                addBlockHitSettings(entry);
             } else if ("FastPlace".equals(module.getName())) {
                 addFastPlaceSettings(entry);
             } else if ("Scaffold".equals(module.getName())) {
@@ -287,6 +289,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 addMotionBlurSettings(entry);
             } else if ("Chest ESP".equals(module.getName())) {
                 addChestEspSettings(entry);
+            } else if ("Projectiles".equals(module.getName())) {
+                addProjectileSettings(entry);
             } else if ("Chest Stealer".equals(module.getName())) {
                 addChestStealerSettings(entry);
             } else if ("Inventory Manager".equals(module.getName())) {
@@ -503,6 +507,13 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         entry.settings.add(Setting.check("STORAGE BLOCKS", new Binding() {
             public double get() { return ChestFeature.isEspStorageBlocks() ? 1.0D : 0.0D; }
             public void set(double value) { ChestFeature.setEspStorageBlocks(value > 0.5D); }
+        }));
+    }
+
+    private void addProjectileSettings(Entry entry) {
+        entry.settings.add(Setting.slider("RANGE", 8.0F, 128.0F, 4.0F, 0, " m", new Binding() {
+            public double get() { return ProjectileFeature.getRange(); }
+            public void set(double value) { ProjectileFeature.setRange((float) value); }
         }));
     }
 
@@ -993,6 +1004,13 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         entry.settings.add(Setting.check("DEBUG CHAT", new Binding() {
             public double get() { return AttackReduceFeature.getDebugChat() ? 1 : 0; }
             public void set(double value) { AttackReduceFeature.setDebugChat(value > 0.5D); }
+        }));
+    }
+
+    private void addBlockHitSettings(Entry entry) {
+        entry.settings.add(Setting.slider("HOLD TICKS", 1, 5, 1, 0, " ticks", new Binding() {
+            public double get() { return BlockHitFeature.getHoldTicks(); }
+            public void set(double value) { BlockHitFeature.setHoldTicks((int) Math.round(value)); }
         }));
     }
 
@@ -1785,10 +1803,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             return 74 + (configPreferences ? 72 : 0)
                     + Math.max(1, ConfigProfiles.listNames().size()) * COL_ROW_H + 18;
         }
-        int height = 6 + 3 * COL_ROW_H;
+        int height = 8 + 4 * COL_ROW_H;
         if ("wallpaper".equals(personalizationSection)) height += wallpaperContentHeight();
         else if ("color".equals(personalizationSection)) height += 78;
         else if ("text".equals(personalizationSection)) height += 70;
+        else if ("taunt".equals(personalizationSection)) height += 92;
         return height;
     }
 
@@ -1880,15 +1899,15 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             float alpha, boolean hoverable) {
         int innerX = x + 6;
         int innerW = column.width - 12;
-        String[] sections = {"wallpaper", "color", "text"};
-        String[] labels = {"Wallpaper", "Color", "Text"};
-        int sectionW = (innerW - 4) / 3;
+        String[] sections = {"wallpaper", "color", "text", "taunt"};
+        String[] labels = {"Wallpaper", "Color", "Text", "Taunt"};
+        int sectionW = (innerW - 2) / 2;
         for (int i = 0; i < sections.length; i++) {
-            drawUtilityButton(font, column, "section", sections[i], innerX + i * (sectionW + 2),
-                    y + 4, sectionW, COL_ROW_H, labels[i], labels[i], false,
+            drawUtilityButton(font, column, "section", sections[i], innerX + i % 2 * (sectionW + 2),
+                    y + 4 + i / 2 * (COL_ROW_H + 2), sectionW, COL_ROW_H, labels[i], labels[i], false,
                     sections[i].equals(personalizationSection), alpha, hoverable);
         }
-        int bodyY = y + 24;
+        int bodyY = y + 8 + 2 * COL_ROW_H;
         if ("color".equals(personalizationSection)) {
             micro(font, "Clickgui theme", innerX + 2, bodyY + 2, fade(COL_DIM, alpha));
             int swatchY = bodyY + 15;
@@ -1940,6 +1959,28 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     "Reset text", "Restore Maver!", false, false, alpha, hoverable);
             drawUtilityStatus(font, column, innerX + 2, fieldY + 49, innerW - 4,
                     "Enter a label for the flashing HUD text", false, alpha, false);
+        } else if ("taunt".equals(personalizationSection)) {
+            drawUtilityRow(font, column, "tauntToggle", "Kill taunt",
+                    MaverPersonalization.isTauntEnabled() ? "ON" : "OFF", x, bodyY, alpha, hoverable,
+                    "Send your message after a confirmed player kill");
+            micro(font, "Message · {target} = player", innerX + 2, bodyY + 22, fade(COL_DIM, alpha));
+            int fieldY = bodyY + 36;
+            boolean active = "taunt".equals(personalizationField);
+            roundRect(innerX, fieldY, innerW, 23, 6,
+                    fade(active ? MaverPersonalization.getColor() : 0x302A2D36, alpha));
+            String value = active ? personalizationInput : MaverPersonalization.getTauntText();
+            micro(font, ellipsizeMicro(font, value, innerW - 12), innerX + 6, fieldY + 8,
+                    fade(active ? MaverPersonalization.getTextColor() : COL_ROW_TEXT, alpha));
+            column.hits.add(Hit.action("tauntInput", null, innerX, fieldY, innerW, 23));
+            if (active && (frameNow / 480L) % 2L == 0L) {
+                int caretX = innerX + 6 + Math.min(innerW - 14, microWidth(font, personalizationInput));
+                Gui.drawRect(caretX, fieldY + 6, caretX + 1, fieldY + 17,
+                        fade(MaverPersonalization.getTextColor(), alpha));
+            }
+            drawUtilityButton(font, column, "tauntReset", null, innerX, fieldY + 27, innerW, 16,
+                    "Reset message", "Restore gg", false, false, alpha, hoverable);
+            drawUtilityStatus(font, column, innerX + 2, fieldY + 49, innerW - 4,
+                    "Enter to save · 100 characters", false, alpha, false);
         } else {
             drawUtilityRow(font, column, "mode", "Mode", MaverWallpaper.getModeName(),
                     x, bodyY, alpha, hoverable, "Cycle panorama / static / dynamic");
@@ -2093,6 +2134,16 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             searchFocused = false;
             return;
         }
+        if ("tauntInput".equals(action)) {
+            finishPersonalizationInput();
+            personalizationField = "taunt";
+            personalizationInput = MaverPersonalization.getTauntText();
+            personalizationInputError = false;
+            personalizationSelectAll = true;
+            profileFieldFocused = false;
+            searchFocused = false;
+            return;
+        }
         if ("name".equals(action)) {
             profileFieldFocused = true;
             searchFocused = false;
@@ -2138,6 +2189,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         } else if ("guiKey".equals(action)) {
             OpenMaverFeatures.cycleGuiKey();
         } else if ("section".equals(action)) {
+            finishPersonalizationInput();
             personalizationSection = hit.value;
             personalizationField = null;
             column.scroll = 0;
@@ -2154,6 +2206,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         } else if ("textReset".equals(action)) {
             MaverPersonalization.setText(MaverPersonalization.DEFAULT_TEXT);
             personalizationInput = MaverPersonalization.getText();
+        } else if ("tauntToggle".equals(action)) {
+            MaverPersonalization.setTauntEnabled(!MaverPersonalization.isTauntEnabled());
+        } else if ("tauntReset".equals(action)) {
+            MaverPersonalization.setTauntText(MaverPersonalization.DEFAULT_TAUNT);
+            personalizationInput = MaverPersonalization.getTauntText();
         } else if ("mode".equals(action)) {
             MaverWallpaper.nextMode();
         } else if ("fit".equals(action)) {
@@ -2198,8 +2255,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 personalizationSelectAll = false;
             } else {
                 if (personalizationSelectAll) personalizationInput = "";
-                int remaining = MaverPersonalization.MAX_TEXT_LENGTH - personalizationInput.codePointCount(
-                        0, personalizationInput.length());
+                int remaining = "taunt".equals(personalizationField)
+                        ? MaverPersonalization.MAX_TAUNT_LENGTH - personalizationInput.length()
+                        : MaverPersonalization.MAX_TEXT_LENGTH - personalizationInput.codePointCount(
+                                0, personalizationInput.length());
                 if (remaining > 0 && typedChar != 0xA7) personalizationInput += typedChar;
                 personalizationSelectAll = false;
             }
@@ -2214,6 +2273,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         if ("text".equals(personalizationField)) {
             MaverPersonalization.setText(personalizationInput);
             personalizationInput = MaverPersonalization.getText();
+            personalizationField = null;
+            personalizationInputError = false;
+        } else if ("taunt".equals(personalizationField)) {
+            MaverPersonalization.setTauntText(personalizationInput);
+            personalizationInput = MaverPersonalization.getTauntText();
             personalizationField = null;
             personalizationInputError = false;
         } else if (MaverPersonalization.setHexColor(personalizationInput)) {

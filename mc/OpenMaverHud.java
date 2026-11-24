@@ -502,6 +502,9 @@ public final class OpenMaverHud {
         if ("Velocity".equals(name)) {
             return AttackReduceFeature.getSummary();
         }
+        if ("BlockHit".equals(name)) {
+            return BlockHitFeature.getHoldTicks() + "t";
+        }
         if ("KillAura".equals(name)) {
             int min = Math.min(OpenMaverFeatures.getKillAuraCpsMin(),
                     OpenMaverFeatures.getKillAuraCpsMax());

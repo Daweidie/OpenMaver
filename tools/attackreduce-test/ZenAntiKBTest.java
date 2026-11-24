@@ -412,11 +412,11 @@ public final class ZenAntiKBTest {
         }
         try (Fixture f = new Fixture(0)) {
             f.mc.objectMouseOver = null; f.receive(f.velocity());
-            f.input(); check("NoXZ positive velocity requests a sprint jump", f.player.movementInput.jump);
+            f.input(); check("NoXZ no-target hit neither jumps nor overwrites packet Y", !f.player.movementInput.jump && near(f.player.motionY, .36));
         }
         try (Fixture f = new Fixture(0)) {
             f.player.jumpBoost = true; f.receive(f.velocity()); f.input();
-            check("NoXZ jump boost effect prevents forced jump", !f.player.movementInput.jump);
+            check("NoXZ jump boost does not add a jump impulse", !f.player.movementInput.jump && near(f.player.motionY, .36));
         }
         try (Fixture f = new Fixture(0)) {
             f.player.onGround = false; f.receive(f.velocity()); S08PacketPlayerPosLook correction = new S08PacketPlayerPosLook(); f.receive(correction);

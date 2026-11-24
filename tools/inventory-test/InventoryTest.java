@@ -21,12 +21,19 @@ public final class InventoryTest {
         protectionEnchantBeatsPlainDurability();
         wrongItemInArmorSlotIsReplaced();
         extrasAreDroppedRespectingKeepCount();
+        blockDropUsesWholeStackClick();
         armorAndBlocksUseCompactDefaults();
         dropToolsKeepsOnePerFamily();
         tidyInventoryIsLeftAlone();
         fullInventoryDoesNotLoop();
         hotbarOrderIsDeterministic();
+        lobbyItemsStayInTheirOriginalSlots();
+        protectedItemsAreExcludedFromCleanup();
+        protectedArmorStaysEquipped();
+        reservedHotbarSlotsAreSkipped();
+        fullyReservedHotbarIsLeftAlone();
         randomInventoriesConverge();
+        randomInventoriesWithProtectedItemsConverge();
         System.out.println();
         System.out.println("inventory-test: " + passed + " passed, " + failed + " failed");
         if (failed > 0) {
@@ -128,6 +135,33 @@ public final class InventoryTest {
         assertEquals("KEEP WEAPONS = 2：留两把", 2, swordCount(two));
         assertEquals("石头剑被丢掉", 0, countName(two, "swordstone"));
         assertEquals("钻石剑进快捷栏 1", "sworddiamond#0", two.hotbarKey(0));
+
+        Fake held = new Fake();
+        held.put(36, item("item.swordStone", 0, 1));
+        held.put(20, item("item.swordDiamond", 0, 1));
+        held.put(21, item("item.swordIron", 0, 1));
+        InventoryPlanner.State heldState = held.state();
+        heldState.sortHotbar = false;
+        heldState.selectedHotbarIndex = 0;
+        run(held, heldState);
+        assertEquals("当前手持的石剑不会被多余武器清理丢掉", 1, countName(held, "swordstone"));
+        assertEquals("手持武器受保护后仍清理其它多余剑", 2, swordCount(held));
+    }
+
+    private static void blockDropUsesWholeStackClick() {
+        Fake inv = new Fake();
+        inv.put(20, item("tile.cobblestone", 0, 64));
+        inv.put(21, item("tile.dirt", 0, 32));
+        inv.put(22, item("tile.sand", 0, 16));
+        InventoryPlanner.State state = inv.state();
+        state.sortHotbar = false;
+        InventoryPlanner.Action action = InventoryPlanner.next(state);
+        assertTrue("方块清理使用整组丢弃按钮", action != null && action.type == InventoryPlanner.DROP
+                && action.clicks()[0][1] == 1 && action.clicks()[0][2] == 4);
+        String droppedName = action == null ? null : inv.nameAt(action.slotA);
+        run(inv, state);
+        assertEquals("整组丢弃后仍保留两组方块", 2, countKind(inv, InventoryRules.KIND_BLOCK));
+        assertEquals("整组丢弃不会留下被选中堆叠的零散数量", 0, countName(inv, droppedName));
     }
 
     private static void armorAndBlocksUseCompactDefaults() {
@@ -265,6 +299,124 @@ public final class InventoryTest {
         }
     }
 
+    private static void lobbyItemsStayInTheirOriginalSlots() {
+        Fake inv = new Fake();
+        String[] names = {"item.skull.player", "tile.chest", "tile.chestTrap", "tile.enderChest",
+                "item.compass", "item.clock", "item.netherStar", "item.paper", "item.writtenBook"};
+        for (int i = 0; i < names.length; i++) {
+            inv.put(36 + i, item(names[i], 0, 1));
+        }
+        inv.put(20, item("tile.chest", 0, 1)); // 与快捷栏同类，也不能合并。
+        inv.put(21, item("item.skull.player", 0, 1));
+        assertEquals("大厅纯功能物品背包不产生任何点击", 0, run(inv));
+        for (int i = 0; i < names.length; i++) {
+            assertEquals("大厅物品保留原位 " + names[i], InventoryRules.clean(names[i]), inv.nameAt(36 + i));
+        }
+    }
+
+    private static void protectedItemsAreExcludedFromCleanup() {
+        Fake inv = new Fake();
+        inv.put(20, item("tile.chest", 0, 1));
+        inv.put(21, item("tile.chest", 0, 1));
+        inv.put(22, item("tile.dirt", 0, 64));
+        inv.put(23, item("tile.stone", 0, 64));
+        inv.put(24, protectedItem("item.swordWood", 1));
+        inv.put(25, item("item.swordDiamond", 0, 1));
+        inv.put(26, protectedItem("item.pickaxeWood", 1));
+        inv.put(27, item("item.pickaxeDiamond", 0, 1));
+        inv.put(28, protectedItem("item.helmetCloth", 1));
+        inv.put(29, item("item.helmetDiamond", 0, 1));
+        inv.put(30, protectedItem("item.apple", 2));
+        inv.put(31, protectedItem("item.apple", 3));
+        inv.put(32, item("item.apple", 0, 4));
+        inv.put(33, item("item.apple", 0, 5));
+        InventoryPlanner.State state = inv.state();
+        state.dropTools = true;
+        run(inv, state);
+        assertEquals("箱子不占用建材保留数量", 2, countName(inv, "chest"));
+        assertEquals("两组普通建材都保留", 2, countName(inv, "dirt") + countName(inv, "stone"));
+        assertEquals("自定义武器不被丢弃或移位", "swordwood", inv.nameAt(24));
+        assertEquals("自定义工具不被丢弃或移位", "pickaxewood", inv.nameAt(26));
+        assertEquals("自定义盔甲不被穿上或丢弃", "helmetcloth", inv.nameAt(28));
+        assertEquals("自定义食物不与其它堆叠合并", 2, inv.slot(30).count);
+        assertEquals("第二摞自定义食物保留数量", 3, inv.slot(31).count);
+        assertEquals("普通食物仍正常合并", 3, countName(inv, "apple"));
+        assertEquals("普通武器仍正常整理", "sworddiamond", inv.nameAt(36));
+        assertEquals("普通盔甲仍正常穿上", "helmetdiamond", inv.nameAt(5));
+    }
+
+    private static void protectedArmorStaysEquipped() {
+        Fake inv = new Fake();
+        inv.put(5, item("item.skull.player", 0, 1));
+        inv.put(6, protectedItem("item.chestplateCloth", 1));
+        inv.put(20, item("item.helmetDiamond", 0, 1));
+        inv.put(21, item("item.chestplateDiamond", 0, 1));
+        InventoryPlanner.State state = inv.state();
+        state.dropExtras = false;
+        run(inv, state);
+        assertEquals("戴着的头颅不被普通头盔替换", "skull.player", inv.nameAt(5));
+        assertEquals("穿着的自定义盔甲不被替换", "chestplatecloth", inv.nameAt(6));
+    }
+
+    private static void reservedHotbarSlotsAreSkipped() {
+        Fake inv = new Fake();
+        inv.put(36, item("item.compass", 0, 1));
+        inv.put(40, item("tile.chest", 0, 1));
+        inv.put(20, item("item.swordDiamond", 0, 1));
+        inv.put(21, item("tile.dirt", 0, 64));
+        inv.put(22, item("item.apple", 0, 3));
+        inv.put(23, item("item.pickaxeIron", 0, 1));
+        run(inv);
+        assertEquals("第 1 格的指南针不被武器交换挤走", "compass", inv.nameAt(36));
+        assertEquals("第 5 格的箱子不被补位物品挤走", "chest", inv.nameAt(40));
+        assertEquals("武器使用未占用的补位格", "sworddiamond", inv.nameAt(41));
+        assertEquals("方块仍使用固定第 2 格", "dirt", inv.nameAt(37));
+        assertEquals("食物仍使用固定第 3 格", "apple", inv.nameAt(38));
+        assertEquals("工具仍使用固定第 4 格", "pickaxeiron", inv.nameAt(39));
+    }
+
+    private static void fullyReservedHotbarIsLeftAlone() {
+        Fake inv = new Fake();
+        for (int i = 36; i <= 44; i++) {
+            inv.put(i, item("tile.chest", 0, 1));
+        }
+        inv.put(20, item("item.swordDiamond", 0, 1));
+        inv.put(21, item("tile.dirt", 0, 64));
+        assertEquals("快捷栏全被功能物品占用时不尝试交换", 0, run(inv));
+    }
+
+    private static void randomInventoriesWithProtectedItemsConverge() {
+        String[] names = {"item.swordIron", "tile.dirt", "item.apple", "item.pickaxeIron",
+                "item.helmetDiamond", "item.enderPearl", "tile.chest", "item.skull.player"};
+        java.util.Random random = new java.util.Random(20261124L);
+        for (int round = 0; round < 200; round++) {
+            Fake inv = new Fake();
+            for (int slot = 5; slot <= 44; slot++) {
+                if (random.nextInt(3) == 0) {
+                    continue;
+                }
+                String name = names[random.nextInt(names.length)];
+                inv.put(slot, random.nextBoolean() ? item(name, 0, 1) : protectedItem(name, 1));
+            }
+            InventoryPlanner.Item[] original = inv.slots.clone();
+            run(inv);
+            assertTrue("混合功能物品第 " + round + " 组收敛", InventoryPlanner.isSettled(inv.state()));
+            boolean preserved = inv.cursor == null;
+            for (int slot = 5; slot <= 44; slot++) {
+                if (original[slot] != null && original[slot].protectedItem) {
+                    preserved &= original[slot] == inv.slot(slot);
+                }
+            }
+            assertTrue("混合功能物品第 " + round + " 组保留原槽和物品", preserved);
+        }
+    }
+
+    private static InventoryPlanner.Item protectedItem(String raw, int count) {
+        InventoryPlanner.Item item = item(raw, 0, count);
+        return new InventoryPlanner.Item(item.key, item.name, item.kind, item.armorType, item.family,
+                item.count, item.maxStack, item.score, item.fullBlock, true);
+    }
+
     // ==================================================================
     // 假容器：按原版 windowClick 语义执行点击
     // ==================================================================
@@ -313,15 +465,29 @@ public final class InventoryTest {
 
         /** 原版 {@code Container.slotClick} 的三条主干：mode 0 / 2 / 4。 */
         void click(int slot, int button, int mode) {
+            if (slots[slot] != null && slots[slot].protectedItem) {
+                throw new IllegalStateException("点击触及受保护物品: " + slot);
+            }
             if (mode == 2) { // 数字键：与快捷栏第 button 格互换
                 int hotbar = InventoryPlanner.HOTBAR_FIRST + button;
+                if (slots[hotbar] != null && slots[hotbar].protectedItem) {
+                    throw new IllegalStateException("数字键交换覆盖受保护物品: " + hotbar);
+                }
                 InventoryPlanner.Item tmp = slots[slot];
                 slots[slot] = slots[hotbar];
                 slots[hotbar] = tmp;
                 return;
             }
             if (mode == 4) { // 丢弃
-                slots[slot] = null;
+                InventoryPlanner.Item dropped = slots[slot];
+                if (button == 1 || dropped.count <= 1) {
+                    slots[slot] = null;
+                } else {
+                    slots[slot] = new InventoryPlanner.Item(dropped.key, dropped.name,
+                            dropped.kind, dropped.armorType, dropped.family, dropped.count - 1,
+                            dropped.maxStack, dropped.score, dropped.fullBlock,
+                            dropped.protectedItem);
+                }
                 return;
             }
             if (mode != 0) {
@@ -377,6 +543,7 @@ public final class InventoryTest {
             state.dropExtras = template.dropExtras;
             state.dropTools = template.dropTools;
             state.keepWeapons = template.keepWeapons;
+            state.selectedHotbarIndex = template.selectedHotbarIndex;
             state.spareArmor = template.spareArmor;
             state.keepBlockStacks = template.keepBlockStacks;
             state.keepTools = template.keepTools;

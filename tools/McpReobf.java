@@ -130,7 +130,7 @@ public final class McpReobf {
         m("net/minecraft/potion/Potion", "getStatusIconIndex", "func_76392_e");
         m("net/minecraft/client/resources/I18n", "format", "func_135052_a");
         m(MC, "getTextureManager", "func_110434_K");
-        m(ACP, "getLocationSkin", "func_110311_f");
+        m(ACP, "getLocationSkin", "func_110306_p");
         m(TM, "bindTexture", "func_110577_a");
         m(TM, "loadTexture", "func_110579_a");
         m(STACK, "getDisplayName", "func_82833_r");

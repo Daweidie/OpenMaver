@@ -34,6 +34,7 @@ import java.util.List;
  * <h3>快捷栏布局</h3>
  * 固定按需求排：<b>1 武器 → 2 方块 → 3 食物 → 4 工具</b>，后面依次补
  * 方块 / 食物 / 工具的剩余堆叠；杂物（{@code KIND_OTHER}）不进快捷栏。
+ * 功能物品始终保留原位，它们占用的快捷栏槽位也不会被交换覆盖。
  */
 public final class InventoryPlanner {
 
@@ -79,9 +80,16 @@ public final class InventoryPlanner {
         public final int maxStack;
         public final double score;
         public final boolean fullBlock;
+        /** 功能 / 自定义物品：不移动、不合并、不丢弃，也不占用其槽位。 */
+        public final boolean protectedItem;
 
         public Item(String key, String name, int kind, int armorType, int family, int count,
                 int maxStack, double score, boolean fullBlock) {
+            this(key, name, kind, armorType, family, count, maxStack, score, fullBlock, false);
+        }
+
+        public Item(String key, String name, int kind, int armorType, int family, int count,
+                int maxStack, double score, boolean fullBlock, boolean protectedItem) {
             this.key = key == null ? "" : key;
             this.name = name == null ? "" : name;
             this.kind = kind;
@@ -91,11 +99,13 @@ public final class InventoryPlanner {
             this.maxStack = maxStack <= 0 ? 1 : maxStack;
             this.score = score;
             this.fullBlock = fullBlock;
+            this.protectedItem = protectedItem || InventoryRules.isFunctionalItem(this.name);
         }
 
         /** 同物品、换数量（容器模拟 / 测试用；规划本身只读字段）。 */
         public Item withCount(int newCount) {
-            return new Item(key, name, kind, armorType, family, newCount, maxStack, score, fullBlock);
+            return new Item(key, name, kind, armorType, family, newCount, maxStack, score, fullBlock,
+                    protectedItem);
         }
 
         public boolean sameKind(Item other) {
@@ -122,6 +132,8 @@ public final class InventoryPlanner {
         public boolean dropTools = false;
         /** 武器保留把数。 */
         public int keepWeapons = 1;
+        /** 当前手持的快捷栏下标；整理时禁止丢弃该格里的剑，-1 表示未指定。 */
+        public int selectedHotbarIndex = -1;
         /** 每种盔甲保留的备用件数（身上的不算）。 */
         public int spareArmor = 0;
         /** 所有方块总共保留的堆叠数。 */
@@ -149,6 +161,7 @@ public final class InventoryPlanner {
             copy.dropExtras = dropExtras;
             copy.dropTools = dropTools;
             copy.keepWeapons = keepWeapons;
+            copy.selectedHotbarIndex = selectedHotbarIndex;
             copy.spareArmor = spareArmor;
             copy.keepBlockStacks = keepBlockStacks;
             copy.keepTools = keepTools;
@@ -196,7 +209,8 @@ public final class InventoryPlanner {
                             ? new int[][]{{slotA, 0, 0}, {slotB, 0, 0}}
                             : new int[][]{{slotA, 0, 0}, {slotB, 0, 0}, {slotA, 0, 0}};
                 case DROP:
-                    return new int[][]{{slotA, 0, 4}};
+                    // 1.8.9 mode 4：button 0 丢单件，button 1 丢整个堆叠。
+                    return new int[][]{{slotA, 1, 4}};
                 default:
                     return new int[0][];
             }
@@ -252,6 +266,9 @@ public final class InventoryPlanner {
         for (int type = InventoryRules.ARMOR_HELMET; type <= InventoryRules.ARMOR_BOOTS; type++) {
             int armorSlot = ARMOR_FIRST + type;
             Item equipped = state.slots[armorSlot];
+            if (equipped != null && equipped.protectedItem) {
+                continue;
+            }
             // 盔甲槽里如果是别的东西（改过数据 / 别的客户端留下的），当它不存在，
             // 让背包里正常的盔甲把这一格换掉。
             boolean valid = equipped != null && equipped.armorType == type;
@@ -259,7 +276,8 @@ public final class InventoryPlanner {
             int bestSlot = -1;
             for (int slot = MAIN_FIRST; slot <= HOTBAR_LAST; slot++) {
                 Item item = state.slots[slot];
-                if (item == null || item.kind != InventoryRules.KIND_ARMOR || item.armorType != type) {
+                if (item == null || item.protectedItem
+                        || item.kind != InventoryRules.KIND_ARMOR || item.armorType != type) {
                     continue;
                 }
                 if (item.score > bestScore + 0.001D) {
@@ -310,7 +328,7 @@ public final class InventoryPlanner {
         List<Integer> slots = new ArrayList<Integer>();
         for (int slot = MAIN_FIRST; slot <= HOTBAR_LAST; slot++) {
             Item item = state.slots[slot];
-            if (item == null || item.kind != kind) {
+            if (item == null || item.protectedItem || item.kind != kind) {
                 continue;
             }
             if (armorType >= 0 && item.armorType != armorType) {
@@ -326,7 +344,8 @@ public final class InventoryPlanner {
         List<Integer> slots = new ArrayList<Integer>();
         for (int slot = MAIN_FIRST; slot <= HOTBAR_LAST; slot++) {
             Item item = state.slots[slot];
-            if (item != null && item.kind == InventoryRules.KIND_WEAPON
+            if (item != null && !item.protectedItem && !isSelectedHotbarSlot(state, slot)
+                    && item.kind == InventoryRules.KIND_WEAPON
                     && item.family == InventoryRules.FAMILY_SWORD) {
                 slots.add(Integer.valueOf(slot));
             }
@@ -334,11 +353,17 @@ public final class InventoryPlanner {
         return slots;
     }
 
+    private static boolean isSelectedHotbarSlot(State state, int slot) {
+        return state.selectedHotbarIndex >= 0 && state.selectedHotbarIndex < HOTBAR_SIZE
+                && slot == HOTBAR_FIRST + state.selectedHotbarIndex;
+    }
+
     private static List<Integer> collectFamily(State state, int family) {
         List<Integer> slots = new ArrayList<Integer>();
         for (int slot = MAIN_FIRST; slot <= HOTBAR_LAST; slot++) {
             Item item = state.slots[slot];
-            if (item != null && item.kind == InventoryRules.KIND_TOOL && item.family == family) {
+            if (item != null && !item.protectedItem
+                    && item.kind == InventoryRules.KIND_TOOL && item.family == family) {
                 slots.add(Integer.valueOf(slot));
             }
         }
@@ -375,12 +400,12 @@ public final class InventoryPlanner {
     private static Action mergeAction(State state) {
         for (int a = MAIN_FIRST; a <= HOTBAR_LAST; a++) {
             Item left = state.slots[a];
-            if (left == null || left.maxStack <= 1) {
+            if (left == null || left.protectedItem || left.maxStack <= 1) {
                 continue;
             }
             for (int b = a + 1; b <= HOTBAR_LAST; b++) {
                 Item right = state.slots[b];
-                if (right == null || !left.key.equals(right.key)) {
+                if (right == null || right.protectedItem || !left.key.equals(right.key)) {
                     continue;
                 }
                 int total = left.count + right.count;
@@ -411,14 +436,18 @@ public final class InventoryPlanner {
         List<Integer> poolSlots = new ArrayList<Integer>();
         for (int slot = MAIN_FIRST; slot <= HOTBAR_LAST; slot++) {
             Item item = state.slots[slot];
-            if (item == null || !InventoryRules.hotbarWorthy(item.kind)) {
+            if (item == null || item.protectedItem || !InventoryRules.hotbarWorthy(item.kind)) {
                 continue;
             }
             pool.add(item);
             poolSlots.add(Integer.valueOf(slot));
         }
-        List<Integer> order = hotbarOrder(pool);
         boolean[] claimed = new boolean[HOTBAR_SIZE];
+        for (int i = 0; i < HOTBAR_SIZE; i++) {
+            Item item = state.slots[HOTBAR_FIRST + i];
+            claimed[i] = item != null && item.protectedItem;
+        }
+        List<Integer> order = hotbarOrder(pool, claimed);
 
         // 1) 逐格把目标物品换进快捷栏（数字键动作，一次点击）。
         for (int i = 0; i < order.size() && i < HOTBAR_SIZE; i++) {
@@ -467,11 +496,19 @@ public final class InventoryPlanner {
      * 否则两件评分相同的物品会随着交换在「第 1 格 / 背包」之间来回跳。
      */
     static List<Integer> hotbarOrder(List<Item> pool) {
+        return hotbarOrder(pool, new boolean[HOTBAR_SIZE]);
+    }
+
+    private static List<Integer> hotbarOrder(List<Item> pool, boolean[] reserved) {
         List<Integer> order = new ArrayList<Integer>();
         boolean[] taken = new boolean[pool.size()];
         int[] staple = {InventoryRules.KIND_WEAPON, InventoryRules.KIND_BLOCK,
                 InventoryRules.KIND_FOOD, InventoryRules.KIND_TOOL};
         for (int i = 0; i < staple.length; i++) {
+            if (reserved[i]) {
+                order.add(Integer.valueOf(-1)); // 保留功能物品，其它物资在 5~9 格补位。
+                continue;
+            }
             int best = bestOf(pool, taken, staple[i]);
             if (best >= 0) {
                 taken[best] = true;
@@ -480,7 +517,7 @@ public final class InventoryPlanner {
         }
         List<Integer> rest = new ArrayList<Integer>();
         for (int i = 0; i < pool.size(); i++) {
-            if (!taken[i]) {
+            if (!taken[i] && !pool.get(i).protectedItem) {
                 rest.add(Integer.valueOf(i));
             }
         }
@@ -489,8 +526,9 @@ public final class InventoryPlanner {
                 return compareItems(pool.get(a.intValue()), pool.get(b.intValue()));
             }
         });
-        for (int i = 0; i < rest.size() && order.size() < HOTBAR_SIZE; i++) {
-            order.add(rest.get(i));
+        int next = 0;
+        while (next < rest.size() && order.size() < HOTBAR_SIZE) {
+            order.add(reserved[order.size()] ? Integer.valueOf(-1) : rest.get(next++));
         }
         return order;
     }
@@ -517,7 +555,7 @@ public final class InventoryPlanner {
     private static int bestOf(List<Item> pool, boolean[] taken, int kind) {
         int best = -1;
         for (int i = 0; i < pool.size(); i++) {
-            if (taken[i] || pool.get(i).kind != kind) {
+            if (taken[i] || pool.get(i).protectedItem || pool.get(i).kind != kind) {
                 continue;
             }
             if (best < 0 || compareItems(pool.get(i), pool.get(best)) < 0) {

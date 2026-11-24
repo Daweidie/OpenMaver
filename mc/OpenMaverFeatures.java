@@ -3322,6 +3322,7 @@ public final class OpenMaverFeatures {
         Scaffold2Feature.load(values);
         SafeWalkFeature.load(values);
         KeepSprintFeature.load(values);
+        BlockHitFeature.load(values);
         AttackReduceFeature.load(values);
         killAuraRange = clamp(readFloat(values, "killaura.range", 3.0F), 3.0F, 6.0F);
         killAuraCpsMin = clamp(readInt(values, "killaura.cpsMin", 8, 20), 1, 20);
@@ -4044,6 +4045,7 @@ public final class OpenMaverFeatures {
                     + "\n" + Scaffold2Feature.save()
                     + "\n" + SafeWalkFeature.save()
                     + "\n" + KeepSprintFeature.save()
+                    + "\n" + BlockHitFeature.save()
                     + "\n" + AttackReduceFeature.save()
                     + "fakeplayer.count=" + fakePlayerCount
                     + "\nfakeplayer.distance=" + fakePlayerDistance

@@ -94,6 +94,40 @@ public final class InventoryRules {
     // 分类
     // ==================================================================
 
+    /** 常见大厅入口物品即使没有自定义名称，也保留原位，不当作建材或杂物。 */
+    public static boolean isFunctionalItem(String name) {
+        if (name == null || name.isEmpty()) {
+            return true; // 无法识别的物品也不能当作空槽或普通物资处理。
+        }
+        if (name.startsWith("skull")) {
+            return true;
+        }
+        switch (name) {
+            case "head":
+            case "playerhead":
+            case "chest":
+            case "chesttrap":
+            case "trappedchest":
+            case "enderchest":
+            case "hopper":
+            case "dispenser":
+            case "dropper":
+            case "compass":
+            case "clock":
+            case "watch":
+            case "netherstar":
+            case "paper":
+            case "book":
+            case "enchantedbook":
+            case "writtenbook":
+            case "writingbook":
+            case "bed":
+                return true;
+            default:
+                return false;
+        }
+    }
+
     /**
      * 盔甲槽：0 头盔 / 1 胸甲 / 2 护腿 / 3 靴子，非盔甲返回 {@link #ARMOR_NONE}。
      *

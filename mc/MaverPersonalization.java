@@ -8,9 +8,13 @@ public final class MaverPersonalization {
     public static final int DEFAULT_COLOR = 0xFFB3B9F0;
     public static final String DEFAULT_TEXT = "Maver!";
     public static final int MAX_TEXT_LENGTH = 64;
+    public static final int MAX_TAUNT_LENGTH = 100;
+    public static final String DEFAULT_TAUNT = "gg";
     private static boolean loaded;
     private static int color = DEFAULT_COLOR;
     private static String text = DEFAULT_TEXT;
+    private static boolean tauntEnabled;
+    private static String tauntText = DEFAULT_TAUNT;
 
     private MaverPersonalization() {}
 
@@ -32,21 +36,54 @@ public final class MaverPersonalization {
         loaded = true;
         color = parseColor(values.getProperty("ui.theme.color"), DEFAULT_COLOR);
         text = cleanText(values.getProperty("hud.splash.text", DEFAULT_TEXT));
+        tauntEnabled = Boolean.parseBoolean(values.getProperty("personalization.taunt.enabled", "false"));
+        tauntText = cleanTaunt(values.getProperty("personalization.taunt.text", DEFAULT_TAUNT));
     }
 
     public static String save() {
         ensureLoaded();
         // Properties.load(InputStream) uses Latin-1; escape Unicode and leading spaces.
+        return "ui.theme.color=" + getHexColor() + "\nhud.splash.text=" + escape(text) + "\n"
+                + "personalization.taunt.enabled=" + tauntEnabled + "\n"
+                + "personalization.taunt.text=" + escape(tauntText) + "\n";
+    }
+
+    private static String escape(String value) {
         StringBuilder escaped = new StringBuilder();
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
             if (c == '\\') escaped.append("\\\\");
             else if (c == ' ') escaped.append("\\ ");
             else if (c < 0x20 || c > 0x7E) {
                 escaped.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
             } else escaped.append(c);
         }
-        return "ui.theme.color=" + getHexColor() + "\nhud.splash.text=" + escaped + "\n";
+        return escaped.toString();
+    }
+
+    public static boolean isTauntEnabled() { ensureLoaded(); return tauntEnabled; }
+    public static void setTauntEnabled(boolean value) {
+        ensureLoaded();
+        tauntEnabled = value;
+        OpenMaverFeatures.markDirty();
+    }
+    public static String getTauntText() { ensureLoaded(); return tauntText; }
+    public static void setTauntText(String value) {
+        ensureLoaded();
+        tauntText = cleanTaunt(value);
+        OpenMaverFeatures.markDirty();
+    }
+    static String cleanTaunt(String value) {
+        if (value == null) return DEFAULT_TAUNT;
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < value.length();) {
+            int cp = value.codePointAt(i);
+            i += Character.charCount(cp);
+            if (Character.isISOControl(cp) || cp == 0xA7 || cp >= 0xD800 && cp <= 0xDFFF) continue;
+            if (result.length() + Character.charCount(cp) > MAX_TAUNT_LENGTH) break;
+            result.appendCodePoint(cp);
+        }
+        return result.toString();
     }
 
     public static int getColor() { ensureLoaded(); return color; }

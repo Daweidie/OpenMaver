@@ -34,7 +34,8 @@ public final class EffectTagHud {
 
     public static void render(FontRenderer font, ScaledResolution resolution) {
         Minecraft mc = Minecraft.getMinecraft();
-        if (!isEnabled() || mc == null || mc.thePlayer == null || mc.theWorld == null
+        if (!isEnabled() || mc == null || mc.thePlayer == null
+                || OpenMaverFeatures.read(mc, "theWorld", "field_71441_e", null) == null
                 || (mc.gameSettings != null && mc.gameSettings.hideGUI)) return;
         // Use the declaring type so the small MCP -> SRG mapper resolves the inherited API.
         EntityLivingBase player = mc.thePlayer;

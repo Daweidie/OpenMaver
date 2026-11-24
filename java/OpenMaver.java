@@ -2,6 +2,7 @@ import config.Config;
 import module.Module;
 import module.ModuleManager;
 import module.combat.AutoClicker;
+import module.combat.BlockHit;
 import module.combat.Criticals;
 import module.combat.KillAura;
 import module.combat.Reach;
@@ -413,6 +414,9 @@ public final class OpenMaver {
         // 战斗模块：KillAura 自动攻击（配置路径 combat.killaura；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new KillAura());
 
+        // 独立真实格挡：手动 / AutoClicker / KillAura 攻击后的短暂举剑。
+        ModuleManager.register(new BlockHit());
+
         // 战斗模块：AntiBot 共享玩家筛选（检测在 MC 侧 AntiBotFeature）。
         ModuleManager.register(new AntiBot());
 
@@ -470,6 +474,8 @@ public final class OpenMaver {
 
         // 渲染模块：Chest ESP 箱子透视（配置路径 render.chestesp；MC 侧绘制在 mc/ChestFeature）
         ModuleManager.register(new ChestEsp());
+        ModuleManager.register(new module.render.Projectiles());
+        ModuleManager.register(new module.render.NoHurtCam());
 
         // 渲染模块：左上角 FPS / CPS 统计（配置路径 render.fps / render.cps；MC 侧绘制在 mc/StatsHud）
         ModuleManager.register(new Fps());

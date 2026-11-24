@@ -74,6 +74,10 @@
       "enabled": false,        // 刀暴/强制暴击：默认关闭（JUMP 模式：真实起跳后才暴击，不发伪造移动包）
       "key": ""                // 默认不占用按键，玩家可自行绑定
     },
+    "blockhit": {
+      "enabled": false,        // 持剑攻击实体后真实格挡；HOLD TICKS 在 ClickGUI 调整
+      "key": ""                // 默认不占用按键
+    },
     "killaura": {
       "enabled": false,        // KillAura 自动攻击：默认关闭（参数在 ClickGUI 中调整）
       "key": ""                // 默认不占用按键，玩家可自行绑定
@@ -124,6 +128,14 @@
     "chestesp": {
       "enabled": false,        // 箱子透视：箱子/末影箱/漏斗外框，默认关闭（按 P 切换）
       "key": "P"               // 绑定键位
+    },
+    "projectiles": {
+      "enabled": false,        // 投射物位置与轨迹提示：默认关闭
+      "key": ""                // 默认不占用按键
+    },
+    "nohurtcam": {
+      "enabled": false,        // 关闭受击镜头晃动：默认关闭
+      "key": ""
     },
     "fullbright": {
       "enabled": false,        // 全亮/夜视：默认关闭（按 Y 切换）

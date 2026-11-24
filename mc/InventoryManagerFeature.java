@@ -38,7 +38,8 @@ import java.util.Properties;
  * 只在「当前窗口就是玩家背包」时动手：开着箱子 / 漏斗 / 创造物品栏时完全不碰，
  * 那段时间交给 {@code ChestFeature}。背包界面开着时点的是同一个窗口；
  * 界面关掉时服务端的 {@code openContainer} 仍然是背包（windowId 0），
- * 所以两种情况都会自动整理。核心模块不引用 MC 类型，mod 与 bootstrap
+ * 所以两种情况都会自动整理。头颅、箱子等功能物品以及带自定义名称 / Lore 的物品
+ * 始终保留原位，快捷栏排序也避开其槽位。核心模块不引用 MC 类型，mod 与 bootstrap
  * 注入两种类加载方式都能用，因此所有 MC 成员都按 MCP / SRG 双名反射访问。
  */
 public final class InventoryManagerFeature {
@@ -150,7 +151,8 @@ public final class InventoryManagerFeature {
         if (main == null || main.length < 36) {
             return;
         }
-        InventoryPlanner.State state = buildState(main, armor);
+        InventoryPlanner.State state = buildState(main, armor,
+                intOf(read(inv, "currentItem", "field_70461_c", null)));
         lastArmorCount = armorCount(state);
         InventoryPlanner.Action action = InventoryPlanner.next(state);
         if (action == null) {
@@ -206,13 +208,15 @@ public final class InventoryManagerFeature {
     // 背包快照
     // ==================================================================
 
-    private static InventoryPlanner.State buildState(Object[] main, Object[] armor) {
+    private static InventoryPlanner.State buildState(Object[] main, Object[] armor,
+            int selectedHotbarIndex) {
         InventoryPlanner.State state = new InventoryPlanner.State();
         state.autoArmor = autoArmor;
         state.sortHotbar = autoSort;
         state.dropExtras = dropExtras;
         state.dropTools = dropTools;
         state.keepWeapons = Math.max(1, keepWeapons);
+        state.selectedHotbarIndex = selectedHotbarIndex;
         state.spareArmor = Math.max(0, spareArmor);
         state.keepBlockStacks = 2;
         state.keepTools = Math.max(1, keepTools);
@@ -230,7 +234,7 @@ public final class InventoryManagerFeature {
         return state;
     }
 
-    /** 把 {@code ItemStack} 读成规划器要的纯数据。读不出来就当作空格。 */
+    /** 把 {@code ItemStack} 读成规划器要的纯数据；不能识别的非空物品保留原位。 */
     private static InventoryPlanner.Item itemOf(Object stack) {
         if (stack == null) {
             return null;
@@ -245,6 +249,8 @@ public final class InventoryManagerFeature {
         if (name.isEmpty() && item != null) {
             name = InventoryRules.clean(asString(call(item, "getUnlocalizedName", "func_77658_a", null)));
         }
+        Object nbt = call(stack, "getTagCompound", "func_77978_p", null);
+        boolean protectedItem = hasProtectedMetadata(stack, nbt);
         int damage = intOf(call(stack, "getItemDamage", "func_77960_j", null));
         if (damage < 0) {
             damage = 0;
@@ -279,8 +285,27 @@ public final class InventoryManagerFeature {
             score = InventoryRules.scoreOf(name, kind, armorType, family, count, fullBlock,
                     levels[0], levels[1], levels[2], levels[3], durability);
         }
-        return new InventoryPlanner.Item(name + "#" + damage, name, kind, armorType, family,
-                count, maxStack, score, fullBlock);
+        // 服务端自定义 NBT、药水效果等不同的物品不能被误认为同一摞。
+        String key = name + "#" + damage + (nbt == null ? "" : "#" + nbt.toString());
+        return new InventoryPlanner.Item(key, name, kind, armorType, family,
+                count, maxStack, score, fullBlock, protectedItem);
+    }
+
+    private static boolean hasProtectedMetadata(Object stack, Object nbt) {
+        if (Boolean.TRUE.equals(call(stack, "hasDisplayName", "func_82837_s", null))) {
+            return true;
+        }
+        if (nbt == null) {
+            return false;
+        }
+        Object display = call(nbt, "getCompoundTag", "func_74775_l", null, "display");
+        return hasTag(display, "Name", 8) || hasTag(display, "Lore", 9)
+                || hasTag(nbt, "SkullOwner", 8) || hasTag(nbt, "SkullOwner", 10);
+    }
+
+    private static boolean hasTag(Object nbt, String key, int type) {
+        return Boolean.TRUE.equals(call(nbt, "hasKey", "func_150297_b", null,
+                key, Integer.valueOf(type)));
     }
 
     private static int armorCount(InventoryPlanner.State state) {

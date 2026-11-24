@@ -398,7 +398,7 @@ public final class TargetHud {
         Minecraft mc = Minecraft.getMinecraft();
         Object textures = mc == null ? null
                 : call(mc, "getTextureManager", "func_110434_K", null);
-        Object skin = call(player, "getLocationSkin", "func_110311_f", null);
+        ResourceLocation skin = player.getLocationSkin();
         if (textures == null || skin == null) {
             return false;
         }

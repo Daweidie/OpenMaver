@@ -5,23 +5,22 @@ final class NoXZMode extends AntiKBMode {
     private static final int MAX_LANDING_TICKS = 12;
     private Object attackTarget;
     private int attacksRemaining, flagCooldown, landingTicks, hitCounter;
-    private boolean shouldJump, waitingForLanding;
+    private boolean waitingForLanding;
 
     @Override void onEnable() {
         super.onEnable(); attackTarget = null;
         attacksRemaining = flagCooldown = landingTicks = hitCounter = 0;
-        shouldJump = waitingForLanding = false; AttackReduceFeature.restoreTimer();
+        waitingForLanding = false; AttackReduceFeature.restoreTimer();
     }
     @Override void onCorrection() { flagCooldown = 2; }
     @Override void onReceivePacket(AttackReduceFeature.ReceivePacketEvent event) {
         AttackReduceFeature.Packet packet = event.packet;
         if (!AttackReduceFeature.ownVelocity(packet)) return;
         // 新速度是新的物理边界；即使 Y <= 0，也不能继续上一次受击的补刀。
-        clearAttacks(); shouldJump = false;
+        clearAttacks();
         if (flagCooldown > 0) { VelocityDebug.knockbackIn(packet, "PASS COOLDOWN"); return; }
         if (packet.x() != 0 || packet.z() != 0) hitCounter = 2;
         if (packet.y() <= 0) { VelocityDebug.knockbackIn(packet, false); return; }
-        shouldJump = true;
         Object target = AttackReduceFeature.attackTarget();
         boolean ground = AttackReduceFeature.onGround();
         boolean hasTarget = AttackReduceFeature.validTarget(target);
@@ -80,17 +79,9 @@ final class NoXZMode extends AntiKBMode {
             AttackReduceFeature.claimMovementInput(input);
             input.moveForward = 1;
         }
-        if (shouldJump) {
-            shouldJump = false;
-            if (AttackReduceFeature.onGround() && AttackReduceFeature.sprinting() && !AttackReduceFeature.ignored()
-                    && !Boolean.TRUE.equals(AttackReduceFeature.call(AttackReduceFeature.player(), "isPotionActive", "func_82165_m", Integer.valueOf(8)))) {
-                AttackReduceFeature.claimMovementInput(input);
-                input.jump = true;
-            }
-        }
     }
     @Override void release() {
-        clearAttacks(); shouldJump = false; hitCounter = 0;
+        clearAttacks(); hitCounter = 0;
         AttackReduceFeature.restoreTimer(); AttackReduceFeature.status("RELEASED");
     }
     private void clearAttacks() {

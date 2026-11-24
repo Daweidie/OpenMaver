@@ -4,6 +4,7 @@ import module.ModuleManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraftforge.client.event.GuiOpenEvent;
+import net.minecraftforge.client.event.ClientChatReceivedEvent;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.client.event.RenderLivingEvent;
 import net.minecraftforge.event.entity.player.AttackEntityEvent;
@@ -60,6 +61,8 @@ public final class OpenMaverClientHandler {
     private boolean motionBlurFailed = false;
     private boolean tickSeen = false;
     private boolean renderSeen = false;
+    private boolean blockHitFailed = false;
+    private boolean tauntFailed = false;
 
     private static void debug(String message, Throwable error) {
         StringBuilder line = new StringBuilder("[OpenMaver] event: ").append(message);
@@ -107,6 +110,7 @@ public final class OpenMaverClientHandler {
             // START：在 vanilla 发送 C03 之前应用 aim / sprint / 箱子点击。
             if (event.phase == TickEvent.Phase.START) {
                 syncHeldKeys();
+                tickBlockHit(mc, true);
                 LegacySoundFeature.onTick(mc);
                 // 先挂窗口出站钩子，覆盖手动操作和 Chest Stealer 产生的 C0E / C0D。
                 MoveDisablerFeature.onTick(mc);
@@ -124,6 +128,7 @@ public final class OpenMaverClientHandler {
                 OpenMaverFeatures.onTickStart(mc);
                 // Velocity 独立维护本地实体 id 和击退包处理器。
                 AttackReduceFeature.onTickStart(mc);
+                tickBlockHit(mc, false);
                 return;
             }
             if (event.phase != TickEvent.Phase.END) {
@@ -134,6 +139,14 @@ public final class OpenMaverClientHandler {
                 debug("first client tick", null);
             }
             OpenMaverFeatures.onTick(mc);
+            if (!tauntFailed) {
+                try {
+                    TauntFeature.onTick(mc);
+                } catch (Throwable t) {
+                    tauntFailed = true;
+                    debug("taunt disabled", t);
+                }
+            }
             AttackReduceFeature.onTickEnd(mc);
             // 箱子：Chest ESP 的目标快照等每帧数据在 tick END 结算；
             // 真正发 windowClick 的搬运逻辑在 START（见上面那段注释）。
@@ -189,6 +202,7 @@ public final class OpenMaverClientHandler {
      * AttackEntityEvent：1.8.9 的冲刺攻击会让本地和服务端都清掉冲刺，
      * 而客户端的 serverSprintState 不会变化，vanilla 不会补 START_SPRINTING。
      * 这里只记一个记号，由同一个 tick 的 PlayerTickEvent.END 在 C03 之前补包。
+     * BlockHit 同时记录对手，由后续 tick START 判断反击窗口和连击保护。
      */
     @SubscribeEvent
     public void onAttackEntity(AttackEntityEvent event) {
@@ -202,8 +216,28 @@ public final class OpenMaverClientHandler {
                 return;
             }
             KeepSprintFeature.onAttack(event.entityPlayer);
+            if (!blockHitFailed) BlockHitFeature.onAttack(mc, event);
         } catch (Throwable t) {
-            debug("keep sprint attack", t);
+            debug("attack event", t);
+        }
+    }
+
+    /** A feature error must not interrupt core startup or other modules. */
+    private void tickBlockHit(Minecraft mc, boolean before) {
+        if (blockHitFailed) return;
+        try {
+            if (before) BlockHitFeature.beforeTick(mc);
+            else BlockHitFeature.afterTickStart(mc);
+        } catch (Throwable t) {
+            blockHitFailed = true;
+            debug("blockhit disabled", t);
+            Module blockHit = ModuleManager.getModule("BlockHit");
+            if (blockHit != null) blockHit.setEnabled(false);
+            try {
+                BlockHitFeature.beforeTick(mc);
+            } catch (Throwable cleanup) {
+                debug("blockhit cleanup", cleanup);
+            }
         }
     }
 
@@ -214,6 +248,16 @@ public final class OpenMaverClientHandler {
         int enabled = OpenMaverHud.enabledFeatureCount();
         OpenMaverHud.success("Loaded successfully, " + enabled
                 + (enabled == 1 ? " feature enabled!" : " features enabled!"));
+    }
+
+    @SubscribeEvent
+    public void onChatReceived(ClientChatReceivedEvent event) {
+        if (tauntFailed) return;
+        try {
+            TauntFeature.onChat(Minecraft.getMinecraft(), event);
+        } catch (Throwable t) {
+            debug("taunt chat event", t);
+        }
     }
 
     /**
@@ -407,13 +451,20 @@ public final class OpenMaverClientHandler {
      */
     @SubscribeEvent
     public void onRenderTick(TickEvent.RenderTickEvent event) {
-        if (failed || renderTickFailed) {
+        if (event == null) {
             return;
         }
-        if (event.phase != TickEvent.Phase.START) {
+        if (event.phase == TickEvent.Phase.END) {
+            try {
+                HurtCameraFeature.onRenderTick(Minecraft.getMinecraft(), false);
+            } catch (Throwable t) {
+                debug("hurt camera restore", t);
+            }
             return;
         }
+        if (failed || renderTickFailed) return;
         try {
+            HurtCameraFeature.onRenderTick(Minecraft.getMinecraft(), true);
             // 静默开箱的兜底：万一开箱包在 tick 与这一帧渲染之间才处理完，
             // 也要在画这一帧之前把箱子界面收起来，别让玩家看到闪一下。
             ChestFeature.onRenderTickStart(Minecraft.getMinecraft());
@@ -442,6 +493,7 @@ public final class OpenMaverClientHandler {
             OpenMaverFeatures.onRender(event);
             ScaffoldFeature.onRenderWorld(event);
             ChestFeature.onRenderWorld(event);
+            ProjectileFeature.onRenderWorld(event);
             ModuleManager.onRender();
             if (!motionBlurFailed) {
                 try {

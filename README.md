@@ -340,7 +340,7 @@ java -Djava.library.path=build/lib \
   `ui.clickgui.key`）。
   仅保留可拖动的列式界面：Combat / Movement / Render / Player / Misc，
   以及独立的 **Config / Personalization** 浮动面板；旧版侧栏界面与 Client 列已移除。
-  Personalization 收纳 Wallpaper、Color 与 Text 设置；主题色会同步更新 ClickGUI 高亮和 Config 控件，HUD 上方闪烁文字也可自定义。
+  Personalization 收纳 Wallpaper、Color、Text 与 Taunt 设置；主题色会同步更新 ClickGUI 高亮和 Config 控件，HUD 上方闪烁文字也可自定义。
   拖动标题栏移动面板，点击或右键标题栏折叠，位置与折叠状态在本次游戏会话内保留。
   左键模块切换开关、右键展开滑块 / 选项 / 复选框；底部搜索支持直接输入与 `Ctrl+K`。
   所有面板都在内容溢出时单独滚动，主菜单与游戏画面均不使用整屏模糊。模块列表来自
@@ -724,7 +724,7 @@ IO 失败只记录一次并自动停用 debug。
 ### Velocity 防击退
 
 - Velocity 提供三模式：`JumpReset`（新配置默认）、`NoXZ`、`Mix`；NoXZ / Mix 基于 `../OpenZen` 适配。旧 `SPRINT HIT / SIMPLE / SLAP ATTACK` 实现及控件已移除。ClickGUI/HUD 仍显示 `Velocity`，开关与热键保留 `movement.attackreduce`。
-- `NoXZ`：所有 S12 在主线程收到后立即应用，不额外延迟，也不缩放速度或缓存其他入站/出站包。本地正 Y 击退触发受击跳跃；地面有目标且疾跑时安排原版攻击，空中只保留最多 12 tick 的落地补刀意图。落地补刀使用当时速度，不重新施加旧 S12；无目标、超时、新击退、校正或退出环境会清理旧意图。Aura 目标优先，否则取准星生物，眼睛到可见目标 AABB 距离上限为 3.0，减速由原版伤害结果决定。
+- `NoXZ`：所有 S12 在主线程收到后立即应用，不额外延迟，也不缩放速度或缓存其他入站/出站包；不会因受击额外强制跳跃。地面有目标且疾跑时安排原版攻击，空中只保留最多 12 tick 的落地补刀意图。落地补刀使用当时速度，不重新施加旧 S12；无目标、超时、新击退、校正或退出环境会清理旧意图。Aura 目标优先，否则取准星生物，眼睛到可见目标 AABB 距离上限为 3.0，减速由原版伤害结果决定。
 - `JumpReset`：参考 `~/Downloads/script.lua` 的短按跳跃与 GUI 暂停思路；自己的正 Y 且带水平分量的 S12 立即应用，地面和空中受击都可触发。下一次有效输入短暂向前疾跑 2 tick：地面写入一次跳跃输入；空中保持原包 Y，在有效 Aura/准星目标上尝试一次原版疾跑攻击，水平减速只由原版伤害结果决定。没有有效目标时仅接管移动输入；攻击名额忙时最多等到下一输入 tick，不与 AutoClicker/Aura 同 tick 重复攻击。随后归还输入和模块开启的疾跑；不在空中调用 `jump()`，不缓存/改写/回放 S12，不伪造 onGround，不改写相机或 Timer。
 - JumpReset 参数：`Chance=100%`（每次有效受击触发概率）、`Accuracy=100%`（下一次输入准时响应概率；失准时仅输入延后 1–2 tick）、`Only When Targeting=false`（开启后需要 Aura 或准星可见生物，距离 ≤ 3.0）、`Water Check=true`（开启后水中跳过；关闭仅放开水中检查）。执行前重查条件；离地后仍可执行重置，尚未执行的空中意图在落地时取消，避免补跳。目标失效、GUI、潜行、使用物品、Scaffold/GodBridge、校正及退出同样取消旧意图，缺少输入回调时最多 3–5 tick 过期。
 - `Mix`：选择性缓存速度、实体移动、事务和传送包，落地或连续空中 24 tick 释放；支持受伤跳跃、短时方向接管、静默转向及 Aura 双击。两次攻击分配到两个空闲 tick，按执行时的疾跑状态走原版物理；与 AutoClicker/Aura 共享每 tick 的实体攻击名额。
@@ -763,6 +763,20 @@ IO 失败只记录一次并自动停用 debug。
   「这个箱子我开过、里面有什么」的预览数据。
 - 实现说明：`mc/ChestFeature.java`（绘制挂在 `RenderWorldLastEvent`），开关模块为
   `java/module/render/ChestEsp.java`。
+
+### Projectiles 投射物提示
+
+- 配置路径：`render.projectiles`，默认关闭，默认不绑定按键。
+- 对一定范围内的箭、投掷物和火球绘制穿墙位置框、玩家指向线及短程预测轨迹；范围可在
+  ClickGUI 中调整（8~128 格，默认 64）。预测轨迹按当前速度和近似重力外推 20 tick，未做方块碰撞模拟。
+- 只读取客户端实体状态，不发送网络包。实现位于 `mc/ProjectileFeature.java`，由
+  `RenderWorldLastEvent` 驱动。
+
+### No Hurt Cam 受击镜头关闭
+
+- 配置路径：`render.nohurtcam`，默认关闭，默认不绑定按键。
+- 渲染帧内临时清除本地玩家的受击计时，并在帧结束恢复，关闭受击镜头晃动；不改服务端生命值或伤害结算。
+- 实现位于 `mc/HurtCameraFeature.java`，由 `RenderTickEvent` 驱动。
 
 ### Chest Stealer 开箱搬运（拾取 / 整理 / 存入）
 
@@ -975,6 +989,11 @@ IO 失败只记录一次并自动停用 debug。
   `CLICK MS`~`CLICK MS+`（默认 90~200ms）随机，每 tick 最多 3 次点击。
   整理完（规划器返回空）后按 `IDLE`（默认 40 tick）再扫一遍背包，不会每 tick 重算。
 - 边界：
+  - 头颅、箱子（含陷阱箱 / 末影箱）、指南针、时钟、下界之星、纸 / 书等功能物品，
+    以及带自定义名称或 Lore 说明的物品，始终保留原位：不移动、不合并、不自动穿上或丢弃，
+    也不计入多余物资数量。快捷栏排序会避开它们占用的格子；固定分类格被占用时，
+    对应普通物资使用 5~9 中空闲的补位格。普通改名装备同样受保护。
+  - 合并物品时同时比较 NBT，避免把外观相同、服务端数据不同的物品当作同一摞。
   - 只在 `openContainer == inventoryContainer`（窗口号 0）时动手；开着箱子 / 漏斗 /
     创造物品栏时完全不碰，那段时间交给 Chest Stealer。背包界面开着时点的是同一个窗口；
     界面关掉时服务端的 `openContainer` 仍是背包，所以两种情况都会自动整理。
@@ -992,7 +1011,10 @@ IO 失败只记录一次并自动停用 debug。
   用假容器按原版 `windowClick` 语义（mode 0 拿起/放下/交换/合并、mode 2 数字键、
   mode 4 丢弃）执行规划器给出的点击，跑到规划器说「已整理好」为止，再断言布局与稳定性：
   布局 / 盔甲不降级 / 保护附魔优先 / 保留把数 / 多余工具 / 已整理不再动 /
-  满背包不死循环 / 固定四格占位 / 300 组随机背包收敛（1244 项断言）。
+  满背包不死循环 / 固定四格占位 / 大厅功能物品保留 / 保护槽位避让 /
+  300 组随机普通背包与 200 组混合功能物品背包收敛。
+  构建项目后可运行 `bash tools/inventory-test/run.sh --feature`，额外检查自定义名称、Lore、
+  NBT 合并身份与 MCP / SRG 运行期字段、方法读取。
 
 ### Target HUD 目标信息面板
 
@@ -1457,6 +1479,42 @@ Grim 的 `combat/Reach` 不是「你报多远就查多远」，它量的是另�
 - 未移植 Myau 的 AutoBlock / Blink / BackTrack / Teams 等重型逻辑，以稳定、可编译、
   不高频刷包为优先。
 
+### BlockHit 真实自动格挡
+
+- 位于 ClickGUI 的 **Combat → BlockHit**，配置路径 `combat.blockhit`，默认关闭、无默认热键。
+- 手持剑攻击实体后跟踪该对手，仅在近战反击窗口通过 1.8.9 原版 `PlayerControllerMP.sendUseItem` 发送 `C08` 并进入真实物品使用状态；
+  持续结束时通过 `onStoppedUsingItem` 发送 `C07 RELEASE_USE_ITEM`。同时维护使用键状态，保留原版格挡减速。
+- 保护进攻连击：观察对手受伤计时/血量变化确认命中，连续两次命中且自己没受伤时不格挡，
+  自己受到伤害后重新判断。对手仍有受击硬直、自己仍处于受伤无敌窗口时也不格挡；
+  已确认一次命中后的新攻击额外保留 6 tick 等待确认，避免第二击尚未回包就开始减速。
+- 对手必须在眼睛到本地碰撞箱 3 格内、朝向本地玩家（偏角不超过 55°）、视线可达，
+  且刚开始挥击（进度 0~2）才尝试；同一次挥击最多触发一次。攻击后最多跟踪 20 tick。
+  这是基于客户端可见状态的保守判断，不能提前知道服务端最终是否命中或准确预测网络延迟。
+- 覆盖手动攻击、AutoClicker、KillAura 和 Reach 的 Forge 攻击事件。每次 tick START 收尾判断反击窗口，
+  动作包在该 tick 的 `C03` 前发送；原版输入阶段的手动攻击从下一次 START 开始观察。
+- 展开设置中的 **HOLD TICKS** 控制每次格挡持续 `1~5` tick，默认 `2`（正常 20 TPS 时约 `100ms`）；
+  保存到 `config/openmaver.properties` 的 `blockhit.holdTicks`。这是持有上限，威胁消失会提前释放。
+  格挡期间沿用原版的使用物品限制，结束后恢复攻击。
+- 切槽、打开 GUI、失焦、死亡、离开世界或禁用模块时，下一次 tick START 清理自己持有的格挡和使用键。
+  已在手动使用物品时不接管；格挡中按下实际使用键则交回手动控制。搭路模块启用时让位。
+- 这是 1.8.9 的剑格挡流程。通过 ViaForge 连接较新版本服务器时，防御效果由协议转换和服务器支持决定。
+  OpenZen 当前的 `Fake AutoBlock` / `OldHitting` 仅提供显示状态和动画，本模块补充原版真实物品使用流程。
+- 检查：构建后运行 `bash tools/blockhit-test/run.sh`，覆盖反击窗口、确认连击/空点、无敌帧、
+  单次挥击去重、真实物品使用、生命周期清理、手动接管及参数保存；测试不连接服务器。
+
+### 击败嘲讽
+
+- 位于 **Personalization → Taunt**，开启 **Kill taunt** 后，击败玩家会在聊天发送指定文字；
+  默认关闭，文字默认 `gg`，点击输入框编辑、Enter 保存，支持中文及 `{target}`（对方名字）。
+  按 1.8.9 聊天限制保留最多 100 个 UTF-16 字符，空白文字不发送。
+- 根据服务器死亡消息确认本地击杀：支持原版 `death.attack.*` 翻译组件及明确的中英文击杀/虚空消息，
+  核对击杀者是自己、受害者是近期世界/Tab 列表内的玩家。普通聊天、自己死亡、别人击杀、
+  实体卸载或消失都不会触发。服务器关闭死亡消息或使用其他自定义格式时不会触发。
+- 同一玩家 40 tick 内的重复死亡公告只发送一次；连续击败不同玩家会排队，每 20 tick 最多发送一条。
+  切世界、重生、断线或关闭开关会清空待发送消息，避免下局补发。
+- 文字和开关随配置保存至 `personalization.taunt.text` / `personalization.taunt.enabled`，支持 Config profile。
+  构建后运行 `bash tools/taunt-test/run.sh` 检查归属、去重、连续击败、生命周期和 Unicode 保存；测试不连接服务器。
+
 ### MoveDisabler 背包/箱子界面移动
 
 - 从上一级 `MoveDisabler/MoveDisabler.java` 移植，位于 ClickGUI 的 **Misc** 分类，
@@ -1716,6 +1774,8 @@ public final class Example extends Module {
 | `module.combat.Criticals` | `combat.criticals` |
 | `module.render.Esp` | `render.esp` |
 | `module.render.MotionBlur` | `render.motionblur` |
+| `module.render.Projectiles` | `render.projectiles` |
+| `module.render.NoHurtCam` | `render.nohurtcam` |
 | `module.tools.Logger` | `tools.logger` |
 
 需要自定义时用 `super("Name", "explicit.key")` 显式指定。
