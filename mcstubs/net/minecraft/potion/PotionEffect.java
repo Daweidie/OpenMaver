@@ -9,4 +9,5 @@ public class PotionEffect {
     public int getPotionID() { return 0; }
     public int getDuration() { return 0; }
     public int getAmplifier() { return 0; }
+    public boolean getIsPotionDurationMax() { return false; }
 }

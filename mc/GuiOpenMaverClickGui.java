@@ -1890,7 +1890,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
         int bodyY = y + 24;
         if ("color".equals(personalizationSection)) {
-            micro(font, "CLICKGUI THEME", innerX + 2, bodyY + 2, fade(COL_DIM, alpha));
+            micro(font, "Clickgui theme", innerX + 2, bodyY + 2, fade(COL_DIM, alpha));
             int swatchY = bodyY + 15;
             for (int i = 0; i < THEME_PRESETS.length; i++) {
                 int sx = innerX + 3 + i * 19;
@@ -1909,7 +1909,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             roundRect(innerX, fieldY, innerW, 20, 5,
                     fade(active ? personalizationInputError ? 0xFFE5826E
                             : MaverPersonalization.getColor() : 0x302A2D36, alpha));
-            String value = active ? personalizationInput : "#RRGGBB  ·  click to edit";
+            String value = active ? personalizationInput : "#RRGGBB  ·  Click to edit";
             micro(font, ellipsizeMicro(font, value, innerW - 12), innerX + 6, fieldY + 7,
                     fade(active ? MaverPersonalization.getTextColor() : COL_ROW_TEXT, alpha));
             column.hits.add(Hit.action("themeInput", null, innerX, fieldY, innerW, 20));
@@ -1921,7 +1921,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             drawUtilityButton(font, column, "themeReset", null, innerX, fieldY + 23, innerW, 16,
                     "Reset theme", "Restore the default violet theme", false, false, alpha, hoverable);
         } else if ("text".equals(personalizationSection)) {
-            micro(font, "FUNCTION BAR LABEL", innerX + 2, bodyY + 4, fade(COL_DIM, alpha));
+            micro(font, "Function bar label", innerX + 2, bodyY + 4, fade(COL_DIM, alpha));
             int fieldY = bodyY + 20;
             boolean active = "text".equals(personalizationField);
             roundRect(innerX, fieldY, innerW, 23, 6,
@@ -1947,9 +1947,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                     x, bodyY + 18, alpha, hoverable, "Cycle cover / contain / stretch");
             drawUtilityRow(font, column, "source", "Source", MaverWallpaper.getDisplayName(),
                     x, bodyY + 36, alpha, hoverable, "Current: " + MaverWallpaper.getDisplayName() + " · click to reset");
-            drawUtilityRow(font, column, "wallpaperFolder", "Folder", "OPEN",
+            drawUtilityRow(font, column, "wallpaperFolder", "Folder", "Open",
                     x, bodyY + 54, alpha, hoverable, "Open wallpapers folder and refresh files");
-            micro(font, "WALLPAPERS", x + 8, bodyY + 76, fade(COL_DIM, alpha));
+            micro(font, "Wallpapers", x + 8, bodyY + 76, fade(COL_DIM, alpha));
             List<File> files = MaverWallpaper.listWallpapers();
             int rowY = bodyY + 84;
         if (files.isEmpty()) {
@@ -1964,7 +1964,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
         String issue = MaverWallpaper.getStatusHint();
         drawUtilityStatus(font, column, x + 8, rowY + 6, column.width - 16,
-                issue == null || issue.isEmpty() ? "PNG / JPG / GIF / WEBP / MP4" : issue,
+                issue == null || issue.isEmpty() ? "Png / jpg / gif / webp / mp4" : issue,
                 issue != null && !issue.isEmpty(), alpha, hoverable);
         }
     }

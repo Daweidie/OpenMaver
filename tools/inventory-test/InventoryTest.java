@@ -21,6 +21,7 @@ public final class InventoryTest {
         protectionEnchantBeatsPlainDurability();
         wrongItemInArmorSlotIsReplaced();
         extrasAreDroppedRespectingKeepCount();
+        armorAndBlocksUseCompactDefaults();
         dropToolsKeepsOnePerFamily();
         tidyInventoryIsLeftAlone();
         fullInventoryDoesNotLoop();
@@ -78,8 +79,8 @@ public final class InventoryTest {
         assertEquals("胸甲没有被换差", "chestplateiron", inv.nameAt(6));
         assertEquals("护腿保持铁", "leggingsiron", inv.nameAt(7));
         assertEquals("靴子穿上钻石", "bootsdiamond", inv.nameAt(8));
-        assertEquals("旧铁头盔留在背包", 1, countName(inv, "helmetiron"));
-        assertEquals("皮革胸甲留在背包", 1, countName(inv, "chestplatecloth"));
+        assertEquals("多余旧铁头盔被丢弃", 0, countName(inv, "helmetiron"));
+        assertEquals("多余皮革胸甲被丢弃", 0, countName(inv, "chestplatecloth"));
         assertTrue("光标空", inv.cursor == null);
     }
 
@@ -92,7 +93,7 @@ public final class InventoryTest {
         run(inv);
 
         assertEquals("换上附魔那件（damage 0）", "helmetleather#0", inv.key(5));
-        assertEquals("两件都还在（备用 1 件）", 2, countName(inv, "helmetleather"));
+        assertEquals("默认不保留多余备用盔甲", 1, countName(inv, "helmetleather"));
     }
 
     private static void wrongItemInArmorSlotIsReplaced() {
@@ -127,6 +128,22 @@ public final class InventoryTest {
         assertEquals("KEEP WEAPONS = 2：留两把", 2, swordCount(two));
         assertEquals("石头剑被丢掉", 0, countName(two, "swordstone"));
         assertEquals("钻石剑进快捷栏 1", "sworddiamond#0", two.hotbarKey(0));
+    }
+
+    private static void armorAndBlocksUseCompactDefaults() {
+        Fake inv = new Fake();
+        inv.put(5, item("item.helmetIron", 0, 1));
+        inv.put(20, item("item.helmetLeather", 0, 1));
+        inv.put(21, item("item.helmetDiamond", 0, 1));
+        inv.put(22, item("tile.cobblestone", 0, 64));
+        inv.put(23, item("tile.dirt", 0, 64));
+        inv.put(24, item("tile.sand", 0, 64));
+
+        run(inv);
+
+        assertEquals("默认只保留身上的头盔，备用盔甲丢弃", 1, countArmor(inv, InventoryRules.ARMOR_HELMET));
+        assertEquals("方块总共只保留两组", 2, countKind(inv, InventoryRules.KIND_BLOCK));
+        assertEquals("评分相同时按名称丢弃 cobblestone", 0, countName(inv, "cobblestone"));
     }
 
     private static void dropToolsKeepsOnePerFamily() {
@@ -361,6 +378,7 @@ public final class InventoryTest {
             state.dropTools = template.dropTools;
             state.keepWeapons = template.keepWeapons;
             state.spareArmor = template.spareArmor;
+            state.keepBlockStacks = template.keepBlockStacks;
             state.keepTools = template.keepTools;
             InventoryPlanner.Action action = InventoryPlanner.next(state);
             if (action == null) {
@@ -409,6 +427,23 @@ public final class InventoryTest {
             if (inv.slots[i] != null && inv.slots[i].name.contains(needle)) {
                 count++;
             }
+        }
+        return count;
+    }
+
+    private static int countArmor(Fake inv, int armorType) {
+        int count = 0;
+        for (int i = 0; i < inv.slots.length; i++) {
+            if (inv.slots[i] != null && inv.slots[i].kind == InventoryRules.KIND_ARMOR
+                    && inv.slots[i].armorType == armorType) count++;
+        }
+        return count;
+    }
+
+    private static int countKind(Fake inv, int kind) {
+        int count = 0;
+        for (int i = 0; i < inv.slots.length; i++) {
+            if (inv.slots[i] != null && inv.slots[i].kind == kind) count++;
         }
         return count;
     }

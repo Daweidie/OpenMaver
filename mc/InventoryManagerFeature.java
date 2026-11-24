@@ -59,7 +59,7 @@ public final class InventoryManagerFeature {
     private static boolean dropExtras = true;
     private static boolean dropTools = false;
     private static int keepWeapons = 1;
-    private static int spareArmor = 1;
+    private static int spareArmor = 0;
     private static int keepTools = 1;
     private static boolean humanize = true;
     private static int clickGapTicks = 2;
@@ -214,6 +214,7 @@ public final class InventoryManagerFeature {
         state.dropTools = dropTools;
         state.keepWeapons = Math.max(1, keepWeapons);
         state.spareArmor = Math.max(0, spareArmor);
+        state.keepBlockStacks = 2;
         state.keepTools = Math.max(1, keepTools);
         // InventoryPlayer.mainInventory：0..8 快捷栏，9..35 背包主区。
         for (int i = 0; i < 36; i++) {
@@ -505,7 +506,7 @@ public final class InventoryManagerFeature {
         dropExtras = readBoolean(values, "inventory.dropExtras", true);
         dropTools = readBoolean(values, "inventory.dropTools", false);
         keepWeapons = clamp(readInt(values, "inventory.keepWeapons", 1), 1, 4);
-        spareArmor = clamp(readInt(values, "inventory.spareArmor", 1), 0, 3);
+        spareArmor = clamp(readInt(values, "inventory.spareArmor", 0), 0, 3);
         keepTools = clamp(readInt(values, "inventory.keepTools", 1), 1, 3);
         humanize = readBoolean(values, "inventory.humanize", true);
         clickGapTicks = clamp(readInt(values, "inventory.clickGapTicks", 2), 1, 10);

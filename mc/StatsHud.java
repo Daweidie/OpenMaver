@@ -92,6 +92,14 @@ public final class StatsHud {
         return isModuleEnabled("FPS") || isModuleEnabled("CPS");
     }
 
+    /** Bottom of the visible statistics, used to keep effect cards clear of the keys. */
+    public static int bottom() {
+        int y = MARGIN;
+        if (isModuleEnabled("FPS")) y += PANEL_H + GAP;
+        if (isModuleEnabled("CPS")) y += KEYS_BLOCK_H + GAP;
+        return y;
+    }
+
     /**
      * 绘制左上角统计 HUD。由 {@link OpenMaverHud} 在
      * {@code RenderGameOverlayEvent.Post} 中调用，此时背景快照已经抓取完成。

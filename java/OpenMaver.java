@@ -20,6 +20,7 @@ import module.player.FastPlace;
 import module.player.InventoryManager;
 import module.render.ChestEsp;
 import module.render.Cps;
+import module.render.EffectTag;
 import module.render.Fps;
 import module.render.FullBright;
 import module.render.MotionBlur;
@@ -453,6 +454,7 @@ public final class OpenMaver {
 
         // 渲染模块：Target HUD 目标信息面板（配置路径 render.targethud；MC 侧绘制在 mc/TargetHud）
         ModuleManager.register(new TargetHud());
+        ModuleManager.register(new EffectTag());
 
         // 渲染模块：FullBright 全亮/夜视（配置路径 render.fullbright；MC 侧逻辑在 OpenMaverFeatures）
         ModuleManager.register(new FullBright());

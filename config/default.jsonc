@@ -129,6 +129,10 @@
       "enabled": false,        // 全亮/夜视：默认关闭（按 Y 切换）
       "key": "Y"               // 绑定键位
     },
+    "effecttag": {
+      "enabled": true,         // 左侧药水效果卡片：图标、名称、等级和剩余时间
+      "key": ""
+    },
     "fps": {
       "enabled": true,         // 左上角 FPS 显示：默认开启
       "key": ""                // 可选键位；留空表示不绑定

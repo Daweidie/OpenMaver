@@ -123,7 +123,9 @@ public final class InventoryPlanner {
         /** 武器保留把数。 */
         public int keepWeapons = 1;
         /** 每种盔甲保留的备用件数（身上的不算）。 */
-        public int spareArmor = 1;
+        public int spareArmor = 0;
+        /** 所有方块总共保留的堆叠数。 */
+        public int keepBlockStacks = 2;
         /** 每种工具家族保留把数。 */
         public int keepTools = 1;
 
@@ -148,6 +150,7 @@ public final class InventoryPlanner {
             copy.dropTools = dropTools;
             copy.keepWeapons = keepWeapons;
             copy.spareArmor = spareArmor;
+            copy.keepBlockStacks = keepBlockStacks;
             copy.keepTools = keepTools;
             return copy;
         }
@@ -277,6 +280,11 @@ public final class InventoryPlanner {
         if (weapons.size() > state.keepWeapons) {
             Collections.sort(weapons, new ScoreOrder(state, true));
             return new Action(DROP, weapons.get(0).intValue(), 0, 0, false, true);
+        }
+        List<Integer> blocks = collect(state, InventoryRules.KIND_BLOCK, -1);
+        if (blocks.size() > Math.max(0, state.keepBlockStacks)) {
+            Collections.sort(blocks, new ScoreOrder(state, true));
+            return new Action(DROP, blocks.get(0).intValue(), 0, 0, false, true);
         }
         for (int type = InventoryRules.ARMOR_HELMET; type <= InventoryRules.ARMOR_BOOTS; type++) {
             List<Integer> pieces = collect(state, InventoryRules.KIND_ARMOR, type);

@@ -1,5 +1,7 @@
 package org.lwjgl.opengl;
 public class GL11 {
+    public static final int GL_ALL_ATTRIB_BITS = 0x000FFFFF;
+    public static final int GL_MATRIX_MODE = 0x0BA0;
     public static final int GL_BLEND = 3042;
     public static final int GL_TEXTURE_2D = 3553;
     public static final int GL_TEXTURE_BINDING_2D = 0x8069;

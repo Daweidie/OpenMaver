@@ -53,7 +53,12 @@ public final class NameTagFeature {
     public static void endSkinPass() { skinPassDepth = Math.max(0, skinPassDepth - 1); }
 
     public static void onRenderName(Minecraft mc, RenderLivingEvent.Specials.Pre<?> event) {
-        if (failed || mc == null || event == null || event.isCanceled()) return;
+        if (mc == null || event == null || event.isCanceled()) return;
+        if (skinPassDepth > 0) {
+            event.setCanceled(true);
+            return;
+        }
+        if (failed) return;
         Module module = ModuleManager.getModule("NameTag");
         if (module == null || !module.isEnabled()) return;
         try {

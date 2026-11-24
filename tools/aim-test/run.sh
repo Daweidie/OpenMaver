@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Aim Assist 落点抖动的纯逻辑验证。
+# Aim Assist 目标过滤、锁定更新与落点抖动验证。
 #
 # 用法：tools/aim-test/run.sh
 # 前置：先构建一次（需要 build/mc-classes 与 build/mcstubs-classes）
@@ -17,5 +17,7 @@ fi
 
 classpath="build/mc-classes:build/java-classes:build/mcstubs-classes"
 mkdir -p "$out_dir"
-javac -encoding UTF-8 -cp "$classpath" -d "$out_dir" tools/aim-test/AimJitterTest.java
+javac -encoding UTF-8 -cp "$classpath" -d "$out_dir" \
+    tools/aim-test/AimJitterTest.java tools/aim-test/AimTargetTest.java
+java -Djava.awt.headless=true -cp "$out_dir:$classpath" AimTargetTest
 java -cp "$out_dir:$classpath" AimJitterTest

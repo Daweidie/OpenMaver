@@ -216,10 +216,16 @@ public final class OpenMaverHud {
                     resolution.getScaledHeight(), resolution.getScaleFactor());
             if (!entries.isEmpty() || !TOASTS.isEmpty() || !LIST_ENTRIES.isEmpty()
                     || ScaffoldHud.isEnabled()
+                    || EffectTagHud.isEnabled()
                     || GodBridgeHud.isEnabled()) {
                 GuiBlur.capture();
             }
             StatsHud.render(font, event.resolution, now);
+            try {
+                EffectTagHud.render(font, event.resolution);
+            } catch (Throwable effectError) {
+                System.err.println("[OpenMaver] Effect Tag render failed: " + effectError);
+            }
             try {
                 TargetHud.render(font, event.resolution, now);
             } catch (Throwable targetError) {

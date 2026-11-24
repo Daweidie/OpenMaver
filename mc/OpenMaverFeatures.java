@@ -5,9 +5,11 @@ import com.mojang.authlib.GameProfile;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityOtherPlayerMP;
 import net.minecraft.client.multiplayer.WorldClient;
+import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.entity.RenderManager;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
+import net.minecraft.entity.item.EntityArmorStand;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.potion.PotionEffect;
 import net.minecraft.util.AxisAlignedBB;
@@ -4148,18 +4150,6 @@ public final class OpenMaverFeatures {
         double cameraZ = number(renderManager, "viewerPosZ", "field_78723_d");
         double rangeSq = playerXrayRange * playerXrayRange;
 
-        GlColor.restore();
-        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_LINE_BIT
-                | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_TEXTURE_BIT
-                | GL11.GL_LIGHTING_BIT | GL11.GL_COLOR_BUFFER_BIT);
-        GL11.glEnable(GL11.GL_BLEND);
-        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-        GL11.glDisable(GL11.GL_TEXTURE_2D);
-        GL11.glDisable(GL11.GL_LIGHTING);
-        GL11.glDisable(GL11.GL_DEPTH_TEST);
-        GL11.glDisable(GL11.GL_CULL_FACE);
-        GL11.glEnable(GL11.GL_LINE_SMOOTH);
-
         for (int i = 0; i < entities.size(); i++) {
             Object candidate = entities.get(i);
             if (!(candidate instanceof EntityPlayer) || candidate == self) {
@@ -4181,19 +4171,25 @@ public final class OpenMaverFeatures {
 
             // 再画 1.5px 实线描边，围在皮肤模型外侧。
             GlColor.restore();
-            GL11.glDisable(GL11.GL_TEXTURE_2D);
-            GL11.glDisable(GL11.GL_LIGHTING);
-            GL11.glDisable(GL11.GL_DEPTH_TEST);
-            GL11.glEnable(GL11.GL_BLEND);
-            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            GL11.glEnable(GL11.GL_LINE_SMOOTH);
-            GlColor.set(rgb[0], rgb[1], rgb[2], 0.90F);
-            GL11.glLineWidth(1.5F);
-            drawBoxOutline(box, cameraX, cameraY, cameraZ);
+            GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_LINE_BIT
+                    | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+            try {
+                GL11.glDisable(GL11.GL_TEXTURE_2D);
+                GL11.glDisable(GL11.GL_LIGHTING);
+                GL11.glDisable(GL11.GL_DEPTH_TEST);
+                GL11.glDepthMask(false);
+                GL11.glDisable(GL11.GL_CULL_FACE);
+                GL11.glEnable(GL11.GL_BLEND);
+                GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                GL11.glEnable(GL11.GL_LINE_SMOOTH);
+                GlColor.set(rgb[0], rgb[1], rgb[2], 0.90F);
+                GL11.glLineWidth(1.5F);
+                drawBoxOutline(box, cameraX, cameraY, cameraZ);
+            } finally {
+                GL11.glPopAttrib();
+                GlColor.restore();
+            }
         }
-
-        GL11.glPopAttrib();
-        GlColor.restore();
     }
 
     /**
@@ -4208,52 +4204,40 @@ public final class OpenMaverFeatures {
      *   <li>正常上色：用 {@code GL_LEQUAL} 和第一遍留下的模型深度比较，于是墙体
      *       挡不住玩家，玩家模型内部又保持正确的部件遮挡关系。</li>
      * </ol>
-     * 渲染器的状态全部包在 push/pop 中，不影响后续 HUD。
+     * 同时恢复 GL 与 GlStateManager 的缓存，包括多纹理绑定、光照坐标和颜色。
      */
     private static void renderPlayerSkin(RenderManager renderManager, EntityPlayer player,
             float partialTicks) {
-        GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_COLOR_BUFFER_BIT
-                | GL11.GL_DEPTH_BUFFER_BIT | GL11.GL_TEXTURE_BIT
-                | GL11.GL_LIGHTING_BIT);
-        GlColor.restore();
+        try (ModelRenderState ignored = new ModelRenderState()) {
+            GlColor.restore();
+            NameTagFeature.beginSkinPass();
+            try {
+                // Use the cached APIs while invoking vanilla's renderer. Raw GL calls
+                // here let it skip required state changes based on a stale cache.
+                GlStateManager.enableDepth();
+                GlStateManager.depthMask(true);
+                GlStateManager.enableAlpha();
+                GlStateManager.alphaFunc(GL11.GL_GREATER, 0.1F);
+                GlStateManager.enableBlend();
+                GlStateManager.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                GlStateManager.enableTexture2D();
+                GlStateManager.enableCull();
 
-        // renderEntitySimple 末尾会绘制名字标签，而原版渲染器本帧已经画过一次；
-        // 透视 pass 再画就会出现重影。临时清空自定义名，画完立刻恢复。
-        Object nameValue = call(player, "getCustomNameTag", "func_95999_t", "aM");
-        String savedName = nameValue instanceof String ? (String) nameValue : "";
-        if (savedName.length() > 0) {
-            player.setCustomNameTag("");
-        }
-        NameTagFeature.beginSkinPass();
-        try {
-            GL11.glEnable(GL11.GL_DEPTH_TEST);
-            GL11.glDepthMask(true);
-            GL11.glEnable(GL11.GL_ALPHA_TEST);
-            GL11.glAlphaFunc(GL11.GL_GREATER, 0.1F);
-            GL11.glEnable(GL11.GL_BLEND);
-            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            GL11.glEnable(GL11.GL_TEXTURE_2D);
-            GL11.glEnable(GL11.GL_CULL_FACE);
+                // Pass 1: 只写深度（GL_ALWAYS 忽略墙体深度）。
+                GlStateManager.depthFunc(GL11.GL_ALWAYS);
+                GlStateManager.colorMask(false, false, false, false);
+                call(renderManager, "renderEntitySimple", "func_147937_a", null,
+                        player, Float.valueOf(partialTicks));
 
-            // Pass 1: 只写深度（GL_ALWAYS 忽略墙体深度，仍保留模型自身深度）。
-            GL11.glDepthFunc(GL11.GL_ALWAYS);
-            GL11.glColorMask(false, false, false, false);
-            call(renderManager, "renderEntitySimple", "func_147937_a", null,
-                    player, Float.valueOf(partialTicks));
-
-            // Pass 2: 正常上色，LEQUAL 与模型自身深度比较得到正确的自我遮挡。
-            GL11.glDepthFunc(GL11.GL_LEQUAL);
-            GL11.glColorMask(true, true, true, true);
-            call(renderManager, "renderEntitySimple", "func_147937_a", null,
-                    player, Float.valueOf(partialTicks));
-        } finally {
-            NameTagFeature.endSkinPass();
-            if (savedName.length() > 0) {
-                player.setCustomNameTag(savedName);
+                // Pass 2: LEQUAL 与第一遍模型深度比较。
+                GlStateManager.depthFunc(GL11.GL_LEQUAL);
+                GlStateManager.colorMask(true, true, true, true);
+                call(renderManager, "renderEntitySimple", "func_147937_a", null,
+                        player, Float.valueOf(partialTicks));
+            } finally {
+                NameTagFeature.endSkinPass();
             }
         }
-        GL11.glPopAttrib();
-        GlColor.restore();
     }
 
     private static float[] xrayColor(EntityLivingBase player) {
@@ -4338,13 +4322,20 @@ public final class OpenMaverFeatures {
         aimCachedPlayer = player;
         aimCachedGcd = aimGcdEnabled ? (float) mouseGcd(mc) : 0.0F;
 
-        // 锁定目标只在死亡、离开范围、切换世界/玩家时失效。
+        List<?> entities = (List<?>) read(world, "loadedEntityList", "field_72996_f", List.class);
+        if (entities == null) {
+            clearAimLock();
+            aimHasTarget = false;
+            return;
+        }
+
+        // 锁定期间仍检查可见性和实体是否在场，避免穿过箱子追踪或粘住已移除的实体。
         if (aimLockedTarget != null
                 && (aimLockedWorld != world || aimLockedPlayer != player
-                        || !alive(aimLockedTarget)
-                        || AntiBotFeature.isBot(aimLockedTarget)
+                        || !entities.contains(aimLockedTarget)
                         || distance(player, aimLockedTarget)
-                                >= (double) aimRange * aimRange)) {
+                                >= (double) aimRange * aimRange
+                        || !isValidAimTarget(player, aimLockedTarget))) {
             clearAimLock();
         }
 
@@ -4371,11 +4362,6 @@ public final class OpenMaverFeatures {
             clearAimLock();
         }
 
-        List<?> entities = (List<?>) read(world, "loadedEntityList", "field_72996_f", List.class);
-        if (entities == null) {
-            aimHasTarget = false;
-            return;
-        }
         EntityLivingBase nearest = null;
         double nearestDistance = (double) aimRange * aimRange;
         double yaw = number(player, "rotationYaw", "field_70177_z");
@@ -4388,11 +4374,8 @@ public final class OpenMaverFeatures {
                 continue;
             }
             EntityLivingBase living = (EntityLivingBase) candidate;
-            if (!alive(living) || AntiBotFeature.isBot(living)) {
-                continue;
-            }
             double distance = distance(player, living);
-            if (distance >= nearestDistance) {
+            if (distance >= nearestDistance || !isValidAimTarget(player, living)) {
                 continue;
             }
             if (!computeAimAngles(living, playerX, playerY, playerZ,
@@ -4432,6 +4415,16 @@ public final class OpenMaverFeatures {
         aimCachedYaw = locked[0];
         aimCachedPitch = locked[1];
         aimHasTarget = true;
+    }
+
+    /** 新选敌与持续锁定共用过滤，盔甲座（含箱子浮空文字）不能成为战斗目标。 */
+    private static boolean isValidAimTarget(EntityLivingBase player, EntityLivingBase candidate) {
+        return candidate != null && candidate != player
+                && !(candidate instanceof EntityArmorStand)
+                && alive(candidate) && !AntiBotFeature.isBot(candidate)
+                && (!(player instanceof EntityPlayer)
+                        || !candidate.isInvisibleToPlayer((EntityPlayer) player))
+                && player.canEntityBeSeen(candidate);
     }
 
     /**

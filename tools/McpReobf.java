@@ -118,6 +118,17 @@ public final class McpReobf {
         m(LIVING, "isPotionActive", "func_82165_m");
         m(LIVING, "addPotionEffect", "func_70690_d");
         m(LIVING, "removePotionEffect", "func_82170_o");
+        m(LIVING, "getActivePotionEffects", "func_70651_bq");
+        m("net/minecraft/potion/PotionEffect", "getPotionID", "func_76456_a");
+        m("net/minecraft/potion/PotionEffect", "getDuration", "func_76459_b");
+        m("net/minecraft/potion/PotionEffect", "getAmplifier", "func_76458_c");
+        m("net/minecraft/potion/PotionEffect", "getIsPotionDurationMax", "func_100011_g");
+        f("net/minecraft/potion/Potion", "potionTypes", "field_76425_a");
+        m("net/minecraft/potion/Potion", "getName", "func_76393_a");
+        m("net/minecraft/potion/Potion", "getLiquidColor", "func_76401_j");
+        m("net/minecraft/potion/Potion", "hasStatusIcon", "func_76400_d");
+        m("net/minecraft/potion/Potion", "getStatusIconIndex", "func_76392_e");
+        m("net/minecraft/client/resources/I18n", "format", "func_135052_a");
         m(MC, "getTextureManager", "func_110434_K");
         m(ACP, "getLocationSkin", "func_110311_f");
         m(TM, "bindTexture", "func_110577_a");
@@ -128,6 +139,16 @@ public final class McpReobf {
         m(STACK, "getItemDamage", "func_77960_j");
         m(GSM, "color", "func_179131_c");
         m(GSM, "bindTexture", "func_179144_i");
+        m(GSM, "enableDepth", "func_179126_j");
+        m(GSM, "depthMask", "func_179132_a");
+        m(GSM, "depthFunc", "func_179143_c");
+        m(GSM, "enableAlpha", "func_179141_d");
+        m(GSM, "alphaFunc", "func_179092_a");
+        m(GSM, "enableBlend", "func_179147_l");
+        m(GSM, "blendFunc", "func_179112_b");
+        m(GSM, "enableTexture2D", "func_179098_w");
+        m(GSM, "enableCull", "func_179089_o");
+        m(GSM, "colorMask", "func_179135_a");
 
         f(MC, "currentScreen", "field_71462_r");
         f(MC, "renderManager", "field_175616_W");

@@ -49,14 +49,14 @@ public final class MaverWallpaper {
     public static final int MODE_STATIC = 1;
     public static final int MODE_DYNAMIC = 2;
 
-    public static final String[] MODE_NAMES = {"PANORAMA", "STATIC", "DYNAMIC"};
+    public static final String[] MODE_NAMES = {"Panorama", "Static", "Dynamic"};
     private static final String[] MODE_KEYS = {"panorama", "static", "dynamic"};
 
     public static final int FIT_COVER = 0;
     public static final int FIT_CONTAIN = 1;
     public static final int FIT_STRETCH = 2;
 
-    public static final String[] FIT_NAMES = {"COVER", "CONTAIN", "STRETCH"};
+    public static final String[] FIT_NAMES = {"Cover", "Contain", "Stretch"};
     private static final String[] FIT_KEYS = {"cover", "contain", "stretch"};
 
     private static final String[] MEDIA_EXTENSIONS = {
@@ -255,11 +255,11 @@ public final class MaverWallpaper {
         return path;
     }
 
-    /** 当前选中文件的显示名；没有文件时返回 MINECRAFT。 */
+    /** 当前选中文件的显示名；没有文件时返回 Minecraft。 */
     public static String getDisplayName() {
         ensureConfigLoaded();
         if (path.isEmpty()) {
-            return "MINECRAFT";
+            return "Minecraft";
         }
         File file = new File(path);
         String name = file.getName();
@@ -398,9 +398,9 @@ public final class MaverWallpaper {
             return null;
         }
         if (MaverVideo.isVideoFile(new File(path).getName())) {
-            return "VIDEO NEEDS FFMPEG";
+            return "Video needs ffmpeg";
         }
-        return "CAN'T DECODE · NEEDS FFMPEG";
+        return "Can't decode · needs ffmpeg";
     }
 
     /** 文件名是否是视频（MP4 / M4V / MOV / WEBM / MKV）。 */

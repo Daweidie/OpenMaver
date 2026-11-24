@@ -4,6 +4,9 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.potion.PotionEffect;
 
 public class EntityLivingBase extends Entity {
+    public java.util.Collection<PotionEffect> getActivePotionEffects() {
+        return java.util.Collections.emptyList();
+    }
     public float getEyeHeight() { return 0.0F; }
     public float getHealth() { return 20.0F; }
     public void setHealth(float health) { }
