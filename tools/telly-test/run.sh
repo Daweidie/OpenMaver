@@ -9,6 +9,9 @@ mkdir -p "$out_dir"
 mapfile -t sources < <(rg --files tools/telly-test -g '*.java')
 javac --release 8 -Xlint:-options -encoding UTF-8 -cp "$classpath" -d "$out_dir" "${sources[@]}" \
     tools/chest-test/support/net/minecraft/util/BlockPos.java \
+    tools/movedisabler-test/support/net/minecraft/util/MovementInputFromOptions.java \
     tools/movedisabler-test/support/org/lwjgl/input/Keyboard.java \
     tools/attackreduce-test/org/lwjgl/input/Mouse.java
 java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" TellyBehaviorTest
+java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" TellyMotionTest
+java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" SneakMovementTest

@@ -596,9 +596,8 @@ IO 失败只记录一次并自动停用 debug。
   - 静默转向在 `ScaffoldMovementInput`（vanilla `updatePlayerMoveState()` 之后、
     `moveFlying()` 之前）写 `rotationYaw/Pitch`，`ClientTickEvent.END` 恢复相机；
     第一人称不动，F5 身体保留服务端最后收到的 aim。
-  - MoveFix 在同一个 hook 里把输入吸附到相对 aim 的 8 个整数方向，并把
-    `forward` 等比放大到 0.8，避免原版随后关掉冲刺（否则 Grim `Simulation` 会看到
-    任意角度的位移）。
+  - MoveFix 在同一个 hook 里把输入吸附到相对 aim 的 8 个整数方向，潜行时保留
+    原版的 0.3 倍输入，冲刺状态按原版规则决定。
   - `delayPackets`（OpenZen 在 clutch 分支拆 tick）没有等价注入点，只保留语义：
     hold aim + `rotationDelay` 计数 + 到期重试，不再额外发 C05。
   - 空闲时（没有目标格）aim 回落到相机角度，避免 OpenZen 那份 `(0,0)` 让服务端
@@ -1128,6 +1127,8 @@ IO 失败只记录一次并自动停用 debug。
   - `PING SPOOF`：`reach.pingSpoof`，0~400 ms，默认 `0`（关闭）。把事务确认压后发出，
     拉长服务端「目标可能位置」的窗口；`SPOOF JITTER`（`reach.pingJitter`，0~150 ms，
     默认 `40`）给每次延迟加随机量，避免固定间隔。只影响出站 C0F，不改任何位置包。
+    仅在 Reach 启用时生效；到期回执在 tick 动作之前释放，传送/重生处理前先释放
+    旧回执，处理期间暂停延迟，避免传送确认越过事务边界。
     开启后本地复核也会把目标最近 `1 + spoof/50` tick 的位置并进服务端盒子
     （`serverBoxFor`），否则本地 3.00 上限会先把这类攻击挡掉、spoof 等于没开。
     收益取决于目标位移：站着不动的目标并集不增长，收益为 0。

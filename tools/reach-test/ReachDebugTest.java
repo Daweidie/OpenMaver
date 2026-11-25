@@ -198,8 +198,8 @@ public final class ReachDebugTest {
         check("range widget keeps the low handle under the high handle",
                 gui.contains("binding.set(Math.min(stepped(percent, 0.0D), bindingHigh.get()));"));
         check("range handles are drawn as opposing triangles",
-                gui.contains("drawRangeHandle(lowX, trackY + 2, true, accent, hi)")
-                        && gui.contains("drawRangeHandle(highX2, trackY + 2, false, accent, hi)"));
+                gui.contains("fillTriangle(lowX + 4, trackY + 1, lowX, trackY - 2, lowX, trackY + 4,")
+                        && gui.contains("fillTriangle(highX - 4, trackY + 1, highX, trackY - 2, highX, trackY + 4,"));
     }
 
     private static void rateLimit() {

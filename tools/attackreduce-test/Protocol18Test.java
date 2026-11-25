@@ -21,6 +21,66 @@ final class Protocol18Test {
     }
     static void run() throws Exception {
         nativeAttack(); airResetPhysics(); autoClickerModes(); criticalSprint(); replayBoundaries(); outboundFifo(); repeatedVelocity(); sounds();
+        transactionCorrections();
+    }
+
+    /** Both production hooks: Netty S08 -> main replay -> async C06, in either install order. */
+    static void transactionCorrections() throws Exception {
+        module.combat.Reach reach = new module.combat.Reach();
+        module.ModuleManager.register(reach);
+        reach.setEnabled(true);
+        OpenMaverFeatures.setReachPingSpoof(400);
+        OpenMaverFeatures.setReachPingJitter(0);
+        try {
+            for (int mode = 0; mode < 3; mode++) for (boolean txFirst : new boolean[] {false, true})
+                for (boolean holdMoves : new boolean[] {false, true}) {
+                    // NoXZ intentionally never owns the outgoing movement queue.
+                    if (holdMoves && mode == AttackReduceFeature.MODE_NOXZ) continue;
+                    try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(mode)) {
+                        net.minecraft.client.Minecraft.instance = f.mc;
+                        if (txFirst) {
+                            ZenAntiKBTest.MODULE.setEnabled(false);
+                            AttackReduceFeature.beforeTick(f.mc);
+                        }
+                        TransactionDelayFeature.installForTest(f.channel.pipeline());
+                        if (txFirst) {
+                            ZenAntiKBTest.MODULE.setEnabled(true);
+                            f.start();
+                        }
+                        outbound(f);
+                        final C03PacketPlayer.C06PacketPlayerPosLook ack = new C03PacketPlayer.C06PacketPlayerPosLook();
+                        java.util.function.Consumer<Object> original = f.player.sendQueue.inbound;
+                        f.player.sendQueue.inbound = p -> {
+                            original.accept(p);
+                            if (p instanceof ZenAntiKBTest.S08PacketPlayerPosLook) {
+                                f.channel.eventLoop().execute(() -> f.channel.writeOutbound(ack));
+                            }
+                        };
+                        C0FPacketConfirmTransaction old = new C0FPacketConfirmTransaction();
+                        f.channel.writeOutbound(old);
+                        check("Reach holds a transaction with Velocity installed", TransactionDelayFeature.heldForTest() == 1);
+                        if (holdMoves) f.holdOutbound();
+                        C03PacketPlayer move = new C03PacketPlayer(1);
+                        f.channel.writeOutbound(move);
+                        Thread network = new Thread(() -> f.channel.writeInbound(new ZenAntiKBTest.S08PacketPlayerPosLook()));
+                        network.start(); network.join();
+                        f.drain();
+                        List<Object> wire = outbound(f);
+                        check("both hooks preserve transaction before C06: mode=" + mode + " txFirst=" + txFirst + " hold=" + holdMoves,
+                                wire.contains(old) && wire.contains(move) && wire.contains(ack)
+                                && wire.indexOf(old) < wire.indexOf(ack) && wire.indexOf(move) < wire.indexOf(ack)
+                                && TransactionDelayFeature.heldForTest() == 0);
+                        C0FPacketConfirmTransaction after = new C0FPacketConfirmTransaction();
+                        f.channel.writeOutbound(after);
+                        check("delay resumes after real Velocity correction replay", TransactionDelayFeature.heldForTest() == 1
+                                && outbound(f).isEmpty());
+                    } finally { TransactionDelayFeature.uninstallForTest(); }
+                }
+        } finally {
+            reach.setEnabled(false);
+            OpenMaverFeatures.setReachPingSpoof(0);
+            OpenMaverFeatures.setReachPingJitter(40);
+        }
     }
     /** 重现 22:15:28/30/32 日志中逐次降低的空中 S12；Y 始终遵循原包与重力。 */
     static void airResetPhysics() {

@@ -50,8 +50,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *       C03 自然带上它；{@code ClientTickEvent.END} 再恢复相机角度（第一人称不变，
  *       F5 身体保留服务端最后收到的 aim）。</li>
  *   <li><b>MoveFix</b>：OpenZen 的 {@code MovementUtil.handleStrafe} 把输入吸附到
- *       相对 aim 的 8 个整数方向。这里在同一个 hook 里做同一件事，另外把输入向量
- *       等比放大到 {@code forward >= 0.8}，避免原版随后关掉冲刺。</li>
+ *       相对 aim 的 8 个整数方向。这里在同一个 hook 里做同一件事，潜行时保留
+ *       原版的 0.3 倍输入；冲刺开关继续由原版按真实输入决定。</li>
  *   <li><b>C08 时序</b>：OpenZen 的 {@code onPreMotion} 在 {@code handleKeybinds} 里，
  *       也就是本 tick 的 C03 之后。OpenMaver 的等价点是“下一 tick 开头”，所以放置
  *       走 {@code pending → flush}：tick N 把 aim 写进 C03，tick N+1 开头用<em>服务端
@@ -127,6 +127,11 @@ public final class ScaffoldFeature {
 
     private static final Settings scaffoldSettings = new Settings();
     private static Settings bridgeSettings = scaffoldSettings;
+
+    /** 独立模块与 Scaffold 的两个 Telly 模式使用同一套放置修复。 */
+    private static boolean isTellyMode() {
+        return bridgeSettings.mode == MODE_TELLY_BRIDGE || bridgeSettings.mode == MODE_OLD_TELLY;
+    }
 
     // ==================================================================
     // 运行状态（与 OpenZen Scaffold 字段一一对应）
@@ -269,12 +274,25 @@ public final class ScaffoldFeature {
         final double hitY;
         final double hitZ;
 
-        Placement(int x, int y, int z, int face) {
+        Placement(int x, int y, int z, int face, double eyeX, double eyeZ) {
             this.x = x;
             this.y = y;
             this.z = z;
             this.face = face;
             double[] hit = randomFacePoint(x, y, z, face);
+            if (isTellyMode() && face >= 2) {
+                // 刚跨过侧面时，横向随机点靠近眼睛投影，避免换面瞬间需要大幅转 yaw。
+                boolean zFace = face <= 3;
+                int alongAxis = zFace ? 0 : 2;
+                int normalAxis = zFace ? 2 : 0;
+                int base = zFace ? x : z;
+                double alongEye = zFace ? eyeX : eyeZ;
+                double normalEye = zFace ? eyeZ : eyeX;
+                double scale = Math.min(1.0D, Math.abs(normalEye - hit[normalAxis]));
+                double offset = hit[alongAxis] - base - 0.5D;
+                hit[alongAxis] = Math.max(base + 0.2D,
+                        Math.min(base + 0.8D, alongEye + offset * scale));
+            }
             this.hitX = hit[0];
             this.hitY = hit[1];
             this.hitZ = hit[2];
@@ -292,9 +310,9 @@ public final class ScaffoldFeature {
         final int z;
         final int face;
         /** C08 里真正发送的 {@code hitVec}：优先取 aim 射线与面平面的交点。 */
-        final double hitX;
-        final double hitY;
-        final double hitZ;
+        double hitX;
+        double hitY;
+        double hitZ;
         float aimYaw;
         float aimPitch;
         float sentYaw;
@@ -603,7 +621,7 @@ public final class ScaffoldFeature {
             updateSneak(mc, player, onGround);
             updateJumpKey(mc, moving, jumpHeld);
 
-            if ((bridgeSettings.mode == MODE_TELLY_BRIDGE || bridgeSettings.mode == MODE_OLD_TELLY) && airTicks < 1 && moving) {
+            if (isTellyMode() && airTicks < 1 && moving) {
                 if (bridgeSettings.mode == MODE_OLD_TELLY) {
                     rotsYaw = playerYaw(player);
                 }
@@ -618,9 +636,12 @@ public final class ScaffoldFeature {
         }
 
         // 7) 用本 tick 的 aim 规划下一 tick 的放置
-        if (!holding && !holdPlaceAim && placement != null && pending == null
+        if (!holding && !holdPlaceAim && placement != null
+                && (pending == null || isTellyMode())
                 && canBuildNow && canPlaceNow(player, world) && shouldBuild(player, world)) {
             Placement target = placement;
+            int retries = pending != null && target.sameTarget(pending.x, pending.y, pending.z, pending.face)
+                    ? pending.retries : 0;
             // C08 的 vec 优先取 aim 射线与这个面的交点，取不到再用目标自带的点。
             double[] hit = rayFacePoint(eyePosition(player), rotsYaw, rotsPitch,
                     target.x, target.y, target.z, target.face);
@@ -628,6 +649,7 @@ public final class ScaffoldFeature {
                 hit = new double[]{target.hitX, target.hitY, target.hitZ};
             }
             pending = new Pending(target, rotsYaw, rotsPitch, hit[0], hit[1], hit[2]);
+            pending.retries = retries;
         }
 
         aimForThisTick();
@@ -673,6 +695,11 @@ public final class ScaffoldFeature {
             eyeX += OpenMaverFeatures.number(player, "motionX", "field_70159_w") * 2.0D;
             eyeY += OpenMaverFeatures.number(player, "motionY", "field_70181_x") * 2.0D;
             eyeZ += OpenMaverFeatures.number(player, "motionZ", "field_70179_y") * 2.0D;
+        } else if (isTellyMode()) {
+            // 下一拍才放置，目标格也要选在移动后的脚下，避免临落地还瞄着已铺好的格。
+            eyeX += OpenMaverFeatures.number(player, "motionX", "field_70159_w");
+            eyeY += OpenMaverFeatures.number(player, "motionY", "field_70181_x");
+            eyeZ += OpenMaverFeatures.number(player, "motionZ", "field_70179_y");
         }
         if (bridgeSettings.clutch && OpenMaverFeatures.number(player, "motionY", "field_70181_x") < 0.01D) {
             double simY = simulateFallY(player, 2)
@@ -751,7 +778,7 @@ public final class ScaffoldFeature {
             // 每 tick 换一处（真人不会连续几 tick 换落点）。
             if (placement == null
                     || !placement.sameTarget(supportX, supportY, supportZ, clickedFace)) {
-                placement = new Placement(supportX, supportY, supportZ, clickedFace);
+                placement = new Placement(supportX, supportY, supportZ, clickedFace, eyeX, eyeZ);
             }
             return true;
         }
@@ -966,6 +993,7 @@ public final class ScaffoldFeature {
      * 保持不变（{@link #isAbovePlaceable} 会复用 {@link #placement}），换目标才重新取点。
      */
     private static float[] rotationToBlock(Object player, Placement target, float partialTicks) {
+        if (isTellyMode()) partialTicks = Math.max(1.0F, partialTicks);
         double px = OpenMaverFeatures.number(player, "posX", "field_70165_t")
                 + OpenMaverFeatures.number(player, "motionX", "field_70159_w") * partialTicks;
         double py = OpenMaverFeatures.number(player, "posY", "field_70163_u")
@@ -976,18 +1004,14 @@ public final class ScaffoldFeature {
         double dx = target.hitX - px;
         double dy = target.hitY - py;
         double dz = target.hitZ - pz;
+        // 点击点本身已随机化；再沿法线加噪声会让贴边时的射线偏出支撑面。
+        if (isTellyMode()) return rotationFromDeltas(dx, dy, dz);
         return rotationFromDeltas(addNoise(dx), addNoise(dy), addNoise(dz));
     }
 
     /** 从眼睛指向随机化的点击点（OpenZen getHitVec + RotationUtil.rotationFromVec）。 */
     private static float[] rotationToHitVec(Object player, Placement target) {
-        double[] hit = hitVec(target);
-        double px = OpenMaverFeatures.number(player, "posX", "field_70165_t");
-        double py = OpenMaverFeatures.number(player, "posY", "field_70163_u")
-                + OpenMaverFeatures.eyeHeight(player);
-        double pz = OpenMaverFeatures.number(player, "posZ", "field_70161_v");
-        return rotationFromDeltas(addNoise(hit[0] - px), addNoise(hit[1] - py),
-                addNoise(hit[2] - pz));
+        return rotationToBlock(player, target, 0.0F);
     }
 
     private static float[] rotationFromDeltas(double dx, double dy, double dz) {
@@ -1039,6 +1063,18 @@ public final class ScaffoldFeature {
         Object mop = rayTraceFrom(world, eyePosition(player), target.sentYaw, target.sentPitch,
                 blockReachDistance());
         boolean rayHit = mopMatches(mop, target.x, target.y, target.z, target.face);
+        if (rayHit && isTellyMode()) {
+            // START 规划后玩家还会移动一次，C08 必须使用移动后的实际交点。
+            double[] hit = rayFacePoint(eyePosition(player), target.sentYaw, target.sentPitch,
+                    target.x, target.y, target.z, target.face);
+            if (hit == null) {
+                rayHit = false;
+            } else {
+                target.hitX = hit[0];
+                target.hitY = hit[1];
+                target.hitZ = hit[2];
+            }
+        }
         int decision = pendingDecision(target.sent, rayHit, target.retries);
         if (decision == PENDING_DROP) {
             OpenMaverDebug.trace("scaffold", "target dropped (sent=" + target.sent
@@ -1126,14 +1162,18 @@ public final class ScaffoldFeature {
         double x = OpenMaverFeatures.number(player, "posX", "field_70165_t");
         double y = OpenMaverFeatures.number(player, "posY", "field_70163_u");
         double z = OpenMaverFeatures.number(player, "posZ", "field_70161_v");
-        return isAir(world, floor(x), floor(y - 0.5D), floor(z)) && blockSlot >= 0;
+        if (blockSlot < 0) return false;
+        if (isAir(world, floor(x), floor(y - 0.5D), floor(z))) return true;
+        // 脚下已有桥面也要允许提前排队：下一步可能刚好跨出这一格。
+        return isTellyMode() && isAir(world,
+                floor(x + OpenMaverFeatures.number(player, "motionX", "field_70159_w")), targetYLevel,
+                floor(z + OpenMaverFeatures.number(player, "motionZ", "field_70179_y")));
     }
 
     /** 屏幕 / 存活 / 快捷栏 / 手里到底有没有方块的综合判定。 */
     private static boolean canPlaceNow(Object player, Object world) {
         // OpenZen onPreMotion：Telly 的地面阶段只起跳，不放置。
-        if ((bridgeSettings.mode == MODE_TELLY_BRIDGE || bridgeSettings.mode == MODE_OLD_TELLY)
-                && airTicks < 1) {
+        if (isTellyMode() && airTicks < 1) {
             return false;
         }
         Minecraft mc = Minecraft.getMinecraft();
@@ -1214,12 +1254,12 @@ public final class ScaffoldFeature {
                     case 7: forward = -1.0F; strafe = -1.0F; break;
                     default: break;
                 }
-                // 原版随后用 moveForward >= 0.8 维持冲刺；斜着搭桥只有 0.707，
-                // 等比放大不改变世界方向（moveFlying 会归一化），但能保住冲刺。
-                if (forward > 0.0F && forward < 0.8F) {
-                    float scale = 0.8F / forward;
-                    forward *= scale;
-                    strafe *= scale;
+                // super 已把潜行输入压到 0.3；八方向重映射后必须恢复同一倍率。
+                // 1.8.9 使用 double 乘法再转 float，不能放大它来维持冲刺。
+                if (Boolean.TRUE.equals(OpenMaverFeatures.read(
+                        input, "sneak", "field_78899_d", Boolean.class))) {
+                    forward = (float) ((double) forward * 0.3D);
+                    strafe = (float) ((double) strafe * 0.3D);
                 }
             }
             if (forward != originalForward || strafe != originalStrafe) {
@@ -1228,7 +1268,13 @@ public final class ScaffoldFeature {
             }
 
             if (!aimApplied) {
-                float writeYaw = OpenMaverFeatures.continuousYaw(playerYaw(player), tickAimYaw);
+                // 以上一条已经写入 C03 的服务端 yaw 为连续性基准。
+                // 每 tick 用恢复后的相机角度重新展开，会把 460° 和 100° 这两个
+                // 等价方向写成相差 360° 的相邻包，Vulcan Scaffold I/D 会把它当成
+                // deltaYaw 310~334 的异常加速度。prevAimYaw 保存的正是上一条
+                // 服务端看到的角度；只有首次写入时才回退到当前相机。
+                float yawBase = Float.isNaN(prevAimYaw) ? playerYaw(player) : prevAimYaw;
+                float writeYaw = OpenMaverFeatures.continuousYaw(yawBase, tickAimYaw);
                 setFloat(player, "rotationYaw", "field_70177_z", writeYaw);
                 setFloat(player, "rotationPitch", "field_70125_A", tickAimPitch);
                 aimApplied = true;
@@ -1338,7 +1384,7 @@ public final class ScaffoldFeature {
 
     /** Telly / KeepY 会自动按住空格；Normal 不动跳跃键。 */
     private static void updateJumpKey(Minecraft mc, boolean moving, boolean jumpHeld) {
-        if (bridgeSettings.mode == MODE_TELLY_BRIDGE || bridgeSettings.mode == MODE_OLD_TELLY || bridgeSettings.mode == MODE_KEEP_Y) {
+        if (isTellyMode() || bridgeSettings.mode == MODE_KEEP_Y) {
             setKeyPressed(mc, "keyBindJump", moving || jumpHeld);
         }
     }
@@ -1707,7 +1753,7 @@ public final class ScaffoldFeature {
             return false;
         }
         Object box = OpenMaverFeatures.call(block, "getCollisionBoundingBox",
-                "func_180646_a", null, world, pos, state);
+                "func_180640_a", null, world, pos, state);
         if (!(box instanceof AxisAlignedBB)) {
             return false;
         }
@@ -1723,7 +1769,7 @@ public final class ScaffoldFeature {
             return false;
         }
         Object box = OpenMaverFeatures.call(block, "getCollisionBoundingBox",
-                "func_180646_a", null, world, pos, state);
+                "func_180640_a", null, world, pos, state);
         return box instanceof AxisAlignedBB;
     }
 
@@ -2326,6 +2372,7 @@ public final class ScaffoldFeature {
     // ==================================================================
 
     public static void load(Properties values) {
+        reset();
         scaffoldSettings.mode = clamp(readInt(values, "scaffold.mode", MODE_NORMAL), 0, 3);
         scaffoldSettings.eagle = readBoolean(values, "scaffold.eagle", true);
         scaffoldSettings.sneak = readBoolean(values, "scaffold.sneak", true);
@@ -2335,7 +2382,6 @@ public final class ScaffoldFeature {
         scaffoldSettings.itemSpoof = readBoolean(values, "scaffold.itemSpoof", true);
         scaffoldSettings.slotMode = clamp(readInt(values, "scaffold.slotMode", SLOT_HOTBAR), SLOT_SILENT, SLOT_HOTBAR);
         scaffoldSettings.hud = readBoolean(values, "scaffold.hud", true);
-        reset();
     }
 
     public static String save() {
@@ -2379,7 +2425,10 @@ public final class ScaffoldFeature {
     }
 
     public static void setMode(int value) {
-        scaffoldSettings.mode = clamp(value, 0, 3);
+        int next = clamp(value, 0, 3);
+        if (scaffoldSettings.mode == next) return;
+        reset();
+        scaffoldSettings.mode = next;
         OpenMaverFeatures.markDirty();
     }
 

@@ -15,7 +15,7 @@ public interface ChannelPipeline {
 
     ChannelPipeline addFirst(String name, ChannelHandler handler);
 
-    ChannelPipeline remove(String name);
+    ChannelHandler remove(String name);
 
     ChannelPipeline remove(ChannelHandler handler);
 

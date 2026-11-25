@@ -7,6 +7,15 @@
 > Grim `RotationPlace` 的判定链见 `design/SCAFFOLD_ROTATIONPLACE_HANDOFF.md`
 > —— 结论没变，新实现仍然遵守。
 
+2026-11-25：`TELLY BRIDGE` / `OLD TELLY` 接入独立 Telly 的放置修复，
+共享一步运动预测、未命中后继续转向和放置前重算实际射线交点；配置仍由 `scaffold.*` 独立保存。
+共享碰撞箱反射修正为三参数 `func_180640_a`。模式切换与配置重载先释放相机、快捷栏、按键和旧目标。
+实现与连续跑跳回归见 [TELLY_HANDOFF.md](TELLY_HANDOFF.md)。
+
+同日修复：MoveFix 保留原版潜行 0.3 倍输入；事务回执在所有 tick 动作前释放，
+Reach 关闭时停用延迟，传送/重生时保护 C0F→C06 顺序。
+源码依据与回归结果见 [GRIM_SCAFFOLD_VL_AUDIT.md](GRIM_SCAFFOLD_VL_AUDIT.md)。
+
 ## 文件
 
 | 文件 | 作用 |
@@ -82,9 +91,9 @@ scaffold.hud=true
    - 否则：`NORMAL + snap` 直接对齐；其余 `rotateTowards(getBlockDistance(), ...)`；
      然后 `updateSneak` / `updateJumpKey`；`TELLY/OLD TELLY && airTicks < 1 && moving`
      时提前返回（保留 lastRots）；`NORMAL + snap && !jumpHeld` 时 `resetSnap()`。
-10. **规划下一 tick**：`placement != null && shouldBuild()`（脚下这一格是空气）时
+10. **规划下一 tick**：`placement != null && shouldBuild()`（脚下这一格是空气，Telly 还预测下一步脚下）时
     生成 `Pending(placement, rotsYaw, rotsPitch, hit)`，`hit` 是 C08 要发的点击点
-    （见下节）。
+    （见下节）。Telly 未命中时每拍更新目标角度，同目标保留重试次数。
 11. **aimForThisTick**：`holdPlaceAim` → 冻结角；`pending != null` → pending 的角；
     否则 → `rots`。
 
@@ -98,14 +107,15 @@ scaffold.hud=true
   换目标才重新取点。
 - 生成 `Pending` 时先做 `rayFacePoint(eye, rotsYaw, rotsPitch, ...)`：把本 tick 的
   aim 射线投到面平面上，交点落在面内就用它，否则回退到 `Placement` 的点。
-  C08 的 `hitVec` 直接发这个值，于是“服务端用 aim 复现出来的交点”和包里的 vec
-  是同一个位置（`tellyRotation` 里 75.5° / 50~90° 的限速夹紧也不会破坏这一点）。
+  Telly 在下一拍放置前，按上一条 C03 的角度与移动后的实际眼睛重新求交，更新 C08 的 `hitVec`。
+  Telly 的面内随机点已经提供变化，不再对瞄准向量额外叠加噪声；刚跨过侧面时会缩小横向随机偏移。
 
 ## 目标格搜索（`applyRotations` / `isAbovePlaceable`）
 
 ```text
 eye = 眼睛位置
 if (!canBuildNow) eye += motion * 2
+else if (Telly 模式) eye += motion
 if (clutch && motionY < 0.01) eye.y = max(simulateFallY(2) + eyeHeight, eye.y)
 feetX/feetZ = floor(eye.x/z)
 
@@ -146,7 +156,7 @@ for radius in 1..6:
 ```text
 if (!isInputActive)            -> getPlayerYawRotation()
 if (placement == null)         -> (相机 yaw, 相机 pitch)
-aim = rotationToHitVec(placement)            // 含 OpenZen 的 addNoise
+aim = rotationToHitVec(placement)            // 预测一步运动，指向固定的随机面点
 yawDelta = angleDiffDouble(aim.yaw, prevAimYaw)
 
 if (groundTicks > 0):
@@ -181,7 +191,8 @@ getBlockDistance(): OLD_TELLY -> 180
 
 - `afterMovementInput()`（vanilla `updatePlayerMoveState()` 之后、`moveFlying()` 之前）：
   1. **MoveFix**：用相机 yaw 算期望世界方向，再在 aim 坐标系里吸附到 8 个整数方向
-     之一；`forward` 在 (0, 0.8) 区间时等比放大到 0.8（保冲刺）。
+     之一；潜行时按原版 double 乘法再转 float 的规则缩放到 0.3 倍。
+     不放大输入来维持冲刺，冲刺状态由原版决定。
   2. 把 `tickAimYaw/Pitch` 用 `continuousYaw()` 写进 `rotationYaw/Pitch`
      （不取模，避免包间 360° 跳变），并记录 `prevAimYaw/Pitch`；
      如果存在 `pending`，同时写 `pending.sentYaw/sentPitch` + `sent = true`。

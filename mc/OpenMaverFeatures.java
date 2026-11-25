@@ -546,6 +546,23 @@ public final class OpenMaverFeatures {
     private OpenMaverFeatures() {
     }
 
+    /** 在任何 tick 动作（包括背包/箱子点击）之前刷新配置、释放到期事务。 */
+    public static void prepareTick(Minecraft mc) {
+        try {
+            refreshSettings();
+        } catch (Throwable error) {
+            tickStartFailed = true;
+            System.err.println("[OpenMaver] Settings refresh disabled: " + error);
+        }
+        TransactionDelayFeature.tick(mc);
+    }
+
+    /** 独立调用入口；Forge 入口已提前准备事务，使用 onTickStartPrepared。 */
+    public static void onTickStart(Minecraft mc) {
+        prepareTick(mc);
+        onTickStartPrepared(mc);
+    }
+
     /**
      * tick 开始阶段：在 vanilla 处理鼠标输入和发送 C03 移动包之前执行
      * AutoClicker / AutoSprint / Aim。
@@ -553,7 +570,7 @@ public final class OpenMaverFeatures {
      * <p>rotation 的平滑放在渲染帧里；本 tick 的 C03 使用上一窗口的帧步进结果，
      * 本阶段注入的 C02/C08 也出现在同一条 C03 之前，满足 Grim Post 的顺序要求。
      */
-    public static void onTickStart(Minecraft mc) {
+    public static void onTickStartPrepared(Minecraft mc) {
         beginAttackTick();
         // 先重置本 tick 的鼠标动作状态。AutoClicker 必须在 vanilla 发送 C03
         // 移动包之前执行：Grim 的 Post 检查要求 C02/C08 出现在移动包之前，
@@ -570,7 +587,6 @@ public final class OpenMaverFeatures {
             return;
         }
         try {
-            refreshSettings();
             AntiBotFeature.onTick(mc);
             clientTick++;
             ScaffoldFeature.tickCounter(clientTick);
@@ -589,9 +605,6 @@ public final class OpenMaverFeatures {
             updateKillAura(mc);
             updateAutoClicker(mc);
             suppressVanillaDuplicateAttack(mc);
-            // Ping spoof 的事务队列每 tick 放行一次；放在 Reach 之前，
-            // 保证本 tick 的攻击看到的是已经刷新过的事务窗口。
-            TransactionDelayFeature.tick(mc);
             // Reach 必须和 AutoClicker 一样在 vanilla C03 之前发包：
             // Grim 1.8 的 PacketOrderB 只认「上一条 tick 包之后」的 C0A，
             // 且 Post 会拒绝出现在移动包之后的 C02。当前相机可能已在渲染帧中

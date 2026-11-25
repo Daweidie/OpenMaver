@@ -110,6 +110,8 @@ public final class OpenMaverClientHandler {
             // START：在 vanilla 发送 C03 之前应用 aim / sprint / 箱子点击。
             if (event.phase == TickEvent.Phase.START) {
                 syncHeldKeys();
+                // 一次性准备事务，之后直到 C03 不再从 tick 维护里插入延迟 C0F。
+                OpenMaverFeatures.prepareTick(mc);
                 tickBlockHit(mc, true);
                 LegacySoundFeature.onTick(mc);
                 // 先挂窗口出站钩子，覆盖手动操作和 Chest Stealer 产生的 C0E / C0D。
@@ -125,7 +127,7 @@ public final class OpenMaverClientHandler {
                 // failed Post (vl:x): click window v1.8 —— 改到 START 后包序变成
                 // C0F → C0E → C03，和玩家自己在界面里点鼠标一致。
                 ChestFeature.onTick(mc);
-                OpenMaverFeatures.onTickStart(mc);
+                OpenMaverFeatures.onTickStartPrepared(mc);
                 // Velocity 独立维护本地实体 id 和击退包处理器。
                 AttackReduceFeature.onTickStart(mc);
                 tickBlockHit(mc, false);

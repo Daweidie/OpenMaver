@@ -261,6 +261,9 @@ public final class ScaffoldPlaceOrderTest {
         check("the aim is written in the movement-input hook",
                 feature.contains("static void afterMovementInput(Object input)")
                         && feature.contains("setFloat(player, \"rotationYaw\""));
+        check("server aim keeps a continuous yaw across 360 degrees",
+                feature.contains("float yawBase = Float.isNaN(prevAimYaw) ? playerYaw(player) : prevAimYaw")
+                        && feature.contains("continuousYaw(yawBase, tickAimYaw)"));
         check("silent aim is restored to the camera",
                 feature.contains("restoreCameraView") && feature.contains("renderArmYaw"));
         // C09 一律由原版发：1.8.9 每 tick 的 updateController() / onPlayerRightClick()

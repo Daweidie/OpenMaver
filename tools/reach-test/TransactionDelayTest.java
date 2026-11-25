@@ -1,4 +1,6 @@
 import io.netty.channel.embedded.EmbeddedChannel;
+import module.ModuleManager;
+import module.combat.Reach;
 
 /**
  * 事务延迟（PING SPOOF）的队列回归测试。
@@ -14,10 +16,15 @@ public final class TransactionDelayTest {
 
     public static void main(String[] args) throws Exception {
         defaults();
+        ModuleManager.register(new Reach());
+        ModuleManager.getModule("Reach").setEnabled(true);
         holdAndRelease();
         ordering();
         nonTransactionPasses();
         disabledPasses();
+        disablingReachReleasesInOrder();
+        disablingDelayReleasesInOrder();
+        disabledTickDetaches();
         System.out.println("[transaction-delay-test] " + passed + " checks passed");
     }
 
@@ -100,9 +107,64 @@ public final class TransactionDelayTest {
         }
     }
 
+    private static void disablingReachReleasesInOrder() {
+        OpenMaverFeatures.setReachPingSpoof(400);
+        EmbeddedChannel channel = newChannel();
+        TransactionDelayFeature.installForTest(channel.pipeline());
+        try {
+            channel.writeOutbound(new C0FPacketConfirmTransaction(1));
+            ModuleManager.getModule("Reach").setEnabled(false);
+            channel.writeOutbound(new C0FPacketConfirmTransaction(2));
+            check("Reach off releases the old confirmation before the new one",
+                    channel.outboundMessages().size() == 2
+                    && ((C0FPacketConfirmTransaction) channel.readOutbound()).action == 1
+                    && ((C0FPacketConfirmTransaction) channel.readOutbound()).action == 2
+                    && TransactionDelayFeature.heldForTest() == 0);
+        } finally {
+            TransactionDelayFeature.uninstallForTest(); channel.finish();
+            ModuleManager.getModule("Reach").setEnabled(true);
+        }
+    }
+
+    private static void disablingDelayReleasesInOrder() {
+        OpenMaverFeatures.setReachPingSpoof(400);
+        EmbeddedChannel channel = newChannel();
+        TransactionDelayFeature.installForTest(channel.pipeline());
+        try {
+            channel.writeOutbound(new C0FPacketConfirmTransaction(3));
+            OpenMaverFeatures.setReachPingSpoof(0);
+            channel.writeOutbound(new C0FPacketConfirmTransaction(4));
+            check("zero delay releases pending confirmations before passing new ones",
+                    channel.outboundMessages().size() == 2
+                    && ((C0FPacketConfirmTransaction) channel.readOutbound()).action == 3
+                    && ((C0FPacketConfirmTransaction) channel.readOutbound()).action == 4);
+        } finally { TransactionDelayFeature.uninstallForTest(); channel.finish(); }
+    }
+
+    private static void disabledTickDetaches() {
+        OpenMaverFeatures.setReachPingSpoof(400);
+        EmbeddedChannel channel = newChannel();
+        TransactionDelayFeature.installForTest(channel.pipeline());
+        try {
+            channel.writeOutbound(new C0FPacketConfirmTransaction(5));
+            ModuleManager.getModule("Reach").setEnabled(false);
+            TransactionDelayFeature.tick(null);
+            check("Reach off detaches the hook and flushes without waiting for another packet",
+                    !TransactionDelayFeature.isActive()
+                    && channel.readOutbound() instanceof C0FPacketConfirmTransaction
+                    && TransactionDelayFeature.heldForTest() == 0);
+        } finally {
+            TransactionDelayFeature.uninstallForTest(); channel.finish();
+            ModuleManager.getModule("Reach").setEnabled(true);
+            OpenMaverFeatures.setReachPingSpoof(0);
+        }
+    }
+
     /** netty 4.0 的 EmbeddedChannel 不接受空 handler 列表。 */
     private static EmbeddedChannel newChannel() {
-        return new EmbeddedChannel(new io.netty.channel.ChannelInboundHandlerAdapter());
+        EmbeddedChannel channel = new EmbeddedChannel(new io.netty.channel.ChannelInboundHandlerAdapter());
+        channel.pipeline().addLast("packet_handler", new io.netty.channel.ChannelInboundHandlerAdapter());
+        return channel;
     }
 
     private static void check(String name, boolean value) {
@@ -119,6 +181,8 @@ final class C0FPacketConfirmTransaction {
     C0FPacketConfirmTransaction(int action) {
         this.action = action;
     }
+
+    @Override public String toString() { return "C0F(" + action + ")"; }
 }
 
 /** 对照组：名字不匹配的普通包。 */

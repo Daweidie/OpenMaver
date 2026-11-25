@@ -3,6 +3,8 @@ import io.netty.channel.ChannelPipeline;
 import io.netty.channel.ChannelPromise;
 
 import net.minecraft.client.Minecraft;
+import module.Module;
+import module.ModuleManager;
 
 import java.lang.reflect.Field;
 import java.util.ArrayDeque;
@@ -29,7 +31,7 @@ import java.util.Random;
  *
  * <p>代价与风险：这是真的在制造 RTT 抖动，Grim 的 Transaction/Ping 面会看到更长的
  * 事务间隔。延迟保持有界（{@link #MAX_HOLD_NANOS}）、FIFO 顺序不变、断线立即清空，
- * 所以不会造成事务乱序或回包提前。
+ * 传送/重生期间先释放旧回执，再由原版处理包，避免 C06 越过对应的 C0F。
  */
 public final class TransactionDelayFeature {
 
@@ -67,17 +69,17 @@ public final class TransactionDelayFeature {
     /** 主线程每 tick 调用：维护钩子、放行到期包。 */
     static void tick(Minecraft mc) {
         int delay = OpenMaverFeatures.getReachPingSpoof();
-        if (delay <= 0) {
-            uninstall();
+        if (!enabled() || delay <= 0) {
             flush(true);
+            uninstall();
             return;
         }
         Object player = OpenMaverFeatures.read(mc, "thePlayer", "field_71439_g", null);
         Object handler = player == null ? null
                 : OpenMaverFeatures.read(player, "sendQueue", "field_71174_a", null);
         if (handler == null) {
-            uninstall();
             flush(true);
+            uninstall();
             return;
         }
         if (hook == null || boundHandler != handler) {
@@ -92,9 +94,10 @@ public final class TransactionDelayFeature {
 
     /** 测试用：把钩子挂到给定 pipeline，等价于 install() 的 Netty 部分。 */
     static TransactionDelayHook installForTest(ChannelPipeline pipeline) {
+        flush(true);
         uninstall();
         TransactionDelayHook created = new TransactionDelayHook();
-        pipeline.addLast(HOOK_NAME, created);
+        addHook(pipeline, created);
         hook = created;
         boundHandler = new Object();
         return created;
@@ -119,8 +122,8 @@ public final class TransactionDelayFeature {
 
     /** 测试用：卸载。 */
     static void uninstallForTest() {
-        uninstall();
         flush(true);
+        uninstall();
     }
 
     static long spoofedCount() {
@@ -133,7 +136,11 @@ public final class TransactionDelayFeature {
         if (source == null || source != hook || message == null) return false;
         if (!isConfirmTransaction(message)) return false;
         int base = OpenMaverFeatures.getReachPingSpoof();
-        if (base <= 0) return false;
+        if (!enabled() || base <= 0 || source.correctionDepth > 0) {
+            // 开关改变不能让新回执越过队列里尚未到期的旧回执。
+            flush(true);
+            return false;
+        }
         int jitter = OpenMaverFeatures.getReachPingJitter();
         long delayMs = base + (jitter > 0 ? RANDOM.nextInt(jitter + 1) : 0);
         long due = System.nanoTime() + Math.min(delayMs * 1_000_000L, MAX_HOLD_NANOS);
@@ -149,8 +156,50 @@ public final class TransactionDelayFeature {
 
     static void connectionClosed(TransactionDelayHook source) {
         if (source != hook) return;
-        uninstall();
         flush(true);
+        uninstall();
+    }
+
+    private static boolean enabled() {
+        Module reach = ModuleManager.getModule("Reach");
+        return reach != null && reach.isEnabled();
+    }
+
+    static boolean isCorrection(Object message) {
+        if (message == null) return false;
+        String name = message.getClass().getName();
+        return name.endsWith("S08PacketPlayerPosLook") || name.endsWith("S07PacketRespawn");
+    }
+
+    /**
+     * 与原版 PacketThreadUtil 的主线程任务保持同序，然后再排回连接的 event loop。
+     * 前边界释放旧 C0F，后边界必须排在原版 C06 的异步 write 之后才能恢复延迟。
+     * Netty 收到 S08 时直接 flush 会打断当前正在运行的 action -> C03 序列。
+     */
+    static void correctionBoundary(final TransactionDelayHook source,
+            final ChannelHandlerContext ctx, final boolean begin) {
+        if (source != hook) return;
+        Runnable boundary = new Runnable() {
+            @Override public void run() {
+                ctx.channel().eventLoop().execute(new Runnable() {
+                    @Override public void run() {
+                        if (source != hook) return;
+                        if (begin) {
+                            source.correctionDepth++;
+                            flush(true);
+                        } else {
+                            source.correctionDepth = Math.max(0, source.correctionDepth - 1);
+                        }
+                    }
+                });
+            }
+        };
+        if (!OpenMaverFeatures.callVoid(Minecraft.getMinecraft(),
+                "addScheduledTask", "func_152344_a", null, boundary)) {
+            // 无法建立主线程边界时暂停本连接的延迟，仍让原版处理入站包。
+            source.correctionDepth++;
+            warnOnce("correction task unavailable; transaction delay paused");
+        }
     }
 
     // ------------------------------------------------------------------
@@ -167,6 +216,7 @@ public final class TransactionDelayFeature {
     }
 
     private static void install(Object handler) {
+        flush(true);
         uninstall();
         try {
             Object manager = fieldByType(handler, "net.minecraft.network.NetworkManager");
@@ -182,7 +232,7 @@ public final class TransactionDelayFeature {
                 return;
             }
             TransactionDelayHook created = new TransactionDelayHook();
-            pipeline.addBefore("packet_handler", HOOK_NAME, created);
+            addHook(pipeline, created);
             hook = created;
             boundHandler = handler;
             installFailures = 0;
@@ -191,6 +241,14 @@ public final class TransactionDelayFeature {
                 util.Logger.warn("Reach", "transaction delay hook failed: " + error);
             }
         }
+    }
+
+    private static void addHook(ChannelPipeline pipeline, TransactionDelayHook created) {
+        // Velocity 会吞下入站包并自行排主线程任务，事务边界必须先看见 S08/S07。
+        // 出站方向相反，Velocity 挂起的整段包序会先回放，再经过事务钩子。
+        String before = pipeline.names().contains(AttackReducePacketHook.NAME)
+                ? AttackReducePacketHook.NAME : "packet_handler";
+        pipeline.addBefore(before, HOOK_NAME, created);
     }
 
     private static void uninstall() {

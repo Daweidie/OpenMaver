@@ -34,9 +34,16 @@ else
     echo "[reach-test] netty-all 未找到，跳过 TransactionDelayTest" >&2
 fi
 mkdir -p "$out_dir"
-javac -encoding UTF-8 -cp "$runtime_cp" -d "$out_dir" tools/reach-test/*.java
+javac -encoding UTF-8 -cp "$runtime_cp" -d "$out_dir" \
+    tools/reach-test/ReachDebugTest.java tools/reach-test/ReachSyncTest.java \
+    tools/reach-test/TransactionDelayTest.java
 java -cp "$out_dir:$classpath" ReachDebugTest
 java -cp "$out_dir:$classpath" ReachSyncTest
 if [[ -n "$netty_jar" && -f "$netty_jar" ]]; then
     java -cp "$runtime_cp" TransactionDelayTest
+    mkdir -p "$out_dir/order"
+    javac -encoding UTF-8 -cp "$runtime_cp" -d "$out_dir/order" \
+        tools/reach-test/order-support/net/minecraft/client/Minecraft.java \
+        tools/reach-test/TransactionOrderTest.java
+    java -cp "$out_dir/order:$runtime_cp" TransactionOrderTest
 fi

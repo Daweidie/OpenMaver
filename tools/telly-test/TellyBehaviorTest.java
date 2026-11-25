@@ -15,6 +15,7 @@ import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.util.BlockPos;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.MovementInput;
+import net.minecraft.util.MovementInputFromOptions;
 import net.minecraft.util.Vec3;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
@@ -37,7 +38,12 @@ public final class TellyBehaviorTest {
         mutualExclusion();
         competingFeatures();
         heightAndInput();
-        airbornePlacement();
+        for (boolean standalone : new boolean[] {false, true}) {
+            airbornePlacement(standalone, false);
+            airbornePlacement(standalone, true);
+            pendingAimProgress(standalone);
+        }
+        scaffoldModeTransitions();
         lifecycle();
         srgInput();
         ModuleManager.disableAll();
@@ -54,12 +60,23 @@ public final class TellyBehaviorTest {
         Mouse.left = Mouse.right = false;
         keys = new Settings();
         player = new Player();
+        player.movementInput = new MovementInputFromOptions(keys);
         mc.gameSettings = keys;
         mc.thePlayer = player;
         mc.theWorld = new World();
         mc.playerController = new Controller();
         mc.currentScreen = null;
         module("Telly").setEnabled(true);
+    }
+
+    private static void fresh(boolean standalone) {
+        fresh();
+        if (!standalone) {
+            ScaffoldFeature.load(new Properties());
+            ScaffoldFeature.setMode(ScaffoldFeature.MODE_TELLY_BRIDGE);
+            ScaffoldFeature.setSneak(false);
+            module("Scaffold").setEnabled(true);
+        }
     }
 
     private static void start() throws Exception {
@@ -96,6 +113,10 @@ public final class TellyBehaviorTest {
         check("true".equals(saved.getProperty("next.setting")), "saved settings end with a newline");
         check(ScaffoldFeature.getMode() == ScaffoldFeature.MODE_KEEP_Y
                 && ScaffoldFeature.getRotationTick() == 2, "Telly settings do not modify Scaffold");
+        ScaffoldFeature.load(saved);
+        ScaffoldFeature.setMode(ScaffoldFeature.MODE_TELLY_BRIDGE);
+        check(TellyFeature.getMode() == 1 && TellyFeature.getRotationTick() == 5
+                && !TellyFeature.isClutch(), "Scaffold loading and mode selection preserve Telly settings");
         saved.setProperty("telly.mode", "99");
         saved.setProperty("telly.rotationTick", "invalid");
         saved.setProperty("telly.slotMode", "-1");
@@ -162,13 +183,16 @@ public final class TellyBehaviorTest {
         check(!ScaffoldHud.isEnabled(), "Telly's own HUD setting controls the shared card");
     }
 
-    private static void airbornePlacement() throws Exception {
-        fresh();
-        TellyFeature.setClutch(false);
+    private static void airbornePlacement(boolean standalone, boolean runtimeCollision) throws Exception {
+        fresh(standalone);
+        mc.theWorld = new World(runtimeCollision);
+        if (standalone) TellyFeature.setClutch(false);
+        else ScaffoldFeature.setClutch(false);
         player.inventory.mainInventory[1] = new Stack();
         player.posZ = 1.2;
         keys.keyBindForward.pressed = true;
         start();
+        check(player.movementInput instanceof ScaffoldMovementInput, "vanilla input installs the rotation hook");
         check(player.inventory.currentItem == 1, "hotbar switches to a placeable block");
         check(state("pending") == null, "ground phase does not schedule placement");
         end();
@@ -180,14 +204,15 @@ public final class TellyBehaviorTest {
         end(); // No movement hook ran, so this aim was never sent.
         start();
         check(((Controller) mc.playerController).placements == 0, "an unsent aim cannot place");
-        ScaffoldFeature.afterMovementInput(player.movementInput);
+        player.movementInput.updatePlayerMoveState();
         check(Math.abs(player.rotationYaw - 27) > 1, "movement hook applies silent aim");
+        check(player.movementInput.jump, "vanilla input update samples automatic jump before aim");
         end();
         check(Math.abs(player.rotationYaw - 27) < 0.01 && Math.abs(player.rotationPitch - 12) < 0.01,
                 "tick end restores the camera");
         for (int i = 0; i < 12 && ((Controller) mc.playerController).placements == 0; i++) {
             start();
-            ScaffoldFeature.afterMovementInput(player.movementInput);
+            player.movementInput.updatePlayerMoveState();
             end();
         }
         Controller controller = (Controller) mc.playerController;
@@ -196,7 +221,8 @@ public final class TellyBehaviorTest {
                 "placement uses the supporting face and actual held stack");
 
         // A pending airborne aim must be discarded if the next tick lands.
-        fresh();
+        fresh(standalone);
+        mc.theWorld = new World(runtimeCollision);
         player.inventory.mainInventory[1] = new Stack();
         player.posZ = 1.2;
         keys.keyBindForward.pressed = true;
@@ -205,13 +231,91 @@ public final class TellyBehaviorTest {
         player.posY = 64.4;
         player.movementInput.moveForward = 1;
         start();
-        ScaffoldFeature.afterMovementInput(player.movementInput);
+        player.movementInput.updatePlayerMoveState();
         end();
         player.onGround = true;
         player.posY = 64;
         start();
         check(((Controller) mc.playerController).placements == 0 && state("pending") == null,
                 "landing cancels an airborne pending placement");
+        end();
+    }
+
+    private static void pendingAimProgress(boolean telly) throws Exception {
+        fresh(telly);
+        if (telly) {
+            TellyFeature.setRotationTick(1);
+            TellyFeature.setClutch(false);
+        } else {
+            ScaffoldFeature.setRotationTick(1);
+            ScaffoldFeature.setClutch(false);
+        }
+        player.rotationYaw = 0;
+        player.movementInput.moveForward = 1;
+        player.inventory.mainInventory[1] = new Stack();
+        player.posZ = 1.2;
+        keys.keyBindForward.pressed = true;
+        start();
+        player.movementInput.updatePlayerMoveState();
+        end();
+        player.onGround = false;
+        player.posY = 64.4;
+        start();
+        player.movementInput.updatePlayerMoveState();
+        float firstYaw = player.rotationYaw;
+        end();
+        start();
+        check(((Controller) mc.playerController).placements == 0, "initial turn still misses the support");
+        player.movementInput.updatePlayerMoveState();
+        float turn = Math.abs(OpenMaverFeatures.wrapDegrees(player.rotationYaw - firstYaw));
+        check(turn > 10, "both Telly entry points keep turning after a missed placement");
+        end();
+        for (int air = 3; air <= 5 && ((Controller) mc.playerController).placements == 0; air++) {
+            start();
+            player.movementInput.updatePlayerMoveState();
+            end();
+        }
+        check(((Controller) mc.playerController).placements == 1,
+                "both Telly entry points finish turning and place within five airborne ticks");
+    }
+
+    private static void scaffoldModeTransitions() throws Exception {
+        fresh(false);
+        player.inventory.mainInventory[1] = new Stack();
+        player.posZ = 1.2;
+        keys.keyBindForward.pressed = true;
+        start();
+        player.movementInput.updatePlayerMoveState();
+        end();
+        player.onGround = false;
+        player.posY = 64.4;
+        start();
+        player.movementInput.updatePlayerMoveState();
+        check(state("pending") != null && flag("rotationDirty"), "active Scaffold Telly has a pending aim");
+
+        ScaffoldFeature.setMode(ScaffoldFeature.MODE_NORMAL);
+        check(state("pending") == null && state("placement") == null && !flag("hookArmed"),
+                "changing Scaffold mode clears the old target and movement hook");
+        check(Math.abs(player.rotationYaw - 27) < 0.01 && Math.abs(player.rotationPitch - 12) < 0.01
+                && !keys.keyBindJump.pressed && player.inventory.currentItem == 0,
+                "changing Scaffold mode restores camera, automatic jump and hotbar");
+        start();
+        check(!keys.keyBindJump.pressed, "Normal does not retain Telly automatic jump");
+        end();
+
+        ScaffoldFeature.setMode(ScaffoldFeature.MODE_KEEP_Y);
+        start(); end();
+        check(keys.keyBindJump.pressed, "Keep Y resumes its own automatic jump behavior");
+        Properties config = new Properties();
+        config.setProperty("scaffold.mode", String.valueOf(ScaffoldFeature.MODE_OLD_TELLY));
+        config.setProperty("scaffold.sneak", "false");
+        ScaffoldFeature.load(config);
+        check(state("pending") == null && !keys.keyBindJump.pressed,
+                "configuration reload releases the old mode state");
+        mc.theWorld = new World(true);
+        start();
+        check(state("pending") != null && keys.keyBindJump.pressed,
+                "Old Telly loaded from config finds an SRG support and schedules placement");
         end();
     }
 
@@ -298,6 +402,7 @@ public final class TellyBehaviorTest {
         public boolean pressed;
         Binding(int code) { this.code = code; }
         public int getKeyCode() { return code; }
+        public boolean isKeyDown() { return pressed; }
     }
     public static final class Settings extends GameSettings {
         public Binding keyBindForward = new Binding(17), keyBindBack = new Binding(31);
@@ -344,15 +449,33 @@ public final class TellyBehaviorTest {
             return new AxisAlignedBB(pos.x, pos.y, pos.z, pos.x + 1, pos.y + 1, pos.z + 1);
         }
     }
-    public static final class State { public Block getBlock() { return new Block(); } }
+    /** Forge 1.8.9 collision uses three arguments; selection uses two and a different name. */
+    public static final class RuntimeBlock {
+        public AxisAlignedBB func_180640_a(World world, BlockPos pos, State state) {
+            return new AxisAlignedBB(pos.x, pos.y, pos.z, pos.x + 1, pos.y + 1, pos.z + 1);
+        }
+        public AxisAlignedBB func_180646_a(World world, BlockPos pos) {
+            throw new AssertionError("selection box is not a collision box");
+        }
+    }
+    public static final class State {
+        private final Object block;
+        State(Object block) { this.block = block; }
+        public Object getBlock() { return block; }
+    }
     public static final class Hit {
         public String typeOfHit = "BLOCK";
         public BlockPos blockPos = new BlockPos(0, 63, 0);
         public EnumFacing sideHit = EnumFacing.SOUTH;
     }
     public static final class World {
+        private final boolean runtimeCollision;
+        World() { this(false); }
+        World(boolean runtimeCollision) { this.runtimeCollision = runtimeCollision; }
         public boolean isAirBlock(BlockPos pos) { return pos.x != 0 || pos.y != 63 || pos.z != 0; }
-        public State getBlockState(BlockPos pos) { return isAirBlock(pos) ? null : new State(); }
+        public State getBlockState(BlockPos pos) {
+            return isAirBlock(pos) ? null : new State(runtimeCollision ? new RuntimeBlock() : new Block());
+        }
         public Hit rayTraceBlocks(Vec3 from, Vec3 to) {
             // The fixture contains one full support block. Check the exposed south face.
             double t = (1 - from.zCoord) / (to.zCoord - from.zCoord);
