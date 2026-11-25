@@ -57,12 +57,19 @@ public final class AttackReduceFeature {
         final ChannelPipeline pipeline;
         final Deque<Move> moves = new ArrayDeque<Move>();
         volatile boolean holdMoves, closed;
+        // Guarded by moves: packet state is distinct from Grim's last position-frame state.
+        boolean packetSprintKnown, packetSprinting, sprintFrameKnown, sprintFrame;
+        int correctionDepth;
         boolean worldTransition;
         boolean releaseScheduled;
         Session(Minecraft mc, Object player, Object world, Object handler, int id,
                 int mode, AttackReducePacketHook hook, ChannelPipeline pipeline) {
             this.mc = mc; this.player = player; this.world = world; this.handler = handler;
             this.entityId = id; this.mode = mode; this.hook = hook; this.pipeline = pipeline;
+            // Bootstrap only the current packet state. A real position packet must establish lastSprinting.
+            Object sprint = read(player, "serverSprintState", "field_175171_bO");
+            packetSprintKnown = sprint instanceof Boolean;
+            packetSprinting = Boolean.TRUE.equals(sprint);
         }
     }
     private static final class Move {
@@ -189,10 +196,22 @@ public final class AttackReduceFeature {
                     }
                     if (session != s || !enabled()) { packet.handle(); return; }
                     if (packet.is("S08PacketPlayerPosLook") || packet.is("S07PacketRespawn") || packet.is("S40PacketDisconnect")) {
-                        current().release(); current().onMotion(); current().onEnable(); restoreTimer(); rotationYaw = null;
-                        if (packet.is("S08PacketPlayerPosLook")) current().onCorrection();
-                        if (packet.is("S07PacketRespawn")) s.worldTransition = true;
-                        packet.handle(); return;
+                        synchronized (s.moves) { s.sprintFrameKnown = false; s.correctionDepth++; }
+                        try {
+                            current().release(); current().onMotion(); current().onEnable(); restoreTimer(); rotationYaw = null;
+                            if (packet.is("S08PacketPlayerPosLook")) current().onCorrection();
+                            if (packet.is("S07PacketRespawn")) s.worldTransition = true;
+                            packet.handle();
+                        } finally {
+                            // Queue behind vanilla's async C06 write; teleport acknowledgements never
+                            // run Grim's normal movement prediction and cannot establish lastSprinting.
+                            s.pipeline.channel().eventLoop().execute(new Runnable() {
+                                public void run() {
+                                    synchronized (s.moves) { s.sprintFrameKnown = false; s.correctionDepth--; }
+                                }
+                            });
+                        }
+                        return;
                     }
                     // 新击退是新的物理边界：先按序应用旧队列，避免旧 S12 最后覆盖新 S12。
                     if (ownVelocity(packet) && current().isSuspending) {
@@ -213,6 +232,7 @@ public final class AttackReduceFeature {
         final Session s = session;
         if (s == null || s.hook != source || s.closed) return false;
         synchronized (s.moves) {
+            if (!s.holdMoves) observeSprintPacket(s, packet);
             VelocityDebug.outbound(packet, s.holdMoves, s.moves.size());
             if (!s.holdMoves) return false;
             s.moves.add(new Move(ctx, packet, promise));
@@ -243,7 +263,10 @@ public final class AttackReduceFeature {
                     while ((move = s.moves.poll()) != null) {
                         if (move.promise.isDone()) continue;
                         if (s.closed || !move.ctx.channel().isOpen()) move.promise.tryFailure(new IllegalStateException("Velocity connection closed"));
-                        else try { move.ctx.write(move.packet, move.promise); last = move.ctx; sent++; }
+                        else try {
+                            observeSprintPacket(s, move.packet);
+                            move.ctx.write(move.packet, move.promise); last = move.ctx; sent++;
+                        }
                         catch (Exception error) { move.promise.tryFailure(error); }
                     }
                     if (last != null) last.flush();
@@ -257,6 +280,43 @@ public final class AttackReduceFeature {
             if (ctx == null) { s.closed = true; flush.run(); }
             else ctx.channel().eventLoop().execute(flush);
         } catch (Exception error) { s.closed = true; flush.run(); }
+    }
+
+    /** Called only for forwarded packets, with moves locked; held packets have no server effect yet. */
+    private static void observeSprintPacket(Session s, Object packet) {
+        if (packetName(packet, "C0BPacketEntityAction")) {
+            Object action = read(packet, "action", "field_149515_b");
+            if (action == null) action = call(packet, "getAction", "func_180764_b");
+            String name = action instanceof Enum<?> ? ((Enum<?>) action).name() : "";
+            if ("START_SPRINTING".equals(name) || "STOP_SPRINTING".equals(name)) {
+                s.packetSprintKnown = true;
+                s.packetSprinting = "START_SPRINTING".equals(name);
+            }
+        } else if (packetName(packet, "C03PacketPlayer")) {
+            // Ground-only C03 and look-only C05 do not update Grim.lastSprinting.
+            boolean position = flag(packet, "moving", "field_149480_h");
+            if (position && s.correctionDepth == 0 && !s.worldTransition) {
+                s.sprintFrameKnown = s.packetSprintKnown;
+                s.sprintFrame = s.packetSprinting;
+            }
+        }
+    }
+
+    /** JumpReset and automated clicks must agree with the last normal position frame. */
+    static boolean attackSprintReady(Object player) {
+        if (!enabled() || mode != MODE_JUMP_RESET) return true;
+        Session s = session;
+        if (s == null || s.player != player || !sameConnection(s)) return false;
+        boolean sprinting = truth(player, "isSprinting", "func_70051_ag");
+        synchronized (s.moves) {
+            return !s.holdMoves && s.correctionDepth == 0 && s.sprintFrameKnown && s.sprintFrame == sprinting;
+        }
+    }
+
+    static String sprintFrameState() {
+        Session s = session;
+        if (s == null) return "unknown";
+        synchronized (s.moves) { return s.sprintFrameKnown ? String.valueOf(s.sprintFrame) : "unknown"; }
     }
     static void connectionClosed(final AttackReducePacketHook hook) {
         final Session s = session;

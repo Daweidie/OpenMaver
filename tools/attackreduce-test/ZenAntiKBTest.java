@@ -114,7 +114,8 @@ public final class ZenAntiKBTest {
         final EmbeddedChannel channel;
         final Thread main = Thread.currentThread();
         final MovingObjectPosition hit = new MovingObjectPosition();
-        Fixture(int mode) {
+        Fixture(int mode) { this(mode, true); }
+        Fixture(int mode, boolean establishSprintFrame) {
             AttackReduceFeature.load(new Properties()); MODULE.setEnabled(true); AURA.setEnabled(false);
             channel = new EmbeddedChannel(new ChannelDuplexHandler() {
                 public void channelRead(ChannelHandlerContext ctx, final Object msg) {
@@ -144,6 +145,13 @@ public final class ZenAntiKBTest {
             mc.thePlayer = player; mc.theWorld = world; mc.playerController = controller;
             hit.typeOfHit = MovingObjectPosition.MovingObjectType.ENTITY; hit.entityHit = target; mc.objectMouseOver = hit;
             AttackReduceFeature.setMode(mode); start();
+            if (establishSprintFrame) {
+                // Legacy success scenarios start after a real sprinting position frame.
+                channel.writeOutbound(new net.minecraft.network.play.client.C0BPacketEntityAction(player,
+                        net.minecraft.network.play.client.C0BPacketEntityAction.Action.START_SPRINTING));
+                channel.writeOutbound(new C03PacketPlayer.C04PacketPlayerPosition());
+                while (channel.readOutbound() != null) { }
+            }
         }
         void start() {
             drain(); OpenMaverFeatures.beginAttackTick(); LegacySoundFeature.onTick(mc);

@@ -1035,7 +1035,8 @@ public final class OpenMaverFeatures {
                 || AntiBotFeature.isBot(target)) {
             return false;
         }
-        if (!syncSprintBeforeAttack(player)
+        if (!AttackReduceFeature.attackSprintReady(player)
+                || !syncSprintBeforeAttack(player)
                 || !callVoid(player, "swingItem", "func_71038_i", null)) return false;
         boolean sent = callVoid(controller, "attackEntity", "func_78764_a", "a",
                 player, target);

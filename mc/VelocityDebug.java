@@ -144,7 +144,9 @@ final class VelocityDebug {
         emit("RESET " + action + " ground=" + AttackReduceFeature.onGround()
                 + " v=(" + fmt2(AttackReduceFeature.number(player, "motionX", "field_70159_w"))
                 + ", " + fmt2(AttackReduceFeature.number(player, "motionY", "field_70181_x"))
-                + ", " + fmt2(AttackReduceFeature.number(player, "motionZ", "field_70179_y")) + ")", true);
+                + ", " + fmt2(AttackReduceFeature.number(player, "motionZ", "field_70179_y")) + ")"
+                + " sprint=" + AttackReduceFeature.sprinting()
+                + " sprintFrame=" + AttackReduceFeature.sprintFrameState(), true);
     }
 
     /** 挂起期间的进度：实际位置 vs 服务端预计位置。 */
@@ -328,6 +330,10 @@ final class VelocityDebug {
     private static String describe(Object packet, boolean move, boolean hold, int queued, long gap) {
         StringBuilder line = new StringBuilder(96);
         line.append("OUT ").append(hold ? "HOLD" : "SEND").append(' ').append(shortName(packet));
+        if ("C0BPacketEntityAction".equals(packet.getClass().getSimpleName())) {
+            Object action = OpenMaverFeatures.read(packet, "action", "field_149515_b", null);
+            if (action instanceof Enum<?>) line.append(" action=").append(((Enum<?>) action).name());
+        }
         if (move) {
             double[] pos = packetPosition(packet);
             if (pos != null) {
@@ -336,6 +342,7 @@ final class VelocityDebug {
             }
             Object ground = OpenMaverFeatures.read(packet, "onGround", "field_149474_g", null);
             if (ground instanceof Boolean) line.append(" ground=").append(ground);
+            line.append(" sprintFrame=").append(AttackReduceFeature.sprintFrameState());
             if (gap >= 0L) line.append(" +").append(gap).append("ms");
         }
         if (hold) line.append(" q=").append(queued);

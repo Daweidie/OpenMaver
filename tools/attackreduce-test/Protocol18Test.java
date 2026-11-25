@@ -22,6 +22,7 @@ final class Protocol18Test {
     static void run() throws Exception {
         nativeAttack(); airResetPhysics(); autoClickerModes(); criticalSprint(); replayBoundaries(); outboundFifo(); repeatedVelocity(); sounds();
         transactionCorrections();
+        JumpResetGrimTest.run();
     }
 
     /** Both production hooks: Netty S08 -> main replay -> async C06, in either install order. */
@@ -118,18 +119,6 @@ final class Protocol18Test {
                             && near(f.player.motionY, (y - .08) * .9800000190734863));
                 }
             }
-        try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(AttackReduceFeature.MODE_JUMP_RESET)) {
-            f.player.onGround = false; f.player.sprinting = f.player.serverSprintState = false;
-            f.receive(f.velocity()); f.input();
-            C03PacketPlayer movement = new C03PacketPlayer(1); f.channel.writeOutbound(movement);
-            List<Object> wire = outbound(f);
-            check("JumpReset air path sends sprint -> animation -> attack -> movement", wire.size() == 4
-                    && wire.get(0) instanceof C0BPacketEntityAction
-                    && ((C0BPacketEntityAction) wire.get(0)).action == C0BPacketEntityAction.Action.START_SPRINTING
-                    && wire.get(1) instanceof C0APacketAnimation && wire.get(2) instanceof C02PacketUseEntity && wire.get(3) == movement);
-            check("JumpReset air wire action leaves vertical velocity and ground intact", near(f.player.motionY, .36)
-                    && !f.player.onGround && f.player.jumpCalls == 0 && f.controller.attacks == 1);
-        }
     }
     static void autoClickerModes() throws Exception {
         java.lang.reflect.Method click = OpenMaverFeatures.class.getDeclaredMethod("tryAutoLeftClick", net.minecraft.client.Minecraft.class, long.class);
@@ -191,7 +180,7 @@ final class Protocol18Test {
         java.lang.reflect.Method stop = OpenMaverFeatures.class.getDeclaredMethod("stopCriticalsSprint", Object.class);
         java.lang.reflect.Method restore = OpenMaverFeatures.class.getDeclaredMethod("restoreCriticalsSprint", Object.class, boolean.class);
         stop.setAccessible(true); restore.setAccessible(true);
-        try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(1)) {
+        try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(0)) {
             boolean stopped = Boolean.TRUE.equals(stop.invoke(null, f.player));
             check("critical sprint stop updates server snapshot", stopped && !f.player.sprinting && !f.player.serverSprintState);
             check("critical attack shares 1.8 entry", OpenMaverFeatures.attackEntity18(f.mc, f.player, f.target));

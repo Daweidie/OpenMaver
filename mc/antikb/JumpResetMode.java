@@ -89,6 +89,12 @@ final class JumpResetMode extends AntiKBMode {
         if (OpenMaverFeatures.hasEntityAttackThisTick()) {
             AttackReduceFeature.status("AIR ATTACK WAIT"); return;
         }
+        // START_SPRINTING in this callback only updates Grim.isSprinting. Its attack
+        // slowdown uses lastSprinting, saved after a normal position prediction.
+        if (!AttackReduceFeature.attackSprintReady(AttackReduceFeature.player())) {
+            AttackReduceFeature.status("AIR ATTACK WAIT SPRINT FRAME");
+            VelocityDebug.resetAction("AIR ATTACK WAIT SPRINT FRAME"); return;
+        }
         Object target = airTarget;
         airTarget = null; // 至多一次攻击尝试；失败也不补写速度或反复攻击。
         boolean attacked = AttackReduceFeature.attack(target, true);
