@@ -17,6 +17,9 @@
 .idea/
 *.user
 
+# 不必要文件
+references/
+
 # Python 缓存
 __pycache__/
 *.pyc
