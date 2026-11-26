@@ -81,11 +81,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             "ALWAYS", "NCP", "FALLING", "GRIM", "JUMP", "LOW", "DOWN"};
     private static final String[] KILLAURA_TARGET_MODES = {"Single", "Switch"};
     private static final String[] KILLAURA_SORTS = {"Distance", "Health"};
-    /** OpenZen Scaffold 的四种模式。 */
-    private static final String[] SCAFFOLD_MODES = ScaffoldFeature.MODE_NAMES;
+    /** ClickGUI 仅暴露基础搭建与 Telly 两种模式。 */
+    private static final String[] SCAFFOLD_MODES = {"NORMAL", "TELLY"};
     /** Scaffold 手持方块来源：SILENT（伪装换手）/ HOTBAR（真实换手）。 */
     private static final String[] SCAFFOLD_SLOT_MODES = ScaffoldFeature.SLOT_NAMES;
-    /** GodBridge 的三种教材手法。 */
     private static final String[] GODBRIDGE_MODES = GodBridgeFeature.MODE_NAMES;
     private static final String[] SCAFFOLD2_MODES = Scaffold2Feature.MODE_NAMES;
     private static final String[] CHEST_COLOR_NAMES = {
@@ -246,6 +245,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         List<Module> modules = ModuleManager.getModules();
         for (int i = 0; i < modules.size(); i++) {
             Module module = modules.get(i);
+            // These standalone variants remain registered for shared implementation/config
+            // compatibility, but the ClickGUI presents them through the Scaffold entry only.
+            if ("Telly".equals(module.getName()) || "GodBridge".equals(module.getName())
+                    || "Scaffold2".equals(module.getName())) continue;
             String cat = categoryOf(module.getConfigKey());
             Entry entry = new Entry(module, cat);
             if ("AutoSprint".equals(module.getName())) {
@@ -660,18 +663,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }));
     }
 
-    /**
-     * KeepSprint：默认移动朝向对齐；OMNI BOOST / PAUSE 仅控制旧模式。
-     */
+    /** KeepSprint 使用静默朝向对齐，不暴露旋转模式切换。 */
     private void addKeepSprintSettings(Entry entry) {
-        entry.settings.add(Setting.check("ROTATE", new Binding() {
-            public double get() { return KeepSprintFeature.isRotate() ? 1.0D : 0.0D; }
-            public void set(double value) { KeepSprintFeature.setRotate(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("OMNI BOOST", new Binding() {
-            public double get() { return KeepSprintFeature.isSpeedBoost() ? 1.0D : 0.0D; }
-            public void set(double value) { KeepSprintFeature.setSpeedBoost(value > 0.5D); }
-        }));
         entry.settings.add(Setting.check("PAUSE SNEAK", new Binding() {
             public double get() { return KeepSprintFeature.isPauseSneak() ? 1.0D : 0.0D; }
             public void set(double value) { KeepSprintFeature.setPauseSneak(value > 0.5D); }
@@ -889,8 +882,14 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
      */
     private void addScaffoldSettings(Entry entry) {
         entry.settings.add(Setting.select("MODE", SCAFFOLD_MODES, new Binding() {
-            public double get() { return ScaffoldFeature.getMode(); }
-            public void set(double value) { ScaffoldFeature.setMode((int) Math.round(value)); }
+            public double get() {
+                int mode = ScaffoldFeature.getMode();
+                return mode == ScaffoldFeature.MODE_NORMAL ? 0.0D : 1.0D;
+            }
+            public void set(double value) {
+                ScaffoldFeature.setMode(value < 0.5D
+                        ? ScaffoldFeature.MODE_NORMAL : ScaffoldFeature.MODE_TELLY_BRIDGE);
+            }
         }));
         entry.settings.add(Setting.check("EAGLE", new Binding() {
             public double get() { return ScaffoldFeature.isEagle() ? 1.0D : 0.0D; }

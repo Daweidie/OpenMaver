@@ -101,8 +101,9 @@ public final class IntaveInventoryGateTest {
             double motion = player.motionZ;
             MoveDisablerFeature.afterMovementInput(player.movementInput);
             base.channel.runPendingTasks();
-            check("coast consumes horizontal input only", player.movementInput.moveForward == 0
-                    && player.movementInput.moveStrafe == 0 && player.movementInput.jump);
+            check("coast consumes horizontal input", player.movementInput.moveForward == 0
+                    && player.movementInput.moveStrafe == 0);
+            check("coast suppresses jump during the inventory frame", !player.movementInput.jump);
             check("coast preserves real velocity", player.motionZ == motion && player.motionZ != 0);
             check("coast uses actual nonsprinting physics", !player.sprinting);
             // One ordinary vanilla-style inertial tick. No packet synthesizes this movement.
@@ -115,6 +116,7 @@ public final class IntaveInventoryGateTest {
             check("native coast frame waits for post-physics snapshot", out() == null);
             MoveDisablerFeature.afterClientTick();
             base.channel.runPendingTasks();
+            check("coast restores held jump after the native frame", player.movementInput.jump);
             return frame;
         }
         Object out() { return base.channel.readOutbound(); }

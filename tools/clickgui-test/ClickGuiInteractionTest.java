@@ -29,6 +29,11 @@ public final class ClickGuiInteractionTest {
         Files.write(root.resolve("wallpapers/test.png"), new byte[0]);
         Module combat = new Module("Combat Demo", "combat.demo") {};
         ModuleManager.register(combat);
+        ModuleManager.register(new Module("KeepSprint", "movement.keepsprint") {});
+        ModuleManager.register(new Module("Scaffold", "movement.scaffold") {});
+        ModuleManager.register(new Module("Telly", "movement.telly") {});
+        ModuleManager.register(new Module("GodBridge", "movement.godbridge") {});
+        ModuleManager.register(new Module("Scaffold2", "movement.scaffold2") {});
         for (String category : new String[] {"movement", "render", "player", "misc"}) {
             ModuleManager.register(new Module(category + " Demo", category + ".demo") {});
         }
@@ -39,6 +44,33 @@ public final class ClickGuiInteractionTest {
 
         GuiOpenMaverClickGui gui = open(null, null, 1200, 600);
         check(columns(gui).size() == 7, "Five module categories plus Config and Personalization");
+        for (String hidden : new String[] {"Telly", "God Bridge", "Scaffold2"}) {
+            check(!hasEntry(gui, hidden), hidden + " standalone row is hidden");
+        }
+        Object keepSprint = findEntry(gui, "Keep Sprint");
+        check(findSetting(keepSprint, "ROTATE") == null, "KeepSprint does not expose ROTATE");
+        check(findSetting(keepSprint, "OMNI BOOST") == null, "KeepSprint hides the inactive OMNI control");
+        Method moduleInfo = OpenMaverHud.class.getDeclaredMethod("moduleInfo", Module.class);
+        moduleInfo.setAccessible(true);
+        check("".equals(moduleInfo.invoke(null, ModuleManager.getModule("KeepSprint"))),
+                "HUD omits KeepSprint's parameter preview");
+        Object scaffold = findEntry(gui, "Scaffold");
+        Object scaffoldMode = findSetting(scaffold, "MODE");
+        String[] scaffoldOptions = (String[]) get(scaffoldMode, "options");
+        check(scaffoldOptions.length == 2 && "Normal".equals(scaffoldOptions[0])
+                && "Telly".equals(scaffoldOptions[1]), "Scaffold exposes only Normal and Telly");
+        invoke(scaffoldMode, "set", new Class<?>[] {double.class}, 1.0D);
+        check(ScaffoldFeature.getMode() == ScaffoldFeature.MODE_TELLY_BRIDGE,
+                "Scaffold Telly selection maps to the Telly bridge implementation");
+        invoke(scaffoldMode, "set", new Class<?>[] {double.class}, 0.0D);
+        check(ScaffoldFeature.getMode() == ScaffoldFeature.MODE_NORMAL,
+                "Scaffold Normal selection maps to the normal implementation");
+        Properties legacyKeepSprint = new Properties();
+        legacyKeepSprint.setProperty("keepSprint.rotate", "false");
+        KeepSprintFeature.load(legacyKeepSprint);
+        check(KeepSprintFeature.isRotate(), "Legacy rotate=false config keeps silent rotation enabled");
+        KeepSprintFeature.setRotate(false);
+        check(KeepSprintFeature.isRotate(), "Legacy API cannot disable silent rotation");
         check(!HudFont.text.contains("Client") && !HudFont.text.contains("SYSTEM"), "Old navigation is absent");
         check(HudFont.text.contains("Config") && HudFont.text.contains("Wallpaper"), "New panels render");
         Object miscColumn = column(gui, "misc");
@@ -270,6 +302,24 @@ public final class ClickGuiInteractionTest {
             if (entry != null && get(hit, "setting") == null && name.equals(get(entry, "name"))) return hit;
         }
         throw new AssertionError("No module row " + name);
+    }
+    private static boolean hasEntry(GuiOpenMaverClickGui gui, String name) throws Exception {
+        for (Object entry : (List<?>) get(gui, "entries")) {
+            if (name.equals(get(entry, "name"))) return true;
+        }
+        return false;
+    }
+    private static Object findEntry(GuiOpenMaverClickGui gui, String name) throws Exception {
+        for (Object entry : (List<?>) get(gui, "entries")) {
+            if (name.equals(get(entry, "name"))) return entry;
+        }
+        throw new AssertionError("No module entry " + name);
+    }
+    private static Object findSetting(Object entry, String label) throws Exception {
+        for (Object setting : (List<?>) get(entry, "settings")) {
+            if (label.equalsIgnoreCase((String) get(setting, "label"))) return setting;
+        }
+        return null;
     }
     private static Object settingHit(Object column, String label) throws Exception {
         for (Object hit : (List<?>) get(column, "hits")) {

@@ -86,7 +86,8 @@ public final class KeepSprintFeature {
     // ==================================================================
 
     public static void load(Properties values) {
-        rotate = readBoolean(values, "keepSprint.rotate", true);
+        // KeepSprint now always uses its silent movement-yaw path. Ignore legacy toggles.
+        rotate = true;
         pauseSneak = readBoolean(values, "keepSprint.pauseSneak", true);
         pauseItem = readBoolean(values, "keepSprint.pauseItem", true);
         speedBoost = readBoolean(values, "keepSprint.speed", true);
@@ -115,9 +116,8 @@ public final class KeepSprintFeature {
 
     public static boolean isRotate() { return rotate; }
     public static void setRotate(boolean value) {
-        if (rotate != value) reset();
-        rotate = value;
-        OpenMaverFeatures.markDirty();
+        // Retain the legacy API while keeping the current silent behavior fixed.
+        rotate = true;
     }
 
     public static boolean isPauseSneak() { return pauseSneak; }
@@ -151,7 +151,7 @@ public final class KeepSprintFeature {
         Module module = ModuleManager.getModule("KeepSprint");
         if (module == null || !module.isEnabled()) return "OFF";
         if (!active) return status;
-        if (rotate) return "ROTATE  ·  VANILLA";
+        if (rotate) return "SILENT  ·  VANILLA";
         return "OMNI  ·  " + (speedBoost ? "1.3x" : "PKT");
     }
 
@@ -251,7 +251,7 @@ public final class KeepSprintFeature {
             }
             attackPending = false;
             if (!enabled()) status = "OFF";
-            else if (active) status = "ROTATE";
+            else if (active) status = "SILENT";
             // C03 尚未发送，此处保留 yaw，ClientTick END 才恢复。
             return;
         }

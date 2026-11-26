@@ -44,9 +44,9 @@ keepSprint.speed=true
 keepSprint.attackResend=true
 ```
 
-ClickGUI：`ROTATE` 开关选择新/旧路径。`OMNI BOOST`、`PAUSE SNEAK`、`PAUSE ITEM`
-只控制 ROTATE 关闭后的旧 OMNI 路径；ROTATE 固定遵守原版暂停条件。
-`HIT RESEND` 两模式共用。core 中的 KeepSprint 仍只负责开关，不引用 Minecraft 类。
+ClickGUI 固定使用静默朝向路径，不再显示旋转切换或旧 OMNI 的速度选项；旧配置中的
+`keepSprint.rotate=false` 会迁移为开启。`PAUSE SNEAK`、`PAUSE ITEM` 遵守原版暂停条件，
+`HIT RESEND` 仍可配置。core 中的 KeepSprint 仍只负责开关，不引用 Minecraft 类。
 
 ## 保留的 OMNI 路径与先前修复
 

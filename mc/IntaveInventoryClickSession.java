@@ -38,6 +38,8 @@ final class IntaveInventoryClickSession {
     private volatile String status = "IDLE";
     // Main-thread fields: a tick owns at most one neutral-input marker.
     private boolean coastTick;
+    private boolean coastJump;
+    private MovementInput coastInput;
     // Event-loop fields below.
     private boolean armed, opened, retired;
     private int batchSize;
@@ -98,6 +100,12 @@ final class IntaveInventoryClickSession {
         if (snapshot == null || snapshot.cursor != null || snapshot.dragging) return;
         input.moveForward = 0;
         input.moveStrafe = 0;
+        // Intave's legacy inventory-open physics path cannot infer a jump key from 1.8
+        // movement packets. Do not let a held jump produce an unannounced +0.42 Y impulse
+        // in the same real movement frame that temporarily opens the inventory.
+        coastInput = input;
+        coastJump = input.jump;
+        input.jump = false;
         OpenMaverFeatures.callVoid(player, "setSprinting", "func_70031_b", null, false);
         coastTick = true;
         needsFrame = false;
@@ -117,6 +125,10 @@ final class IntaveInventoryClickSession {
     void afterTick() {
         if (!coastTick) return;
         coastTick = false;
+        if (coastInput != null) {
+            coastInput.jump = coastJump;
+            coastInput = null;
+        }
         final double x = number(player, "posX", "field_70165_t");
         Object bounds = OpenMaverFeatures.call(player, "getEntityBoundingBox", "func_174813_aQ", null);
         Object minY = read(bounds, "minY", "field_72338_b");
