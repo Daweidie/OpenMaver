@@ -489,8 +489,9 @@ debug.enabled=false         # true 时写入 logs/openmaver-debug.log
 ```
 
 `ANTICHEAT` 选择会保存到配置和导出的 profile。现有 profile 限制继续共用。
-Intave 专用 MoveDisabler 目前只实现了玩家背包（window 0）的临时窗口包序；实服上的
-Physics 与服务器物品结果尚未复测，Inventory Manager 也未适配。因此选择 `INTAVE` 不代表
+Intave 专用 MoveDisabler 目前实现了玩家背包（window 0）的惯性帧点击候选：光标清空后成组提交，
+每批撤销一帧水平加速度并保留真实惯性。Physics 与服务器物品结果尚待新实测，Inventory Manager
+的自动规划也未完整适配。因此选择 `INTAVE` 不代表
 所有背包检查均已通过。源码判据和待确认项见 [Intave 背包审计](design/INTAVE_INVENTORY_AUDIT.md)。
 
 测试 Intave 时，可在 **Misc → Intave Debug** 启用纯观测记录器。它会记录客户端移动/窗口包、
@@ -1537,14 +1538,18 @@ Grim 的 `combat/Reach` 不是「你报多远就查多远」，它量的是另�
   不修改全局 KeyBinding 状态。聊天、菜单、ClickGUI，以及聚焦的容器搜索/重命名框
   不接管移动；窗口失焦时清空容器移动输入。保留原版容器鼠标点击与拖动物品行为。
 - 输入钩子与网络钩子独立，复用 Scaffold / GodBridge / Velocity 的输入回调位置。
-- 玩家正在冲刺时，发送 `C0E`（点击窗口）或 `C0D`（关闭窗口）会依次发出
+- 默认 Grim 路径中，玩家正在冲刺时，发送 `C0E`（点击窗口）或 `C0D`（关闭窗口）会依次发出
   `C0B STOP_SPRINTING → 原窗口包 → C0B START_SPRINTING`。保持本地冲刺状态，
   原窗口包只发送一次；步行时和其他包均原样发送。覆盖手动操作与 Chest Stealer。
-- 选择并启用 Intave Bypass 时，玩家背包 GUI 的服务端窗口不会随本地 GUI 长时间打开：
-  抑制 `OPEN_INVENTORY_ACHIEVEMENT` 与 window 0 的本地关闭包，window 0 点击按
-  `C16 OPEN → 空 C03（无坐标变化）→ 原 C0E → C0D 0` 发出。普通真实移动 C03 保持原样，
-  因而在服务端背包状态关闭时移动；箱子等非零窗口保留原包路径，目前没有 Intave 专用适配。
-  这是按引用 Intave 源码做的候选策略；本地 Netty 已验证包序与 promise，尚未在目标实服
+- 选择并启用 Intave Bypass 时，抑制玩家背包的原生 C16 OPEN 和 window 0 本地关闭包。
+  点击保留原包和事务号，拾取/放下或拖动结束、光标清空后成批提交；期间继续本地移动。
+  每批在实际移动计算前撤销一帧 forward/strafe 并关闭本地冲刺，保留 motion、跳跃和潜行，
+  以 `C16 OPEN → 这一帧真实惯性位置 → 本批原始 C0E` 发出。原生空 C03 仅替换为实际
+  post-physics 坐标帧，C05 转头帧升级为保留 yaw/pitch 的 C06，不增加移动 tick。匹配本批所有 S32 后才发 `C0D 0` 并保序释放后续包；
+  等待期间本地运动仍继续，出站暂存最多 128 包，确认期限 400ms，C0F/keepalive 穿透。
+  相关库存同步、传送、换窗、断线或取消时清理过期预测；主动消费包正常完成 promise，
+  避免被 Forge 当作传输失败而断线，真实下游写失败保留原因。箱子等非零窗口保留原包路径。
+  这是按引用 Intave 源码做的候选策略；旧空 C03 策略已实测失败。新候选尚待目标环境
   验证 Physics、Bukkit 点击结果、光标和物品状态，仍显示为开发中。
   2026-11-26 修复运行期 C16 / C0D 字段映射（`field_149437_a` / `field_149556_a`）；
   原错误会让真实 Forge 客户端把应抑制的背包打开包照常发出。回归现在同时使用 MCP 字段和从 Forge

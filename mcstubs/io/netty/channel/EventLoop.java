@@ -10,4 +10,6 @@ package io.netty.channel;
 public interface EventLoop {
 
     void execute(Runnable task);
+
+    boolean inEventLoop();
 }

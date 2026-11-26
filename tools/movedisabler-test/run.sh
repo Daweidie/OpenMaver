@@ -11,9 +11,10 @@ if [[ ! -f "$netty_jar" ]]; then
 fi
 classpath="$netty_jar:build/mc-classes:build/java-classes:build/mcstubs-classes"
 mkdir -p "$out_dir"
-mapfile -t sources < <(rg --files tools/attackreduce-test tools/movedisabler-test -g '*.java')
+mapfile -t sources < <(rg --files tools/attackreduce-test tools/movedisabler-test -g '*.java' -g '!OnMoveReferenceTest.java')
 javac -source 8 -target 8 -Xlint:-options -encoding UTF-8 -cp "$classpath" -d "$out_dir" "${sources[@]}"
 java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" MoveDisablerTest
+java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" IntaveInventoryGateTest
 java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" InventoryMoveTest
 java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" IntaveMoveDebugTest
 # MCP aliases masked production reflection errors. Repeat the packet tests with
@@ -25,3 +26,5 @@ mkdir -p "$srg_out"
 mapfile -t srg_sources < <(rg --files "$srg_src" -g '*.java')
 javac -source 8 -target 8 -Xlint:-options -encoding UTF-8 -cp "$out_dir:$classpath" -d "$srg_out" "${srg_sources[@]}"
 java -Dfile.encoding=UTF-8 -Dopenmaver.test.mapping=SRG -cp "$srg_out:$out_dir:$classpath" MoveDisablerTest
+java -Dfile.encoding=UTF-8 -Dopenmaver.test.mapping=SRG -cp "$srg_out:$out_dir:$classpath" IntaveInventoryGateTest
+python3 tools/movedisabler-test/reference_contract.py --out "$out_dir/reference-contract"

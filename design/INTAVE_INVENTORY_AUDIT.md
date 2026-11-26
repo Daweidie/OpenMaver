@@ -4,9 +4,28 @@
 Inventory Manager（IM）。Intave 必须保留关闭背包时整理和点击时继续移动，不能用仅在
 GuiInventory 内运行、强制停步或延迟至停步来替代。
 
-当前完成的是 Bypass 改名、目标选择、配置及 profile 保存/恢复，缺省保持 Grim。
-Intave 专用包处理尚未实现；现有 MoveDisabler 和 IM 执行路径保持原状。
-不能将选择 INTAVE 或本地回归通过当作 Intave 联机兼容验证。
+当前已完成 Bypass 选择与持久化，以及 MoveDisabler 的 window 0 惯性帧点击候选。
+CANDIDATE：每批一帧撤销水平加速度并保留实际惯性，光标清空后成组发出原始点击，
+等待匹配事务确认再关闭窗口并释放后续运动；不是此前失败的空 C03 路径。
+UNRESOLVED：候选在目标上的 Physics、Bukkit 物品结果和统计检查；IM 自动规划尚未完整适配。
+当前实现细节、限制与回滚入口见 [接力文档](INTAVE_MOVEDISABLER_HANDOFF.md) 顶部。
+
+## 2026-11-26 21:31：库存同步重置引起客户端断线
+
+用户提供的 FML 栈指向点击 session 主动取消时的 `tryFailure`。在真实 Netty 4.0.23 上给
+出站 promise 挂 `FIRE_EXCEPTION_ON_FAILURE` 后，本地回归复现同一 `inventory resync`
+异常，记录于 `build/intave-network-reset-fix-backup/regression-before.log`（exit 1）。
+修复后，主动消费以 `trySuccess` 完成并释放，真实下游失败仍保留原始 cause；相关同步取消、
+用户关窗、禁用、换世界、传送、超时、队列上限与断线清理都纳入失败监听器回归。
+S30 仅 window 0 重置，S2F 的 window 0/-1/-2 分别涉及背包、光标和玩家直接库存；
+其他窗口更新保留原有未提交点击。字段通过本机 Forge 映射生成纯 SRG 测试，避免 MCP 假通过。
+
+Chest 断线 GUI 的空 player NPE 为后续独立缺陷，已在回调和容器查找两处防护并回归。
+VERIFIED：本地点击 gate MCP/SRG 各 442 项、Chest 102 项通过；回执在上述备份目录。
+实际 debug 副本中的 action=29 确认后确有 C0D 与后续真实运动释放，随后出现 GuiDisconnected；
+这些记录只证明包序与本次客户端异常链，不构成 Physics/Bukkit 的通过证明。
+
+以下保留引用判据及历轮实测，旧实现状态按章节时间阅读。
 
 引用版本：`references/anticheats/Intave` d01b2e051；Grim f319e165e。
 服务器部署的 Intave 版本尚未确认。随后从本机实例
@@ -60,7 +79,8 @@ START 阶段点击时序，并独立回归默认 Grim 路径。
 2. 对 `GuiInventory`，`InventoryTracker` 只在收到客户端打开背包命令时置开，
    收到 C0D 时置关；箱子等服务端打开的窗口走服务端 OPEN_WINDOW / CLOSE_WINDOW 路径。
 3. `OnMoveCheck` 在 `receivedFlyingPacketIn(2)` 为真时直接豁免点击移动检查；但这不豁免
-   Physics。近期移动包因此不能单独作为完整方案。
+   Physics。该方法还要求模拟得到的 `FLYING_PACKET_ACCURATE` 近期有效，收到空 C03 本身
+   只更新 `FLYING_PACKET_CLIENT`；详见下方 21:10:04 实测复核。
 4. 要让 C0E 被当成打开状态下的点击，窗口打开状态必须覆盖该点击。只在点击前开、点击后
    立刻关，仍会在 `emptyFlyingPacketsAreExplicitlySent()` 路径中命中
    `PacketInventoryHeuristic` 的 `inventoryTicks == 0` 条件。
@@ -146,7 +166,8 @@ Manager 为 off；运行时诊断状态为 `target=INTAVE bypass=true movedisabl
    `C16 OPEN_INVENTORY_ACHIEVEMENT → C03(onGround，
    不含位置/朝向) → 原 C0E → C0D(window 0)`。空 C03 放在临时 open 区间，是因为引用的
    `PacketInventoryHeuristic` 在收到任意 flying 包时递增 `inventoryTicks`，而关闭检查只在
-   `inventoryTicks == 0` 时触发；`OnMoveCheck` 也会因近期 flying 包而走其显式豁免分支。
+   `inventoryTicks == 0` 时触发。此前将此空包同时视为 `OnMoveCheck` 豁免依据的推断有误：
+   后者还要求模拟器确认近期低位移帧，单凭插入空 C03 不保证豁免。
 3. 普通位置/朝向 C03、点击包及其原 promise 不缓存、不重排，原点击只发一次。Intave 策略不
    依赖本地 sprint 状态；目标不是 Intave 时保留原 Grim 的 STOP / 原包 / START 行为。
 
@@ -207,3 +228,47 @@ VERIFIED：修复后构建成功；`MoveDisablerTest[MCP]` 与 `MoveDisablerTest
 物品适配 16、ClickGUI 65 项通过。验证完整输出保存在备份目录的
 `movedisabler-verification.log`、`inventory-verification.log`、`clickgui-verification.log`。
 产物仍使用标准路径 `build/openmaver-b2.2.0-2026-11-26.jar`；重启客户端才能加载新类。
+
+## 2026-11-26 21:10:04：移动正常，但点击被 OnMoveCheck 取消
+
+VERIFIED：用户反馈打开玩家背包后已能移动。本次读取实例 debug 日志时捕获到：
+
+```text
+[2171] ts=1795698604467 OUT net.minecraft.network.play.client.C16PacketClientStatus {field_149437_a=OPEN_INVENTORY_ACHIEVEMENT}
+[2172] ts=1795698604467 OUT net.minecraft.network.play.client.C03PacketPlayer {field_149479_a=0.0,field_149477_b=0.0,field_149478_c=0.0,field_149476_e=0.0,field_149473_f=0.0,field_149474_g=true,field_149480_h=false,field_149481_i=false}
+[2173] ts=1795698604467 OUT net.minecraft.network.play.client.C0EPacketClickWindow {field_149554_a=0,field_149552_b=20,field_149553_c=0,field_149550_d=2,field_149551_e=item(White Wool,count=64),field_149549_f=0}
+[2174] ts=1795698604468 OUT net.minecraft.network.play.client.C0DPacketCloseWindow {field_149556_a=0}
+[2190] ts=1795698604572 IN net.minecraft.network.play.server.S2EPacketCloseWindow {field_148896_a=0}
+```
+
+以上为初次工具读取回执的原样包字段切片（省略 ` | ` 后的客户端快照）；原 debug 文件随后
+被新一次记录覆盖，当前文件开头已变为序号 13686 的 START，所以不要再用旧行号检索新文件。
+原点击快照是 `input=(f1.0000,s0.0000,jfalse,snfalse)`、`sprint=true`；临时包序后紧跟
+同毫秒的真实位置包。服务端约 104 ms 后下发 S30 / S2F 窗口与光标重同步，随后下发 S2E。
+同秒聊天告警为 `performed inventory-click whilst walking`。
+
+VERIFIED：参考源码中的两个限制独立：
+
+- `KeypressBrancher.isValidPress()` 在服务端背包打开时排除非零移动输入。修正 C16
+  抑制之后，普通移动帧在背包关闭状态下处理，解决了先前打开背包持续移动的矛盾。
+- `OnMoveCheck.receiveWindowClick()` 是 Bukkit 点击事件检查。它读取服务端推断的
+  `keyForward` / `keyStrafe` 和 `offsetMotionX/Z`，普通状态水平位移阈值是 0.1，
+  潜行为 0.04；满足移动条件且没有豁免时，提交 0 VL，取消事件并安排关闭背包。
+  因此 `vl=0.0(+0.0)` 不是点击成功回执。
+
+VERIFIED：空 C03 的豁免解释需要修正。1.8 显式空包分支中，
+`MovementMetadata.receivedFlyingPacketIn(2)` 同时要求 `FLYING_PACKET_CLIENT` 与
+`FLYING_PACKET_ACCURATE` 的距今 tick 数均 <= 2。收到无位置包在 `updateMovement()`
+中直接更新的是前者；后者来自模拟结果的低位移判定。
+`Simulation.resultsInFlyingPacket()` 比较模拟位置与上一上报位置的距离，1.8 的半径为 0.03。
+`Physics.receiveMovement()` 在无位置且模拟结果未满足该判定时提前返回，不提交完整模拟，
+因此也不保证将上次已提交的 `keyForward` / `keyStrafe` 改成 0。
+
+CANDIDATE：此次持续移动期间，空 C03 没有建立所需的模拟低位移状态，Bukkit 点击事件仍
+读到了非零输入和超过阈值的位移，随后取消并关窗。客户端包序完整且收到关窗反馈，支持
+该原因；插包本身并未消除点击检查。Bukkit 执行前还可能已处理后续位置包，应继续对照
+实际事件时刻的状态，不能只从客户端 write 顺序推定 Bukkit 看到的状态。
+
+UNRESOLVED：部署版本的两个 flying 计数器、事件执行时的推断按键与位移、包线程和
+Bukkit 事件时序均无服务端直接回执。本次只复核原因、修正文档错误推断，没有发布新的
+移动点击策略；现有候选对移动点击已得到负面现场结果，继续保留 WIP。

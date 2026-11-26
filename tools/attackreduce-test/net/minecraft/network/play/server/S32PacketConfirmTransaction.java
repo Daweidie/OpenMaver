@@ -9,14 +9,20 @@ package net.minecraft.network.play.server;
 public class S32PacketConfirmTransaction {
     private final short windowId;
     private final short actionNumber;
+    private final boolean accepted;
 
     public S32PacketConfirmTransaction() {
         this((short) 1, (short) 1);
     }
 
     public S32PacketConfirmTransaction(short windowId, short actionNumber) {
+        this(windowId, actionNumber, true);
+    }
+
+    public S32PacketConfirmTransaction(short windowId, short actionNumber, boolean accepted) {
         this.windowId = windowId;
         this.actionNumber = actionNumber;
+        this.accepted = accepted;
     }
 
     public short func_148887_f() {

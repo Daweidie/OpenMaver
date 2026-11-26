@@ -19,6 +19,8 @@ public interface ChannelHandlerContext {
 
     ChannelHandlerContext fireChannelRead(Object msg);
 
+    ChannelHandlerContext fireChannelInactive();
+
     ChannelFuture write(Object msg, ChannelPromise promise);
 
     ChannelHandlerContext flush();

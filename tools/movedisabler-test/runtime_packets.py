@@ -22,11 +22,17 @@ def main():
         "forge-1.8.9-11.15.1.2318-1.8.9-universal.jar"))
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    package = "net/minecraft/network/play/client/"
-    # Vanilla wire fields: C16.status, C0D.windowId and C0E.windowId are 'a'.
-    wanted = {"C16PacketClientStatus": "status",
-              "C0DPacketCloseWindow": "windowId",
-              "C0EPacketClickWindow": "windowId"}
+    package = "net/minecraft/network/play/"
+    # Obfuscated declaration fields independently confirmed with vanilla javap.
+    wanted = {
+        "client/C16PacketClientStatus": {"a": "status"},
+        "client/C0DPacketCloseWindow": {"a": "windowId"},
+        "client/C0EPacketClickWindow": {"a": "windowId", "d": "actionNumber"},
+        "server/S32PacketConfirmTransaction": {"a": "windowId", "b": "actionNumber", "c": "accepted"},
+        "server/S30PacketWindowItems": {"a": "windowId"},
+        "server/S2FPacketSetSlot": {"a": "windowId", "b": "slot"},
+        "client/C03PacketPlayer": {"g": "moving", "h": "rotating", "d": "yaw", "e": "pitch"},
+    }
     with ZipFile(args.forge_jar) as jar:
         lines = lzma.decompress(jar.read("deobfuscation_data-1.8.9.lzma")).decode().splitlines()
     classes, fields = {}, {}
@@ -36,20 +42,22 @@ def main():
             classes[parts[2]] = parts[1]
         elif parts and parts[0] == "FD:":
             fields[parts[1]] = parts[2]
-    for name, mcp in wanted.items():
+    for name, aliases in wanted.items():
         owner = package + name
-        mapped = fields[classes[owner] + "/a"]
-        if not mapped.startswith(owner + "/"):
-            raise ValueError("Unexpected field owner: " + mapped)
-        srg = mapped.rsplit("/", 1)[1]
         source = Path("tools/attackreduce-test") / (owner + ".java")
-        body, count = re.subn(r"\b" + mcp + r"\b", srg, source.read_text())
-        if count < 2:
-            raise ValueError("Missing fixture field: " + str(source))
+        body = source.read_text()
+        for obf, mcp in aliases.items():
+            mapped = fields[classes[owner] + "/" + obf]
+            if not mapped.startswith(owner + "/"):
+                raise ValueError("Unexpected field owner: " + mapped)
+            srg = mapped.rsplit("/", 1)[1]
+            body, count = re.subn(r"\b" + mcp + r"\b", srg, body)
+            if count < 2:
+                raise ValueError("Missing fixture field: " + str(source))
+            print("[runtime-packets] " + name + "." + mcp + " -> " + srg)
         target = args.out / (owner + ".java")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(body)
-        print("[runtime-packets] " + name + "." + mcp + " -> " + srg)
 
 
 if __name__ == "__main__":

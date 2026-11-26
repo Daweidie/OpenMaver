@@ -274,6 +274,10 @@ public final class AttackReduceFeature {
         });
     }
     static void sendMovePackets() { flushMoves(session); }
+    static boolean isOutboundHeld() {
+        Session s = session;
+        return s != null && !s.closed && s.holdMoves;
+    }
     private static void flushMoves(final Session s) {
         if (s == null) return;
         Runnable flush = new Runnable() {

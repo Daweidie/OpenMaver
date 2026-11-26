@@ -29,7 +29,6 @@ public final class MoveDisablerTest {
         ModuleManager.register(ZenAntiKBTest.MODULE);
         ModuleManager.register(ZenAntiKBTest.AURA);
         packets();
-        intaveInventorySequence();
         lifecycle();
         mappedConnection();
         failure();
@@ -39,100 +38,6 @@ public final class MoveDisablerTest {
         MoveDisablerFeature.onTick(null);
         System.out.println("MoveDisablerTest[" + System.getProperty("openmaver.test.mapping", "MCP")
                 + "]: " + passed + " passed, 0 failed");
-    }
-
-    private static void intaveInventorySequence() {
-        OpenMaverFeatures.setBypassAnticheat(OpenMaverFeatures.BYPASS_INTAVE);
-        OpenMaverFeatures.setBypassEnabled(true);
-        try (ZenAntiKBTest.Fixture f = fixture()) {
-            C16PacketClientStatus open = new C16PacketClientStatus(
-                    C16PacketClientStatus.EnumState.OPEN_INVENTORY_ACHIEVEMENT);
-            ChannelPromise openPromise = f.channel.newPromise();
-            f.channel.writeAndFlush(open, openPromise);
-            check("Intave suppresses long-lived player inventory open", openPromise.isSuccess()
-                    && f.channel.readOutbound() == null);
-
-            for (C16PacketClientStatus.EnumState state : new C16PacketClientStatus.EnumState[] {
-                    C16PacketClientStatus.EnumState.PERFORM_RESPAWN,
-                    C16PacketClientStatus.EnumState.REQUEST_STATS}) {
-                Object otherStatus = new C16PacketClientStatus(state);
-                f.channel.writeOutbound(otherStatus);
-                single(f, otherStatus, "Intave preserves non-inventory status: " + state);
-            }
-
-            Object ordinaryMove = new C03PacketPlayer.C04PacketPlayerPosition();
-            f.channel.writeOutbound(ordinaryMove);
-            check("Intave keeps real movement packets untouched", f.channel.readOutbound() == ordinaryMove
-                    && f.channel.readOutbound() == null);
-
-            C0EPacketClickWindow click = new C0EPacketClickWindow(0);
-            ChannelPromise clickPromise = f.channel.newPromise();
-            f.channel.writeAndFlush(click, clickPromise);
-            Object status = f.channel.readOutbound();
-            Object emptyMove = f.channel.readOutbound();
-            check("Intave opens only around a player inventory click",
-                    status instanceof C16PacketClientStatus
-                    && ((C16PacketClientStatus) status).getStatus()
-                            == C16PacketClientStatus.EnumState.OPEN_INVENTORY_ACHIEVEMENT);
-            check("Intave click window has a positionless C03 frame",
-                    emptyMove instanceof C03PacketPlayer && !((C03PacketPlayer) emptyMove).moving
-                    && ((C03PacketPlayer) emptyMove).onGround);
-            check("original inventory transaction follows the open frame",
-                    f.channel.readOutbound() == click);
-            check("Intave closes the temporary window after the click",
-                    f.channel.readOutbound() instanceof C0DPacketCloseWindow
-                    && f.channel.readOutbound() == null && clickPromise.isSuccess());
-
-            C0DPacketCloseWindow localClose = new C0DPacketCloseWindow(0);
-            ChannelPromise closePromise = f.channel.newPromise();
-            f.channel.writeAndFlush(localClose, closePromise);
-            check("local inventory close does not alter temporary server state",
-                    closePromise.isSuccess() && f.channel.readOutbound() == null);
-
-            Object inheritedOpen = new C16PacketClientStatus(
-                    C16PacketClientStatus.EnumState.OPEN_INVENTORY_ACHIEVEMENT) { };
-            f.channel.writeOutbound(inheritedOpen);
-            check("Intave resolves inherited inventory status fields", f.channel.readOutbound() == null);
-            Object inheritedClose = new C0DPacketCloseWindow(0) { };
-            f.channel.writeOutbound(inheritedClose);
-            check("Intave resolves inherited close-window fields", f.channel.readOutbound() == null);
-
-            // Consecutive native clicks must remain independent, including a
-            // subclass whose window id is private in the packet's superclass.
-            C0EPacketClickWindow nextClick = new C0EPacketClickWindow(0) { };
-            f.player.onGround = false;
-            ChannelPromise nextPromise = f.channel.newPromise();
-            f.channel.writeAndFlush(nextClick, nextPromise);
-            check("next click reopens its own temporary window",
-                    f.channel.readOutbound() instanceof C16PacketClientStatus);
-            Object airborneMove = f.channel.readOutbound();
-            check("temporary frame retains airborne ground state",
-                    airborneMove instanceof C03PacketPlayer && !((C03PacketPlayer) airborneMove).moving
-                    && !((C03PacketPlayer) airborneMove).onGround);
-            check("next original transaction retains identity and promise",
-                    f.channel.readOutbound() == nextClick && nextPromise.isSuccess());
-            check("next click closes its own temporary window",
-                    f.channel.readOutbound() instanceof C0DPacketCloseWindow
-                    && f.channel.readOutbound() == null);
-
-            C0EPacketClickWindow chestClick = new C0EPacketClickWindow(1);
-            f.channel.writeOutbound(chestClick);
-            check("non-player container clicks keep their original packet path",
-                    f.channel.readOutbound() == chestClick && f.channel.readOutbound() == null);
-
-            Object chestClose = new C0DPacketCloseWindow(1);
-            f.channel.writeOutbound(chestClose);
-            single(f, chestClose, "Intave preserves nonzero container close");
-
-            OpenMaverFeatures.setBypassEnabled(false);
-            f.player.sprinting = false;
-            f.channel.writeOutbound(open, localClose, click);
-            check("Bypass disable immediately restores native inventory packet path",
-                    f.channel.readOutbound() == open && f.channel.readOutbound() == localClose
-                    && f.channel.readOutbound() == click && f.channel.readOutbound() == null);
-        }
-        OpenMaverFeatures.setBypassEnabled(false);
-        OpenMaverFeatures.setBypassAnticheat(OpenMaverFeatures.BYPASS_GRIM);
     }
 
     private static ZenAntiKBTest.Fixture fixture() {

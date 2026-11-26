@@ -1092,6 +1092,10 @@ public final class ChestFeature {
             return;
         }
         Object player = read(mc, "thePlayer", "field_71439_g", null);
+        if (player == null) {
+            resetSession();
+            return;
+        }
         Object playerInv = playerInventoryOf(player);
         Object own = playerInventoryContainerOf(player);
         boolean chestGui = isChestScreen(event.gui, playerInv, own);
@@ -2950,6 +2954,9 @@ public final class ChestFeature {
      * 让「箱子容器」判定永远成立不了（正是「箱子开了却不搬」的一种成因）。
      */
     private static Object playerInventoryContainerOf(Object player) {
+        if (player == null) {
+            return null;
+        }
         Object container = read(player, "inventoryContainer", "field_71069_bz", null);
         if (container != null) {
             return container;

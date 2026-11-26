@@ -1,5 +1,56 @@
 # 给下一位 AI 的接力提示词
 
+## 当前交付（2026-11-26；21:31 断线修复与惯性帧候选）
+
+- VERIFIED：21:31 用户异常栈从 `IntaveInventoryClickSession.fail()` 的
+  `promise.tryFailure(new IllegalStateException("inventory resync"))` 开始。挂上真实 Netty
+  `FIRE_EXCEPTION_ON_FAILURE` 的回归也复现同一异常，见
+  `build/intave-network-reset-fix-backup/regression-before.log`（exit 1）。
+- 修复：主动消费的点击及过期运动包用 `trySuccess()` 完成并释放；真实下游写失败不改写。
+  同步窗口判定读取实际 MCP/SRG 字段，仅 S30 window 0、S2F window 0/-1/-2 重置玩家预测，
+  非零容器的同步包穿透。相关同步仍可撤销本批未提交点击，避免重放旧库存状态。
+- 修复：Chest 在断线 GUI 回调遇到空 player 时重置会话，私有容器查找也加空值保护。
+  Velocity 共存测试等待真实 hook 安装，并断言真实出站持有，修掉旧测试假阳性。
+- CANDIDATE：新 `mc/IntaveInventoryClickSession.java` 替换已失败的空 C03 策略。
+  本地预测拾取/放下/拖动成组，光标清空才提交，避免 C0D 清空/丢出光标物品。
+  每批一帧真实惯性移动：最终 input 回调清 forward/strafe、实际关闭冲刺，但保留 motion、
+  jump、sneak；FIFO marker 选择随后原生移动帧，END 获取真实 post-physics 坐标。
+  发送 `C16 → 真实位置帧 → 原始 C0E 组`；匹配所有本批 S32 后才 `C0D → 后续包`。
+  原生无位置帧只升级成实际坐标帧，C05 升级为保留原 yaw/pitch 的 C06；
+  不增加 tick、不改事务号，不强制等停稳。
+  本地移动继续，后续出站短暂缓存；队列各限 128、确认期限 400ms，C0F/keepalive 穿透。
+- VERIFIED：当前本地回归 MCP/SRG MoveDisabler 各 76、点击 gate 各 442、InventoryMove 32、
+  Debug 6、引用原始 OnMoveCheck 谓词 6、Chest 102 项通过。引用谓词测试用 API doubles，
+  不是服务端 Physics/Bukkit 集成测试。库存逻辑 1684、物品适配 16、Velocity 4921、
+  ClickGUI 65 项也通过；真实产物的 28 个字段引用匹配本机 MC/Forge。完整回执见上述备份目录。
+- 日志已保存到 `build/intave-network-reset-fix-backup/`；debug 序号 5047 的 action=29、
+  accepted=true 后 5048 发 C0D 并释放真实位置帧，5118 出现 GuiDisconnected。
+  `screen=none` 也出现点击，故当前自动模块配置应重新按日志确认；不要沿用“IM 已关”的旧结论。
+- UNRESOLVED：新产物的目标 Physics、Timer、Bukkit 物品/光标结果、统计点击检查，以及
+  实际部署版本。S32 accepted=true 仅证明原版事务响应，不证明 Bukkit 点击检查通过。
+  IM 自动规划未完整适配，箱子等非零窗口无 Intave 专用策略；保持 INTAVE (WIP)。
+- 产物：`build/openmaver-b2.2.0-2026-11-26.jar`。完整本轮回滚入口：
+  `python3 build/intave-coast-click-backup/rollback.py`，先用 `--check` 检查哈希，
+  会恢复原 `.bak` 并删除本轮新增源码；之后需要重新构建。
+
+以下为历史记录；以本节为当前状态。
+
+## 历史阻塞（2026-11-26 21:10:04 移动点击实测）
+
+- VERIFIED：用户反馈玩家背包内持续移动已正常；新的 `InventoryClickAnalysis`
+  `performed inventory-click whilst walking` 是独立的 Bukkit 点击检查。
+- VERIFIED：21:10:04.467–.468 完整发出了 `C16 → 空 C03 → C0E → C0D`，当时
+  forward=1、sprint=true；.572 收到窗口/光标重同步与 S2E 关闭背包。完整包字段切片与
+  调用链写在审计文档的“21:10:04”节。此后的 debug 文件已被新记录覆盖。
+- VERIFIED：前轮“空 C03 足以触发 OnMoveCheck 豁免”的推断有误。1.8 路径要求
+  `FLYING_PACKET_CLIENT` 和 `FLYING_PACKET_ACCURATE` 均近期有效；前者来自收包，
+  后者需要模拟低位移判定。无位置帧的 Physics 提前返回也不保证更新已提交的推断按键。
+- VERIFIED：该检查虽然提交 0 VL，仍 `event.setCancelled(true)` 并关闭背包，
+  不能将 `vl=0` 或离线包序正确当作物品点击通过。
+- CANDIDATE：空包未建立模拟低位移状态，点击时服务端仍读取到行走输入与较大水平位移。
+  UNRESOLVED：服务端事件时刻的计数器与运动状态；当前尚未实现新的移动点击策略。
+  保留持续移动需求，不用停步、等停下点击来覆盖这个负面结果。
+
 ## 最新修复（2026-11-26；20:57 告警定位）
 
 - VERIFIED：实例 `logs/intave-movedisabler-debug.log` 第 2682 行在 20:57:23.553

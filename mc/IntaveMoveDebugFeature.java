@@ -129,6 +129,7 @@ public final class IntaveMoveDebugFeature {
                 + " target=" + OpenMaverFeatures.getBypassAnticheatName()
                 + " bypass=" + OpenMaverFeatures.isBypassEnabled()
                 + " movedisabler=" + moduleEnabled("MoveDisabler");
+        clientState += " clickGate=" + MoveDisablerFeature.intaveClickStatus();
     }
 
     private static void install(Minecraft mc, Object player, Object world, Object handler) {

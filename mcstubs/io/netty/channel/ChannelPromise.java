@@ -11,6 +11,8 @@ public interface ChannelPromise {
 
     ChannelPromise setSuccess();
 
+    boolean trySuccess();
+
     ChannelPromise setFailure(Throwable cause);
 
     boolean tryFailure(Throwable cause);

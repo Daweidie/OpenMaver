@@ -138,6 +138,7 @@ public final class OpenMaverClientHandler {
             if (event.phase != TickEvent.Phase.END) {
                 return;
             }
+            MoveDisablerFeature.afterClientTick();
             if (!tickSeen) {
                 tickSeen = true;
                 debug("first client tick", null);

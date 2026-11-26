@@ -36,5 +36,7 @@ public final class ScaffoldMovementInput extends MovementInputFromOptions {
         AttackReduceFeature.afterMovementInput(this);
         // 低优先级：其它 aim / 输入模块开启时 KeepSprint 整体让位。
         KeepSprintFeature.afterMovementInput(this);
+        // Intave's transaction frame must retain neutral keys through ALL input modules.
+        MoveDisablerFeature.afterMovementInput(this);
     }
 }

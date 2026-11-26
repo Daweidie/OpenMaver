@@ -6,6 +6,7 @@ import module.Module;
 import module.ModuleManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.Entity;
+import net.minecraft.util.MovementInput;
 import util.Logger;
 
 import java.lang.reflect.Constructor;
@@ -31,14 +32,9 @@ public final class MoveDisablerFeature {
         final ChannelPipeline pipeline;
         final MoveDisablerPacketHook hook = new MoveDisablerPacketHook();
         final Class<?> clickType, closeType;
-        Class<?> clientStatusType;
         final Constructor<?> actionConstructor;
-        Constructor<?> clicklessMoveConstructor;
-        Constructor<?> closeConstructor;
-        Constructor<?> statusConstructor;
         final Object stop, start;
-        Object openInventory;
-        boolean intaveReady;
+        volatile IntaveInventoryClickSession intave;
 
         Session(Minecraft mc, Object player, Object world, Object handler,
                 ChannelPipeline pipeline) throws ReflectiveOperationException {
@@ -57,21 +53,17 @@ public final class MoveDisablerFeature {
             start = action(action, "START_SPRINTING", 3);
         }
 
-        synchronized void ensureIntavePackets() throws ReflectiveOperationException {
-            if (intaveReady) return;
-            Class<?> statusPacket = Class.forName("net.minecraft.network.play.client.C16PacketClientStatus");
-            Class<?> status = Class.forName("net.minecraft.network.play.client.C16PacketClientStatus$EnumState");
-            Constructor<?> move = Class.forName("net.minecraft.network.play.client.C03PacketPlayer")
-                    .getConstructor(boolean.class);
-            Constructor<?> close = closeType.getConstructor(int.class);
-            Constructor<?> open = statusPacket.getConstructor(status);
-            Object openState = enumValue(status, "OPEN_INVENTORY_ACHIEVEMENT", 2);
-            clientStatusType = statusPacket;
-            clicklessMoveConstructor = move;
-            closeConstructor = close;
-            statusConstructor = open;
-            openInventory = openState;
-            intaveReady = true;
+        synchronized void maintainIntave() {
+            if (!OpenMaverFeatures.isIntaveBypass()) {
+                if (intave != null) intave.retire(!current());
+                intave = null;
+                return;
+            }
+            try {
+                if (intave == null) intave = new IntaveInventoryClickSession(mc, player, pipeline,
+                        () -> session == this && enabled() && current() && OpenMaverFeatures.isIntaveBypass());
+                intave.maintain();
+            } catch (ReflectiveOperationException error) { warn(error); }
         }
 
         boolean current() {
@@ -101,7 +93,7 @@ public final class MoveDisablerFeature {
         }
         Session s = session;
         if (s != null) {
-            if (s.current() && isPacketHookInstalled()) return;
+            if (s.current() && isPacketHookInstalled()) { s.maintainIntave(); return; }
             detach();
             nextAttempt = tick;
         }
@@ -132,6 +124,7 @@ public final class MoveDisablerFeature {
             String base = pipeline.context(AttackReducePacketHook.NAME) != null
                     ? AttackReducePacketHook.NAME : "packet_handler";
             pipeline.addBefore(base, MoveDisablerPacketHook.NAME, s.hook);
+            s.maintainIntave();
             warned = false;
         } catch (Throwable error) {
             detach();
@@ -142,9 +135,17 @@ public final class MoveDisablerFeature {
     static boolean captureOutbound(MoveDisablerPacketHook source, ChannelHandlerContext ctx,
             Object packet, ChannelPromise promise) {
         Session s = session;
-        if (s == null || s.hook != source || !enabled() || !s.current()) return false;
+        if (s == null || s.hook != source) return false;
+        IntaveInventoryClickSession gate;
+        synchronized (s) { gate = s.intave; }
+        if (!enabled() || !s.current() || !OpenMaverFeatures.isIntaveBypass()) {
+            synchronized (s) { if (s.intave == gate) s.intave = null; }
+            if (gate != null) gate.retire(!s.current());
+            gate = null;
+        }
+        if (!enabled() || !s.current()) return false;
         if (OpenMaverFeatures.isIntaveBypass()) {
-            return captureIntaveOutbound(s, ctx, packet, promise);
+            return gate != null && gate.outbound(ctx, packet, promise);
         }
         if (!(s.clickType.isInstance(packet) || s.closeType.isInstance(packet))
                 || !Boolean.TRUE.equals(OpenMaverFeatures.call(s.player,
@@ -165,59 +166,37 @@ public final class MoveDisablerFeature {
         return true;
     }
 
-    /**
-     * Intave treats an open player inventory as evidence that non-zero movement keys are
-     * impossible. Keep the server-side player inventory closed during ordinary movement;
-     * synthesize a short, transaction-local open interval for each native inventory click.
-     * An empty C03 inside that interval satisfies Intave's minimum-open-frame heuristic
-     * without reporting a position change while the inventory is open.
-     */
-    private static boolean captureIntaveOutbound(Session s, ChannelHandlerContext ctx,
-            Object packet, ChannelPromise promise) {
-        try {
-            s.ensureIntavePackets();
-        } catch (ReflectiveOperationException error) {
-            warn(error);
-            return false;
-        }
-        if (s.clientStatusType.isInstance(packet)) {
-            // Forge 1.8.9's C16 state is field_149437_a. A wrong SRG alias
-            // silently leaks OPEN on the live client despite passing MCP tests.
-            Object state = read(packet, "status", "field_149437_a");
-            if (state == s.openInventory) {
-                promise.setSuccess();
-                return true;
-            }
-        }
-        if (s.closeType.isInstance(packet) && windowId(packet, true) == 0) {
-            // The GUI's lifetime is local; the server-side inventory is only opened around
-            // an actual click below.
-            promise.setSuccess();
-            return true;
-        }
-        if (!s.clickType.isInstance(packet) || windowId(packet, false) != 0) return false;
-
-        try {
-            Object open = s.statusConstructor.newInstance(s.openInventory);
-            Object emptyMove = s.clicklessMoveConstructor.newInstance(
-                    Boolean.TRUE.equals(read(s.player, "onGround", "field_70122_E")));
-            Object close = s.closeConstructor.newInstance(0);
-            ctx.write(open, ctx.newPromise());
-            ctx.write(emptyMove, ctx.newPromise());
-            ctx.write(packet, promise);
-            ctx.write(close, ctx.newPromise());
-            return true;
-        } catch (ReflectiveOperationException error) {
-            warn(error);
-            return false;
-        }
+    static void captureInbound(MoveDisablerPacketHook source, ChannelHandlerContext ctx, Object packet) {
+        Session s = session;
+        IntaveInventoryClickSession gate = s != null ? s.intave : null;
+        if (s != null && s.hook == source && gate != null) gate.inbound(ctx, packet);
     }
 
-    private static int windowId(Object packet, boolean close) {
-        Object id = close
-                ? read(packet, "windowId", "field_149556_a")
-                : read(packet, "windowId", "field_149554_a");
-        return id instanceof Number ? ((Number) id).intValue() : -1;
+    static void afterMovementInput(MovementInput input) {
+        Session s = session;
+        IntaveInventoryClickSession gate = s != null ? s.intave : null;
+        if (gate != null) gate.afterInput(input);
+    }
+
+    static void afterClientTick() {
+        Session s = session;
+        IntaveInventoryClickSession gate = s != null ? s.intave : null;
+        if (gate != null) gate.afterTick();
+    }
+
+    static String intaveClickStatus() {
+        Session s = session;
+        IntaveInventoryClickSession gate = s != null ? s.intave : null;
+        return gate != null ? gate.status() : "OFF";
+    }
+
+    static void hookRemoved(MoveDisablerPacketHook source) {
+        Session s = session;
+        if (s != null && s.hook == source) {
+            IntaveInventoryClickSession gate;
+            synchronized (s) { gate = s.intave; s.intave = null; }
+            if (gate != null) gate.retire(!s.current());
+        }
     }
 
     public static boolean isPacketHookInstalled() {
@@ -235,6 +214,8 @@ public final class MoveDisablerFeature {
         Session s = session;
         session = null;
         if (s != null) {
+            IntaveInventoryClickSession gate = s.intave;
+            if (gate != null) gate.retire(!s.current());
             try { s.pipeline.remove(s.hook); }
             catch (Exception ignored) { }
         }

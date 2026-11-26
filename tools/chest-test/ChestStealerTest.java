@@ -58,6 +58,7 @@ public final class ChestStealerTest {
         ChestFeature.setHumanize(false);
 
         try {
+            disconnectedGuiWithNoPlayer();
             visibleSweepKeepsGuiThenCloses();
             windowItemsPacketGatesClicks();
             localContentSkipsMissingS30();
@@ -88,6 +89,17 @@ public final class ChestStealerTest {
             error.printStackTrace();
             System.exit(1);
         }
+    }
+
+    private static void disconnectedGuiWithNoPlayer() {
+        Fixture f = new Fixture();
+        f.mc.thePlayer = null;
+        f.mc.theWorld = null;
+        GuiScreen disconnected = new GuiScreen();
+        f.mc.displayGuiScreen(disconnected);
+        check("断线后空 player 的 GUI 正常打开", f.mc.currentScreen == disconnected);
+        check("断线 GUI 没有触发容器点击", f.controller.clicks == 0);
+        ChestFeature.reset();
     }
 
     // ------------------------------------------------------------------
