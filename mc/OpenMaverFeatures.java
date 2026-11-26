@@ -140,7 +140,7 @@ public final class OpenMaverFeatures {
     }
 
     // ==================================================================
-    // Grim 对测 profile
+    // Bypass：目标反作弊与共享 profile
     // ==================================================================
 
     /** profile 档位：默认 balanced；aggressive 只用于对比测试。 */
@@ -151,7 +151,12 @@ public final class OpenMaverFeatures {
     private static final String[] PROFILE_KEYS = {"legit", "balanced", "aggressive"};
     private static final String[] PROFILE_NAMES = {"LEGIT", "BALANCED", "AGGRESSIVE"};
 
-    private static boolean bypassEnabled = true;
+    public static final int BYPASS_GRIM = 0;
+    public static final int BYPASS_INTAVE = 1;
+    private static final String[] BYPASS_KEYS = {"grim", "intave"};
+    private static final String[] BYPASS_NAMES = {"GRIM", "INTAVE"};
+    private static volatile boolean bypassEnabled = true;
+    private static volatile int bypassAnticheat = BYPASS_GRIM;
     private static int bypassProfile = PROFILE_BALANCED;
     private static boolean debugEnabled;
     /** START 阶段发生反射/类型错误时只停用该阶段，避免拖垮整个 tick 桥。 */
@@ -1169,7 +1174,7 @@ public final class OpenMaverFeatures {
      */
     private static long autoClickerIntervalNanos() {
         int min = autoclickerCpsMin;
-        // 点击器使用玩家在 ClickGUI 里设置的 CPS，不再被 Grim Bypass profile
+        // 点击器使用玩家在 ClickGUI 里设置的 CPS，不再被 Bypass profile
         // 静默截断。balance 默认曾把 14~17 CPS 压到 12 CPS，再叠加 20Hz tick
         // 调度后实际只剩 6~9 CPS，看起来像模块失效。
         int max = autoclickerCpsMax;
@@ -2975,6 +2980,8 @@ public final class OpenMaverFeatures {
         aimEnabled = readBoolean(values, "aim", false);
         espEnabled = readBoolean(values, "esp", false);
         bypassEnabled = readBoolean(values, "bypass.enabled", true);
+        bypassAnticheat = "intave".equalsIgnoreCase(values.getProperty("bypass.anticheat", "grim").trim())
+                ? BYPASS_INTAVE : BYPASS_GRIM;
         bypassProfile = readProfile(values, "bypass.profile", "balanced");
         debugEnabled = readBoolean(values, "debug.enabled", false);
         OpenMaverDebug.setEnabled(debugEnabled);
@@ -3389,7 +3396,7 @@ public final class OpenMaverFeatures {
     }
 
     // ==================================================================
-    // Grim profile（ClickGUI / properties 共用）
+    // Bypass（ClickGUI / properties 共用）
     // ==================================================================
 
     public static boolean isBypassEnabled() {
@@ -3400,6 +3407,23 @@ public final class OpenMaverFeatures {
         bypassEnabled = value;
         resetAutoClickerTimers();
         markDirty();
+    }
+
+    public static int getBypassAnticheat() {
+        return bypassAnticheat;
+    }
+
+    public static void setBypassAnticheat(int value) {
+        bypassAnticheat = clamp(value, BYPASS_GRIM, BYPASS_INTAVE);
+        markDirty();
+    }
+
+    public static String getBypassAnticheatName() {
+        return BYPASS_NAMES[bypassAnticheat];
+    }
+
+    public static boolean isIntaveBypass() {
+        return bypassEnabled && bypassAnticheat == BYPASS_INTAVE;
     }
 
     public static int getBypassProfile() {
@@ -3987,6 +4011,7 @@ public final class OpenMaverFeatures {
                     + "\nfastplace.delayTicks=" + fastPlaceDelayTicks
                     + "\nfastplace.jitter=" + fastPlaceJitter
                     + "\nbypass.enabled=" + bypassEnabled
+                    + "\nbypass.anticheat=" + BYPASS_KEYS[bypassAnticheat]
                     + "\nbypass.profile=" + PROFILE_KEYS[clamp(bypassProfile, PROFILE_LEGIT, PROFILE_AGGRESSIVE)]
                     + "\ndebug.enabled=" + debugEnabled
                     + "\n" + MaverWallpaper.save()

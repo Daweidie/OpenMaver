@@ -76,6 +76,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final String[] AUTOCLICKER_MODES = {
             "FULL CHARGE", "FASTEST", "VANILLA"};
     private static final String[] BYPASS_PROFILES = {"LEGIT", "BALANCED", "AGGRESSIVE"};
+    private static final String[] BYPASS_ANTICHEATS = {"GRIM", "INTAVE (WIP)"};
     private static final String[] CRITICALS_MODES = {
             "ALWAYS", "NCP", "FALLING", "GRIM", "JUMP", "LOW", "DOWN"};
     private static final String[] KILLAURA_TARGET_MODES = {"Single", "Switch"};
@@ -307,7 +308,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         addEspSettings(esp);
         entries.add(esp);
 
-        Entry bypass = new Entry("bypass", "Grim Bypass", "misc");
+        Entry bypass = new Entry("bypass", "Bypass", "misc");
         addBypassSettings(bypass);
         entries.add(bypass);
     }
@@ -379,6 +380,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private void addBypassSettings(Entry entry) {
+        entry.settings.add(Setting.select("ANTICHEAT", BYPASS_ANTICHEATS, new Binding() {
+            public double get() { return OpenMaverFeatures.getBypassAnticheat(); }
+            public void set(double value) { OpenMaverFeatures.setBypassAnticheat((int) Math.round(value)); }
+        }));
         entry.settings.add(Setting.select("PROFILE", BYPASS_PROFILES, new Binding() {
             public double get() { return OpenMaverFeatures.getBypassProfile(); }
             public void set(double value) { OpenMaverFeatures.setBypassProfile((int) Math.round(value)); }
@@ -1800,7 +1805,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     private int utilityContentHeight(Column column) {
         if (CONFIG_COLUMN.equals(column.id)) {
-            return 74 + (configPreferences ? 72 : 0)
+            return 74 + (configPreferences ? 86 : 0)
                     + Math.max(1, ConfigProfiles.listNames().size()) * COL_ROW_H + 18;
         }
         int height = 8 + 4 * COL_ROW_H;
@@ -1864,18 +1869,21 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         if (configPreferences) {
             micro(font, "SETTINGS", innerX + 2, rowY + 3, fade(COL_DIM, alpha));
             rowY += 12;
-            drawUtilityRow(font, column, "bypass", "Grim Bypass",
+            drawUtilityRow(font, column, "bypass", "Bypass",
                     OpenMaverFeatures.isBypassEnabled() ? "ON" : "OFF",
-                    x, rowY, alpha, hoverable, "Toggle Grim Bypass");
+                    x, rowY, alpha, hoverable, "Toggle Bypass");
             drawUtilityRow(font, column, "debug", "Debug log",
                     OpenMaverFeatures.isDebugEnabled() ? "ON" : "OFF",
                     x, rowY + 14, alpha, hoverable, "Toggle debug logging");
             drawUtilityRow(font, column, "bypassProfile", "Profile",
                     BYPASS_PROFILES[OpenMaverFeatures.getBypassProfile()],
                     x, rowY + 28, alpha, hoverable, "Cycle bypass profile");
+            drawUtilityRow(font, column, "bypassAnticheat", "Anticheat",
+                    BYPASS_ANTICHEATS[OpenMaverFeatures.getBypassAnticheat()],
+                    x, rowY + 42, alpha, hoverable, "Cycle target anticheat");
             drawUtilityRow(font, column, "guiKey", "GUI key", OpenMaverFeatures.getGuiKeyName(),
-                    x, rowY + 42, alpha, hoverable, "Change ClickGUI key");
-            rowY += 60;
+                    x, rowY + 56, alpha, hoverable, "Change ClickGUI key");
+            rowY += 74;
         }
         List<String> names = ConfigProfiles.listNames();
         if (names.isEmpty()) {
@@ -2186,6 +2194,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             OpenMaverFeatures.setDebugEnabled(!OpenMaverFeatures.isDebugEnabled());
         } else if ("bypassProfile".equals(action)) {
             OpenMaverFeatures.setBypassProfile((OpenMaverFeatures.getBypassProfile() + 1) % BYPASS_PROFILES.length);
+        } else if ("bypassAnticheat".equals(action)) {
+            OpenMaverFeatures.setBypassAnticheat((OpenMaverFeatures.getBypassAnticheat() + 1) % BYPASS_ANTICHEATS.length);
         } else if ("guiKey".equals(action)) {
             OpenMaverFeatures.cycleGuiKey();
         } else if ("section".equals(action)) {
@@ -3173,7 +3183,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 return "BOX  ·  RANGE " + Math.round(OpenMaverFeatures.getEspRange()) + " m";
             }
             if ("bypass".equals(featureId)) {
-                return OpenMaverFeatures.getBypassProfileName()
+                if (OpenMaverFeatures.getBypassAnticheat() == OpenMaverFeatures.BYPASS_INTAVE) {
+                    return "INTAVE  ·  IN DEVELOPMENT";
+                }
+                return OpenMaverFeatures.getBypassAnticheatName() + "  ·  " + OpenMaverFeatures.getBypassProfileName()
                         + "  ·  REACH " + format(OpenMaverFeatures.getEffectiveReachDistance(), 2) + " m";
             }
             if (module != null) {

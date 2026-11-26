@@ -116,6 +116,8 @@ public final class OpenMaverClientHandler {
                 LegacySoundFeature.onTick(mc);
                 // 先挂窗口出站钩子，覆盖手动操作和 Chest Stealer 产生的 C0E / C0D。
                 MoveDisablerFeature.onTick(mc);
+                // 纯观测：记录 C03/C0E/C16/C0D 及服务端窗口/事务响应，不改包序。
+                IntaveMoveDebugFeature.onTick(mc);
                 // 先处理到期入站队列（含 S32 -> C0F），再产生本 tick 的 action。
                 AttackReduceFeature.beforeTick(mc);
                 // 背包整理：同样要在 C03 之前发 windowClick（C0E）。

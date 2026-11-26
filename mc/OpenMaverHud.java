@@ -544,8 +544,8 @@ public final class OpenMaverHud {
         if ("Inventory Manager".equals(name)) {
             return InventoryManagerFeature.getSummary();
         }
-        if ("Grim Bypass".equals(name)) {
-            return OpenMaverFeatures.getBypassProfileName();
+        if ("Bypass".equals(name)) {
+            return OpenMaverFeatures.getBypassAnticheatName() + " " + OpenMaverFeatures.getBypassProfileName();
         }
         return "";
     }

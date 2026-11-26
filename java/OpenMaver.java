@@ -15,6 +15,7 @@ import module.movement.Scaffold2;
 import module.movement.Telly;
 import module.movement.AttackReduce;
 import module.misc.FakePlayer;
+import module.misc.IntaveDebug;
 import module.misc.MoveDisabler;
 import module.player.ChestStealer;
 import module.player.FastPlace;
@@ -455,6 +456,9 @@ public final class OpenMaver {
 
         // 杂项模块：冲刺期间的窗口操作包序（配置路径 misc.movedisabler）。
         ModuleManager.register(new MoveDisabler());
+
+        // Intave 背包/移动诊断：只记录 Netty 包序与本地状态，不修改游戏行为。
+        ModuleManager.register(new IntaveDebug());
 
         // 渲染模块：Target HUD 目标信息面板（配置路径 render.targethud；MC 侧绘制在 mc/TargetHud）
         ModuleManager.register(new TargetHud());

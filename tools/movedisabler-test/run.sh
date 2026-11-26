@@ -15,3 +15,13 @@ mapfile -t sources < <(rg --files tools/attackreduce-test tools/movedisabler-tes
 javac -source 8 -target 8 -Xlint:-options -encoding UTF-8 -cp "$classpath" -d "$out_dir" "${sources[@]}"
 java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" MoveDisablerTest
 java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" InventoryMoveTest
+java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" IntaveMoveDebugTest
+# MCP aliases masked production reflection errors. Repeat the packet tests with
+# SRG-only classes generated independently from the installed Forge mapping.
+srg_src="$out_dir/srg-src"
+srg_out="$out_dir/srg-classes"
+python3 tools/movedisabler-test/runtime_packets.py --out "$srg_src"
+mkdir -p "$srg_out"
+mapfile -t srg_sources < <(rg --files "$srg_src" -g '*.java')
+javac -source 8 -target 8 -Xlint:-options -encoding UTF-8 -cp "$out_dir:$classpath" -d "$srg_out" "${srg_sources[@]}"
+java -Dfile.encoding=UTF-8 -Dopenmaver.test.mapping=SRG -cp "$srg_out:$out_dir:$classpath" MoveDisablerTest

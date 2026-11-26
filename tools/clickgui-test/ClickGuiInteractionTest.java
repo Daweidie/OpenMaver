@@ -41,6 +41,18 @@ public final class ClickGuiInteractionTest {
         check(columns(gui).size() == 7, "Five module categories plus Config and Personalization");
         check(!HudFont.text.contains("Client") && !HudFont.text.contains("SYSTEM"), "Old navigation is absent");
         check(HudFont.text.contains("Config") && HudFont.text.contains("Wallpaper"), "New panels render");
+        Object miscColumn = column(gui, "misc");
+        Object bypassHit = entryHit(miscColumn, "Bypass");
+        check(OpenMaverFeatures.getBypassAnticheat() == OpenMaverFeatures.BYPASS_GRIM,
+                "Legacy settings default to Grim");
+        gui.mouseClicked((Integer) get(bypassHit, "x") + 20, (Integer) get(bypassHit, "y") + 8, 1);
+        set(get(bypassHit, "entry"), "expandProgress", 1F);
+        render(gui);
+        clickHit(gui, settingHit(miscColumn, "ANTICHEAT"));
+        check(OpenMaverFeatures.isIntaveBypass(), "Bypass anticheat selector changes the active target");
+        gui.mouseClicked((Integer) get(bypassHit, "x") + 20, (Integer) get(bypassHit, "y") + 8, 1);
+        set(get(bypassHit, "entry"), "expandProgress", 0F);
+        render(gui);
         Object renderColumn = column(gui, "render");
         Object nameTagHit = entryHit(renderColumn, "Name Tag");
         clickHit(gui, nameTagHit);
@@ -95,6 +107,8 @@ public final class ClickGuiInteractionTest {
         check(combat.isEnabled(), "Load button restores module state");
         check(nameTag.isEnabled() && !NameTagFeature.isThroughWalls(), "Profile load restores NameTag and its options");
         check(antiBot.isEnabled() && AntiBotFeature.isNameCheck(), "Profile load restores Anti Bot and its detection settings");
+        check(OpenMaverFeatures.getBypassAnticheat() == OpenMaverFeatures.BYPASS_INTAVE,
+                "Profile load preserves the target anticheat");
         click(gui, config, "name");
         gui.keyTyped('\0', Keyboard.KEY_ESCAPE);
         check(!(Boolean) get(gui, "profileFieldFocused") && !(Boolean) get(gui, "closing"),
@@ -103,6 +117,9 @@ public final class ClickGuiInteractionTest {
         check((Boolean) get(gui, "profileFieldFocused"), "Plus starts a new name");
         check(!(Boolean) get(get(config, "state"), "collapsed"), "Plus does not collapse the panel");
         click(gui, config, "preferences");
+        click(gui, config, "bypassAnticheat");
+        check(OpenMaverFeatures.getBypassAnticheat() == OpenMaverFeatures.BYPASS_GRIM,
+                "Config preferences can change the target anticheat");
         String key = OpenMaverFeatures.getGuiKeyName();
         click(gui, config, "guiKey");
         check(!key.equals(OpenMaverFeatures.getGuiKeyName()), "GUI key setting stays accessible");

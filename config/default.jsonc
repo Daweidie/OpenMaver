@@ -8,8 +8,9 @@
 //   包名去掉根包 "module" + "." + 类名小写
 //   例如 module.movement.AutoSprint -> movement.autosprint
 //
-// Grim 对测 profile 不在这里，而在 config/openmaver.properties：
+// Bypass 的反作弊选择与 profile 不在这里，而在 config/openmaver.properties：
 //   bypass.enabled=true
+//   bypass.anticheat=grim       // grim | intave
 //   bypass.profile=balanced     // legit | balanced | aggressive
 //   debug.enabled=false         // 写入 logs/openmaver-debug.log
 // ---------------------------------------------------------------------------
@@ -160,6 +161,10 @@
     "movedisabler": {
       "enabled": false,        // 背包/箱子界面移动，附带冲刺期间的窗口包处理
       "key": ""                // 默认不占用按键
+    },
+    "intavedebug": {
+      "enabled": false,        // Intave 背包/移动诊断；只记录包与状态，不改行为
+      "key": ""
     },
     "fakeplayer": {
       "enabled": false,        // 假人玩家：默认关闭（按 N 生成/移除假人）

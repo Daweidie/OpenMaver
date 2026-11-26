@@ -13,8 +13,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 
 /**
- * 移植 ../MoveDisabler：冲刺时将 C0E / C0D 包裹为 STOP -> 原包 -> START。
- * 不改变本地冲刺状态，不取消或重建窗口包，也不改动移动/事务包。
+ * Grim 默认路径在冲刺时将 C0E / C0D 包裹为 STOP -> 原包 -> START；Intave 目标
+ * 使用独立的 window 0 临时窗口策略。两条路径均保留原点击包及其 promise。
  * 核心模块不引用 MC 类型，兼容 mod 与 bootstrap 注入两种类加载方式。
  */
 public final class MoveDisablerFeature {
@@ -31,8 +31,14 @@ public final class MoveDisablerFeature {
         final ChannelPipeline pipeline;
         final MoveDisablerPacketHook hook = new MoveDisablerPacketHook();
         final Class<?> clickType, closeType;
+        Class<?> clientStatusType;
         final Constructor<?> actionConstructor;
+        Constructor<?> clicklessMoveConstructor;
+        Constructor<?> closeConstructor;
+        Constructor<?> statusConstructor;
         final Object stop, start;
+        Object openInventory;
+        boolean intaveReady;
 
         Session(Minecraft mc, Object player, Object world, Object handler,
                 ChannelPipeline pipeline) throws ReflectiveOperationException {
@@ -49,6 +55,23 @@ public final class MoveDisablerFeature {
             // Enum 名优先；1.8.9 运行期名字被混淆时按协议声明顺序兜底。
             stop = action(action, "STOP_SPRINTING", 4);
             start = action(action, "START_SPRINTING", 3);
+        }
+
+        synchronized void ensureIntavePackets() throws ReflectiveOperationException {
+            if (intaveReady) return;
+            Class<?> statusPacket = Class.forName("net.minecraft.network.play.client.C16PacketClientStatus");
+            Class<?> status = Class.forName("net.minecraft.network.play.client.C16PacketClientStatus$EnumState");
+            Constructor<?> move = Class.forName("net.minecraft.network.play.client.C03PacketPlayer")
+                    .getConstructor(boolean.class);
+            Constructor<?> close = closeType.getConstructor(int.class);
+            Constructor<?> open = statusPacket.getConstructor(status);
+            Object openState = enumValue(status, "OPEN_INVENTORY_ACHIEVEMENT", 2);
+            clientStatusType = statusPacket;
+            clicklessMoveConstructor = move;
+            closeConstructor = close;
+            statusConstructor = open;
+            openInventory = openState;
+            intaveReady = true;
         }
 
         boolean current() {
@@ -119,9 +142,11 @@ public final class MoveDisablerFeature {
     static boolean captureOutbound(MoveDisablerPacketHook source, ChannelHandlerContext ctx,
             Object packet, ChannelPromise promise) {
         Session s = session;
-        if (s == null || s.hook != source || !enabled()
-                || !(s.clickType.isInstance(packet) || s.closeType.isInstance(packet))
-                || !s.current()
+        if (s == null || s.hook != source || !enabled() || !s.current()) return false;
+        if (OpenMaverFeatures.isIntaveBypass()) {
+            return captureIntaveOutbound(s, ctx, packet, promise);
+        }
+        if (!(s.clickType.isInstance(packet) || s.closeType.isInstance(packet))
                 || !Boolean.TRUE.equals(OpenMaverFeatures.call(s.player,
                         "isSprinting", "func_70051_ag", null))) return false;
         Object stop, start;
@@ -138,6 +163,61 @@ public final class MoveDisablerFeature {
         ctx.write(start, ctx.newPromise());
         // flush 沿用原发送路径，保持本组三个包紧邻且不额外触发 flush。
         return true;
+    }
+
+    /**
+     * Intave treats an open player inventory as evidence that non-zero movement keys are
+     * impossible. Keep the server-side player inventory closed during ordinary movement;
+     * synthesize a short, transaction-local open interval for each native inventory click.
+     * An empty C03 inside that interval satisfies Intave's minimum-open-frame heuristic
+     * without reporting a position change while the inventory is open.
+     */
+    private static boolean captureIntaveOutbound(Session s, ChannelHandlerContext ctx,
+            Object packet, ChannelPromise promise) {
+        try {
+            s.ensureIntavePackets();
+        } catch (ReflectiveOperationException error) {
+            warn(error);
+            return false;
+        }
+        if (s.clientStatusType.isInstance(packet)) {
+            // Forge 1.8.9's C16 state is field_149437_a. A wrong SRG alias
+            // silently leaks OPEN on the live client despite passing MCP tests.
+            Object state = read(packet, "status", "field_149437_a");
+            if (state == s.openInventory) {
+                promise.setSuccess();
+                return true;
+            }
+        }
+        if (s.closeType.isInstance(packet) && windowId(packet, true) == 0) {
+            // The GUI's lifetime is local; the server-side inventory is only opened around
+            // an actual click below.
+            promise.setSuccess();
+            return true;
+        }
+        if (!s.clickType.isInstance(packet) || windowId(packet, false) != 0) return false;
+
+        try {
+            Object open = s.statusConstructor.newInstance(s.openInventory);
+            Object emptyMove = s.clicklessMoveConstructor.newInstance(
+                    Boolean.TRUE.equals(read(s.player, "onGround", "field_70122_E")));
+            Object close = s.closeConstructor.newInstance(0);
+            ctx.write(open, ctx.newPromise());
+            ctx.write(emptyMove, ctx.newPromise());
+            ctx.write(packet, promise);
+            ctx.write(close, ctx.newPromise());
+            return true;
+        } catch (ReflectiveOperationException error) {
+            warn(error);
+            return false;
+        }
+    }
+
+    private static int windowId(Object packet, boolean close) {
+        Object id = close
+                ? read(packet, "windowId", "field_149556_a")
+                : read(packet, "windowId", "field_149554_a");
+        return id instanceof Number ? ((Number) id).intValue() : -1;
     }
 
     public static boolean isPacketHookInstalled() {
@@ -179,6 +259,10 @@ public final class MoveDisablerFeature {
     }
 
     private static Object action(Class<?> type, String name, int ordinal) {
+        return enumValue(type, name, ordinal);
+    }
+
+    private static Object enumValue(Class<?> type, String name, int ordinal) {
         Object[] values = type.getEnumConstants();
         if (values != null) {
             for (Object value : values) if (name.equals(((Enum<?>) value).name())) return value;

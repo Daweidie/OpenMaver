@@ -10,7 +10,10 @@ import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.util.MovementInput;
 import util.Logger;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
@@ -46,6 +49,7 @@ public final class AttackReduceFeature {
     // 包回放只在 scheduled-task / tick 准备阶段同步执行，避免在 action 与 C03 之间发 C0F。
     private static boolean replayAllowed;
     private static final Deque<Packet> deferredReplays = new ArrayDeque<Packet>();
+    private static volatile String lastReplayFailure;
     static final int MAX_PENDING = 4096;
     private AttackReduceFeature() { }
 
@@ -97,7 +101,22 @@ public final class AttackReduceFeature {
         }
         void process() {
             try { process.invoke(raw, owner.handler); }
-            catch (Exception error) { Logger.warn("Velocity", "Packet replay failed: " + error); }
+            catch (Exception error) {
+                Throwable cause = error instanceof InvocationTargetException
+                        && ((InvocationTargetException) error).getCause() != null
+                        ? ((InvocationTargetException) error).getCause() : error;
+                String key = raw.getClass().getName() + ":" + cause.getClass().getName()
+                        + ":" + String.valueOf(cause.getMessage());
+                // A broken packet replay can otherwise emit dozens of identical warnings per
+                // second. Keep the first full cause/stack for each failure signature.
+                if (!key.equals(lastReplayFailure)) {
+                    lastReplayFailure = key;
+                    StringWriter trace = new StringWriter();
+                    cause.printStackTrace(new PrintWriter(trace));
+                    Logger.warn("Velocity", "Packet replay failed for " + raw.getClass().getName()
+                            + "; cause=" + cause + "\n" + trace.toString());
+                }
+            }
         }
     }
     static final class ReceivePacketEvent {
@@ -148,6 +167,7 @@ public final class AttackReduceFeature {
                 if (!(id instanceof Number)) throw new IllegalStateException("entity id missing");
                 s = new Session(mc, player, world, handler, ((Number) id).intValue(), mode, hook, pipeline);
                 session = s;
+                lastReplayFailure = null;
                 current().onEnable();
                 pipeline.addBefore("packet_handler", AttackReducePacketHook.NAME, hook);
                 Logger.info("Velocity", MODE_NAMES[mode] + " packet hook installed");

@@ -344,7 +344,7 @@ java -Djava.library.path=build/lib \
   拖动标题栏移动面板，点击或右键标题栏折叠，位置与折叠状态在本次游戏会话内保留。
   左键模块切换开关、右键展开滑块 / 选项 / 复选框；底部搜索支持直接输入与 `Ctrl+K`。
   所有面板都在内容溢出时单独滚动，主菜单与游戏画面均不使用整屏模糊。模块列表来自
-  `ModuleManager`，Aim Assist、Player ESP、Grim Bypass、AutoSprint、AutoClicker、Reach、
+  `ModuleManager`，Aim Assist、Player ESP、Bypass、AutoSprint、AutoClicker、Reach、
   Criticals、FastPlace、Target HUD 与 Player X-Ray 的设置直接绑定 `OpenMaverFeatures`，参数写入
   `config/openmaver.properties`（拖拽结束与关闭 GUI 时落盘）。
 - **Anti Bot 反假人** `mc/AntiBotFeature.java`：在 **Combat → Anti Bot** 中开启（默认关闭）。
@@ -476,16 +476,27 @@ ClickGUI 的独立 **Config** 浮动面板管理配置档案，对应 `mc/Config
 模块开关与键位来自 `config/default.jsonc`，模块参数来自
 `config/openmaver.properties`（ClickGUI 中修改后自动落盘，重启保留）。
 
-### Grim 低检测面 profile（`bypass.*`）
+### Bypass 反作弊选择与 profile（`bypass.*`）
 
 所有战斗/搭路模块共享一个 profile，默认 **BALANCED**，可在 ClickGUI 的
-**Misc → Grim Bypass** 中切换，也可直接编辑 `config/openmaver.properties`：
+**Misc → Bypass** 中选择目标反作弊和 profile，也可直接编辑 `config/openmaver.properties`：
 
 ```properties
 bypass.enabled=true
+bypass.anticheat=grim       # grim | intave；旧配置缺省为 grim
 bypass.profile=balanced     # legit | balanced | aggressive
 debug.enabled=false         # true 时写入 logs/openmaver-debug.log
 ```
+
+`ANTICHEAT` 选择会保存到配置和导出的 profile。现有 profile 限制继续共用。
+Intave 专用 MoveDisabler 目前只实现了玩家背包（window 0）的临时窗口包序；实服上的
+Physics 与服务器物品结果尚未复测，Inventory Manager 也未适配。因此选择 `INTAVE` 不代表
+所有背包检查均已通过。源码判据和待确认项见 [Intave 背包审计](design/INTAVE_INVENTORY_AUDIT.md)。
+
+测试 Intave 时，可在 **Misc → Intave Debug** 启用纯观测记录器。它会记录客户端移动/窗口包、
+服务端窗口与事务响应，以及每条记录对应的 GUI、窗口号、光标物品、移动输入和位置；不会
+改包或改输入。完成一次测试后关闭模块并发送实例目录下的
+`logs/intave-movedisabler-debug.log`，同时附上服务器 Intave 对应时间段的点击/Physics 日志。
 
 | profile | Reach 实际上限 | Aim 单 tick 上限 | AutoClicker / KillAura | FastPlace | Placement rotation |
 |---|---|---|---|---|---|
@@ -1529,6 +1540,15 @@ Grim 的 `combat/Reach` 不是「你报多远就查多远」，它量的是另�
 - 玩家正在冲刺时，发送 `C0E`（点击窗口）或 `C0D`（关闭窗口）会依次发出
   `C0B STOP_SPRINTING → 原窗口包 → C0B START_SPRINTING`。保持本地冲刺状态，
   原窗口包只发送一次；步行时和其他包均原样发送。覆盖手动操作与 Chest Stealer。
+- 选择并启用 Intave Bypass 时，玩家背包 GUI 的服务端窗口不会随本地 GUI 长时间打开：
+  抑制 `OPEN_INVENTORY_ACHIEVEMENT` 与 window 0 的本地关闭包，window 0 点击按
+  `C16 OPEN → 空 C03（无坐标变化）→ 原 C0E → C0D 0` 发出。普通真实移动 C03 保持原样，
+  因而在服务端背包状态关闭时移动；箱子等非零窗口保留原包路径，目前没有 Intave 专用适配。
+  这是按引用 Intave 源码做的候选策略；本地 Netty 已验证包序与 promise，尚未在目标实服
+  验证 Physics、Bukkit 点击结果、光标和物品状态，仍显示为开发中。
+  2026-11-26 修复运行期 C16 / C0D 字段映射（`field_149437_a` / `field_149556_a`）；
+  原错误会让真实 Forge 客户端把应抑制的背包打开包照常发出。回归现在同时使用 MCP 字段和从 Forge
+  映射生成的纯 SRG 字段，避免开发环境通过而运行期失效。
 - 网络钩子独立于 Velocity，支持离开世界卸载、重连和钩子丢失后重装；Velocity
   暂存出站包时，窗口包先随队列保序回放，再执行冲刺包裹。该行为不保证特定反作弊版本的结果。
 - 构建后运行 `bash tools/movedisabler-test/run.sh`，使用真实 Netty 4.0.23 验证包序、
