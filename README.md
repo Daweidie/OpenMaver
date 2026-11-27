@@ -343,6 +343,8 @@ java -Djava.library.path=build/lib \
   Personalization 收纳 Wallpaper、Color、Text 与 Taunt 设置；主题色会同步更新 ClickGUI 高亮和 Config 控件，HUD 上方闪烁文字也可自定义。
   拖动标题栏移动面板，点击或右键标题栏折叠，位置与折叠状态在本次游戏会话内保留。
   左键模块切换开关、右键展开滑块 / 选项 / 复选框；底部搜索支持直接输入与 `Ctrl+K`。
+  Velocity 左键或右键打开独立参数子面板，在面板顶部切换启用状态和选择模式；模式使用可滚动下拉列表，
+  参数区单独滚动，按 `Esc`、点击关闭按钮或面板外返回，展开下拉列表时 `Esc` 先收起列表。
   所有面板都在内容溢出时单独滚动，主菜单与游戏画面均不使用整屏模糊。模块列表来自
   `ModuleManager`，Aim Assist、Player ESP、Bypass、AutoSprint、AutoClicker、Reach、
   Criticals、FastPlace、Target HUD 与 Player X-Ray 的设置直接绑定 `OpenMaverFeatures`，参数写入
@@ -701,6 +703,7 @@ IO 失败只记录一次并自动停用 debug。
 ### Velocity 防击退
 
 - Velocity 保留 `JumpReset`（新配置默认）、`NoXZ`、`Mix`，并新增来源于 `../OpenAugustus-Maver` 字节码的 17 个模式：Basic、Legit、PushGround、Push、Intave/PolarFlag、Intave、Intave13、Reverse、Spoof、SafeWalk、OldMinemen、Karhu、CustomMotion、BoundingBox、Grim-1.17、HypixelTest、PolarBlock。ClickGUI/HUD 仍显示 `Velocity`，开关与热键保留 `movement.attackreduce`。
+- 点击 **Movement → Velocity** 打开参数子面板，顶部 **Enabled / Disabled** 控制模块开关，**Mode** 下拉列表直接选择模式。模式栏固定在顶部，参数按模式及子选项显示并单独滚动，切换模式时回到参数顶部；关闭面板与拖动结束时保存设置。
 - `NoXZ`：所有 S12 在主线程收到后立即应用，不额外延迟，也不缩放速度或缓存其他入站/出站包；不会因受击额外强制跳跃。地面有目标且疾跑时安排原版攻击，空中只保留最多 12 tick 的落地补刀意图。落地补刀使用当时速度，不重新施加旧 S12；无目标、超时、新击退、校正或退出环境会清理旧意图。Aura 目标优先，否则取准星生物，眼睛到可见目标 AABB 距离上限为 3.0，减速由原版伤害结果决定。
 - `JumpReset`：参考 `~/Downloads/script.lua` 的短按跳跃与 GUI 暂停思路；自己的正 Y 且带水平分量的 S12 立即应用，地面和空中受击都可触发。下一次有效输入短暂向前疾跑 2 tick：地面写入一次跳跃输入；空中保持原包 Y，在有效 Aura/准星目标上尝试一次原版疾跑攻击，水平减速只由原版伤害结果决定。没有有效目标时仅接管移动输入；攻击名额忙时最多等到下一输入 tick，不与 AutoClicker/Aura 同 tick 重复攻击。随后归还输入和模块开启的疾跑；不在空中调用 `jump()`，不缓存/改写/回放 S12，不伪造 onGround，不改写相机或 Timer。
 - JumpReset 参数：`Chance=100%`（每次有效受击触发概率）、`Accuracy=100%`（下一次输入准时响应概率；失准时仅输入延后 1–2 tick）、`Only When Targeting=false`（开启后需要 Aura 或准星可见生物，距离 ≤ 3.0）、`Water Check=true`（开启后水中跳过；关闭仅放开水中检查）。执行前重查条件；离地后仍可执行重置，尚未执行的空中意图在落地时取消，避免补跳。目标失效、GUI、潜行、使用物品、Scaffold/GodBridge、校正及退出同样取消旧意图，缺少输入回调时最多 3–5 tick 过期。

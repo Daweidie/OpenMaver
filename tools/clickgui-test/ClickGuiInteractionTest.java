@@ -313,39 +313,149 @@ public final class ClickGuiInteractionTest {
         invoke(expertMotion, "setPercent", new Class<?>[] {double.class}, .25D);
         check(AugustusVelocity.value("Push", "PushMotion1") == 5, "Expert slider binds the actual mode");
 
-        // Exercise scrolling and hit testing on the actual overflowing Velocity panel.
+        // Velocity opens a modal surface instead of making the Movement column longer.
         Object col = column(gui, "movement");
-        int originalHeight=gui.height;
-        gui.height=320;
+        int originalHeight = gui.height;
+        gui.height = 320;
         invoke(gui, "bringToFront", new Class<?>[] {col.getClass()}, col);
-        ((java.util.Set<Object>) get(gui, "expanded")).add(get(entry, "id"));
-        set(entry, "expandProgress", 1F);
-        set(col, "scroll", 0);
         render(gui);
-        check((Integer) get(col, "maxScroll") > 0, "Velocity expert settings overflow into a scrollable panel");
+        clickHit(gui, entryHit(col, "Velocity"));
+        render(gui);
+        Object panel = get(gui, "settingsPanel");
+        check(panel != null && !ModuleManager.getModule("Velocity").isEnabled(),
+                "Left-click opens Velocity settings without changing its enabled state");
+        check(!((java.util.Set<?>) get(gui, "expanded")).contains(get(entry, "id"))
+                && (Integer) get(col, "maxScroll") == 0,
+                "Velocity settings do not expand inside the Movement column");
+        check((Integer) get(panel, "maxScroll") > 0, "Expert parameters have their own scroll area");
+        clickHit(gui, panelAction(panel, "enabled"));
+        check(ModuleManager.getModule("Velocity").isEnabled(), "Subpanel can enable Velocity");
+        clickHit(gui, panelAction(panel, "enabled"));
+        check(!ModuleManager.getModule("Velocity").isEnabled(), "Subpanel can disable Velocity");
+        gui.keyTyped('x', 0);
+        check("".equals(get(gui, "searchQuery")), "Subpanel typing cannot activate module search");
+
+        Object checkbox = settingHit(panel, "NotWhileSPressed");
+        boolean previousCheck = AugustusVelocity.enabled("common", "NotWhileSPressed");
+        clickHit(gui, checkbox);
+        check(AugustusVelocity.enabled("common", "NotWhileSPressed") != previousCheck,
+                "Subpanel checkbox updates runtime settings");
+        Object lagHit = settingHit(panel, "Lag");
+        Mouse.left = true;
+        clickHit(gui, lagHit);
+        invoke(gui, "updateDrag", new Class<?>[] {int.class},
+                (Integer) get(lagHit, "controlX") + (Integer) get(lagHit, "controlW") * 3 / 4);
+        check(AugustusVelocity.value("common", "Lag") == 300, "Subpanel sliders use their wider track");
+        Mouse.left = false;
+        gui.drawScreen(0, 0, 0F);
+        check(get(gui, "dragSetting") == null, "Releasing a slider finishes and saves the drag");
+        invoke(lag, "set", new Class<?>[] {double.class}, 0D);
+
+        int modeY = (Integer) get(settingHit(panel, "MODE"), "y");
         boolean reached = false;
-        for (int i = 0; i < 100; i++) {
-            for (Object hit : (List<?>) get(col, "hits")) {
+        for (int i = 0; i < 40; i++) {
+            for (Object hit : (List<?>) get(panel, "hits")) {
                 if (get(hit, "setting") != expertMotion) continue;
-                int y = (Integer) get(hit, "y") + (Integer) get(hit, "h") / 2;
-                if (y > (Integer) get(col, "bodyY") && y < (Integer) get(col, "bodyY") + (Integer) get(col, "bodyH")) {
-                    reached = true;
-                    break;
-                }
+                reached = true;
+                break;
             }
             if (reached) break;
-            invoke(gui, "scrollColumn", new Class<?>[] {int.class, int.class, int.class},
-                    (Integer) get(col, "headerX") + 15, (Integer) get(col, "bodyY") + 15, -120);
-            render(gui);
+            wheel(gui, (Integer) get(panel, "x") + 20, (Integer) get(panel, "bodyY") + 15, -120);
         }
-        check(reached && (Integer) get(col, "scroll") > 0, "Last Expert motion setting is reachable by wheel scrolling");
-        ((java.util.Set<?>) get(gui, "expanded")).remove(get(entry, "id"));
-        set(entry, "expandProgress", 0F);
-        set(col, "scroll", 0);
-        set(col, "scrollVis", 0F);
-        gui.height=originalHeight;
+        check(reached && (Integer) get(panel, "scroll") > 0, "Last Expert motion is reachable by wheel scrolling");
+        check((Integer) get(settingHit(panel, "MODE"), "y") == modeY, "Mode selector stays fixed while parameters scroll");
+        for (Object hit : (List<?>) get(panel, "hits")) {
+            if (get(hit, "setting") == null || get(hit, "setting") == mode) continue;
+            check((Integer) get(hit, "y") >= (Integer) get(panel, "bodyY")
+                    && (Integer) get(hit, "y") + (Integer) get(hit, "h")
+                    <= (Integer) get(panel, "bodyY") + (Integer) get(panel, "bodyH"),
+                    "Scrolled setting hits stay inside the parameter area");
+        }
+
+        clickHit(gui, settingHit(panel, "MODE"));
+        render(gui);
+        check(AttackReduceFeature.getMode() == 6 && get(panel, "dropdown") != null,
+                "Mode click opens a dropdown without cycling the current value");
+        int bodyScroll = (Integer) get(panel, "scroll");
+        for (int i = 0; i < 12; i++) {
+            wheel(gui, (Integer) get(panel, "choiceX") + 15, (Integer) get(panel, "choiceY") + 10, -120);
+        }
+        check((Integer) get(panel, "scroll") == bodyScroll, "Dropdown wheel cannot move the parameter area");
+        clickHit(gui, dropdownChoice(panel, "19"));
+        render(gui);
+        check(AttackReduceFeature.getMode() == 19 && get(panel, "dropdown") == null,
+                "Dropdown can directly select the final Velocity mode");
+        check((Integer) get(panel, "scroll") == 0, "Changing modes resets parameter scrolling");
+        check(findVisibleSetting(panel, "PushMotion1") == null, "Mode changes remove settings from the previous mode");
+        clickHit(gui, settingHit(panel, "MODE"));
+        render(gui);
+        check(dropdownChoice(panel, "19") != null, "Dropdown opens with the current mode in view");
+        gui.keyTyped('\0', Keyboard.KEY_ESCAPE);
+        check(get(panel, "dropdown") == null && get(gui, "settingsPanel") == panel,
+                "First Escape closes just the dropdown");
+        gui.keyTyped('\0', Keyboard.KEY_ESCAPE);
+        check(get(gui, "settingsPanel") == null && !(Boolean) get(gui, "closing"),
+                "Second Escape returns to the main ClickGUI");
+
+        gui.mouseClicked((Integer) get(entryHit(col, "Velocity"), "x") + 20,
+                (Integer) get(entryHit(col, "Velocity"), "y") + 8, 1);
+        render(gui);
+        check(get(gui, "settingsPanel") != null, "Right-click also opens the Velocity subpanel");
+        Module demo = ModuleManager.getModule("Combat Demo");
+        boolean demoEnabled = demo.isEnabled();
+        clickHit(gui, entryHit(column(gui, "combat"), "Combat Demo"));
+        check(get(gui, "settingsPanel") == null && demo.isEnabled() == demoEnabled,
+                "Clicking outside dismisses the subpanel without toggling a background module");
+
+        // The same geometry remains usable at Minecraft's smaller GUI resolutions.
+        int originalWidth = gui.width;
+        gui.width = 320;
+        gui.height = 240;
+        invoke(gui, "openSettingsPanel", new Class<?>[] {entry.getClass()}, entry);
+        render(gui);
+        panel = get(gui, "settingsPanel");
+        clickHit(gui, settingHit(panel, "MODE"));
+        render(gui);
+        check((Integer) get(panel, "x") >= 0 && (Integer) get(panel, "x") + (Integer) get(panel, "w") <= gui.width
+                && (Integer) get(panel, "y") + (Integer) get(panel, "h") <= gui.height,
+                "Subpanel fits a 320x240 GUI");
+        check((Integer) get(panel, "choiceY") >= 0
+                && (Integer) get(panel, "choiceY") + (Integer) get(panel, "choiceH") <= gui.height,
+                "Dropdown fits a small GUI");
+        gui.keyTyped('\0', Keyboard.KEY_ESCAPE);
+        render(gui);
+        clickHit(gui, panelAction(panel, "close"));
+        check(get(gui, "settingsPanel") == null, "Close button returns to the main GUI");
+        gui.width = originalWidth;
+        gui.height = originalHeight;
         invoke(mode, "set", new Class<?>[] {double.class}, 1D);
         render(gui);
+    }
+
+    private static void wheel(GuiOpenMaverClickGui gui, int x, int y, int amount) throws Exception {
+        set(gui, "lastMouseX", x);
+        set(gui, "lastMouseY", y);
+        Mouse.wheel = amount;
+        gui.handleMouseInput();
+        render(gui);
+    }
+
+    private static Object panelAction(Object panel, String action) throws Exception {
+        for (Object hit : (List<?>) get(panel, "hits")) if (action.equals(get(hit, "action"))) return hit;
+        throw new AssertionError("No panel action " + action);
+    }
+
+    private static Object dropdownChoice(Object panel, String value) throws Exception {
+        for (Object hit : (List<?>) get(panel, "choices")) if (value.equals(get(hit, "value"))) return hit;
+        throw new AssertionError("No dropdown choice " + value);
+    }
+
+    private static Object findVisibleSetting(Object panel, String label) throws Exception {
+        for (Object hit : (List<?>) get(panel, "hits")) {
+            Object setting = get(hit, "setting");
+            if (setting != null && label.equalsIgnoreCase((String) get(setting, "label"))) return setting;
+        }
+        return null;
     }
 
     private static GuiOpenMaverClickGui open(GuiScreen parent, String initial, int w, int h) throws Exception {
