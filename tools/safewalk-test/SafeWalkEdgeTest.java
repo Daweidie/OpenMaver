@@ -230,8 +230,10 @@ public final class SafeWalkEdgeTest {
                         && features.contains("SafeWalkFeature.save()"));
         check("reset hands the key back on shutdown",
                 count(features, "SafeWalkFeature.reset();") >= 2);
-        check("settings version bumped for the new keys",
-                features.contains("SETTINGS_VERSION = 22")
+        java.util.regex.Matcher version = java.util.regex.Pattern
+                .compile("SETTINGS_VERSION\\s*=\\s*(\\d+)").matcher(features);
+        check("settings version includes the new keys",
+                version.find() && Integer.parseInt(version.group(1)) >= 22
                         && features.contains("safewalk.distance"));
         check("Scaffold and Scaffold2 expose sneak-key ownership",
                 readText("mc/ScaffoldFeature.java").contains("public static boolean ownsSneakKey()")

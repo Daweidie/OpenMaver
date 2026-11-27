@@ -11,10 +11,7 @@ public final class KeepSprintBridgeTest {
     private static int checks;
 
     public static void main(String[] args) {
-        KeepSprintFeature.reset();
-        java.util.Properties legacy = new java.util.Properties();
-        legacy.setProperty("keepSprint.rotate", "false");
-        KeepSprintFeature.load(legacy);
+        KeepSprintRuntimeTest.useLegacyOmni();
         module.movement.KeepSprint module = new module.movement.KeepSprint();
         ModuleManager.register(module);
         module.setEnabled(true);

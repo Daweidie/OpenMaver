@@ -81,8 +81,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             "ALWAYS", "NCP", "FALLING", "GRIM", "JUMP", "LOW", "DOWN"};
     private static final String[] KILLAURA_TARGET_MODES = {"Single", "Switch"};
     private static final String[] KILLAURA_SORTS = {"Distance", "Health"};
-    /** ClickGUI 仅暴露基础搭建与 Telly 两种模式。 */
-    private static final String[] SCAFFOLD_MODES = {"NORMAL", "TELLY"};
+    /** ClickGUI 仅暴露 Normal 与 Simple 两种模式。 */
+    private static final String[] SCAFFOLD_MODES = {"NORMAL", "SIMPLE"};
     /** Scaffold 手持方块来源：SILENT（伪装换手）/ HOTBAR（真实换手）。 */
     private static final String[] SCAFFOLD_SLOT_MODES = ScaffoldFeature.SLOT_NAMES;
     private static final String[] GODBRIDGE_MODES = GodBridgeFeature.MODE_NAMES;
@@ -216,7 +216,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 System.err.println("[OpenMaver] ClickGUI first draw");
             }
             if (dragSetting != null) {
-                if (Mouse.isButtonDown(0)) {
+                if (dragSetting.visible() && Mouse.isButtonDown(0)) {
                     updateDrag(mouseX);
                 } else {
                     dragSetting = null;
@@ -873,46 +873,65 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }));
     }
 
-    /**
-     * Scaffold 设置 —— 与 {@code ../OpenZen} 的 Scaffold 面板逐项对应。
-     *
-     * <p>OpenZen 里只有 8 个设置：Mode / Eagle / Sneak / Snap / Render Item Spoof /
-     * Rotation Tick / Clutch，外加 HUD 元素开关。这里保持同样的集合，不再出现
-     * Myau 的 Tower / KeepY / Motion / SafeWalk 之类。
-     */
+    /** Normal uses Augustus settings; Simple keeps the OpenZen settings. */
     private void addScaffoldSettings(Entry entry) {
         entry.settings.add(Setting.select("MODE", SCAFFOLD_MODES, new Binding() {
             public double get() {
-                int mode = ScaffoldFeature.getMode();
-                return mode == ScaffoldFeature.MODE_NORMAL ? 0.0D : 1.0D;
+                return ScaffoldFeature.getMode() == ScaffoldFeature.MODE_NORMAL ? 0.0D : 1.0D;
             }
             public void set(double value) {
                 ScaffoldFeature.setMode(value < 0.5D
                         ? ScaffoldFeature.MODE_NORMAL : ScaffoldFeature.MODE_TELLY_BRIDGE);
             }
         }));
-        entry.settings.add(Setting.check("EAGLE", new Binding() {
-            public double get() { return ScaffoldFeature.isEagle() ? 1.0D : 0.0D; }
-            public void set(double value) { ScaffoldFeature.setEagle(value > 0.5D); }
-        }));
+        final AugustusScaffold.Settings normal = AugustusScaffold.SETTINGS;
+        entry.settings.add(normalRange("YAW SPEED", normal.yawSpeed, "°"));
+        entry.settings.add(normalRange("PITCH SPEED", normal.pitchSpeed, "°"));
+        entry.settings.add(normalRange("YAW ACCELERATION", normal.yawAcceleration, "°"));
+        entry.settings.add(normalRange("PITCH ACCELERATION", normal.pitchAcceleration, "°"));
+        entry.settings.add(normalRange("CPS", normal.cps, ""));
+        entry.settings.add(Setting.select("PITCH SELECTION", AugustusScaffold.PITCH_SELECTIONS, new Binding() {
+            public double get() { return normal.pitchSelection; }
+            public void set(double value) {
+                normal.pitchSelection = Math.max(0, Math.min(5, (int) Math.round(value)));
+                OpenMaverFeatures.markDirty();
+            }
+        }).scaffoldMode(true));
+        entry.settings.add(Setting.slider("MAX PITCH CORRECTION", 0, 180, 1, 0, "°", new Binding() {
+            public double get() { return normal.maxPitchCorrection; }
+            public void set(double value) {
+                normal.maxPitchCorrection = Math.max(0, Math.min(180, value));
+                OpenMaverFeatures.markDirty();
+            }
+        }).scaffoldMode(true));
+        entry.settings.add(Setting.check("EXTRA BLOCK SEARCH", new Binding() {
+            public double get() { return normal.extraBlockSearch ? 1 : 0; }
+            public void set(double value) { normal.extraBlockSearch = value > 0.5D; OpenMaverFeatures.markDirty(); }
+        }).scaffoldMode(true));
+        entry.settings.add(Setting.check("ALWAYS PLACE", new Binding() {
+            public double get() { return normal.alwaysPlace ? 1 : 0; }
+            public void set(double value) { normal.alwaysPlace = value > 0.5D; OpenMaverFeatures.markDirty(); }
+        }).scaffoldMode(true));
+        entry.settings.add(Setting.check("FORCE PLACE", new Binding() {
+            public double get() { return normal.forcePlace ? 1 : 0; }
+            public void set(double value) { normal.forcePlace = value > 0.5D; OpenMaverFeatures.markDirty(); }
+        }).scaffoldMode(true));
+        entry.settings.add(Setting.check("NO SWING", new Binding() {
+            public double get() { return normal.noSwing ? 1 : 0; }
+            public void set(double value) { normal.noSwing = value > 0.5D; OpenMaverFeatures.markDirty(); }
+        }).scaffoldMode(true));
         entry.settings.add(Setting.check("SNEAK", new Binding() {
             public double get() { return ScaffoldFeature.isSneak() ? 1.0D : 0.0D; }
             public void set(double value) { ScaffoldFeature.setSneak(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("SNAP", new Binding() {
-            public double get() { return ScaffoldFeature.isSnap() ? 1.0D : 0.0D; }
-            public void set(double value) { ScaffoldFeature.setSnap(value > 0.5D); }
-        }));
+        }).scaffoldMode(false));
         entry.settings.add(Setting.check("CLUTCH", new Binding() {
             public double get() { return ScaffoldFeature.isClutch() ? 1.0D : 0.0D; }
             public void set(double value) { ScaffoldFeature.setClutch(value > 0.5D); }
-        }));
+        }).scaffoldMode(false));
         entry.settings.add(Setting.slider("ROTATION TICK", 1.0F, 6.0F, 1.0F, 0, "t", new Binding() {
             public double get() { return ScaffoldFeature.getRotationTick(); }
-            public void set(double value) {
-                ScaffoldFeature.setRotationTick((int) Math.round(value));
-            }
-        }));
+            public void set(double value) { ScaffoldFeature.setRotationTick((int) Math.round(value)); }
+        }).scaffoldMode(false));
         entry.settings.add(Setting.select("SLOT", SCAFFOLD_SLOT_MODES, new Binding() {
             public double get() { return ScaffoldFeature.getSlotMode(); }
             public void set(double value) { ScaffoldFeature.setSlotMode((int) Math.round(value)); }
@@ -925,6 +944,16 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             public double get() { return ScaffoldFeature.isHud() ? 1.0D : 0.0D; }
             public void set(double value) { ScaffoldFeature.setHud(value > 0.5D); }
         }));
+    }
+
+    private static Setting normalRange(String label, final AugustusScaffold.Range range, String suffix) {
+        return Setting.range(label, (float) range.min, (float) range.max, 1.0F, 0, suffix, new Binding() {
+            public double get() { return range.low; }
+            public void set(double value) { range.setLow(value); }
+        }, new Binding() {
+            public double get() { return range.high; }
+            public void set(double value) { range.setHigh(value); }
+        }).scaffoldMode(true);
     }
 
     /** OpenZen Telly 两种模式及其独立参数。 */
@@ -1241,6 +1270,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private static int columnSettingHeight(Setting setting) {
+        if (!setting.visible()) return 0;
         return setting.kind == Setting.SLIDER || setting.kind == Setting.RANGE
                 ? SET_SLIDER_H : SET_LINE_H;
     }
@@ -1463,6 +1493,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int cy = y + SET_PAD;
         for (int i = 0; i < entry.settings.size(); i++) {
             Setting setting = entry.settings.get(i);
+            if (!setting.visible()) continue;
             int sh = columnSettingHeight(setting);
             boolean hovered = hoverable && isHovered(lastMouseX, lastMouseY, x, cy, COL_W, sh);
             String key = settingKey(entry, setting);
@@ -1648,6 +1679,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     private void handleColumnSettingClick(Hit hit, int mx, int button) {
         Setting setting = hit.setting;
+        if (!setting.visible()) return;
         if (setting.kind == Setting.SLIDER) {
             if (button == 0) {
                 dragEntry = hit.entry;
@@ -2934,6 +2966,17 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         final Binding binding;
         /** RANGE 的上限手柄；其它类型为 null。 */
         final Binding bindingHigh;
+        private int scaffoldModeFilter = -1;
+
+        Setting scaffoldMode(boolean normal) {
+            scaffoldModeFilter = normal ? 1 : 0;
+            return this;
+        }
+
+        boolean visible() {
+            return scaffoldModeFilter < 0 || (ScaffoldFeature.getMode() == ScaffoldFeature.MODE_NORMAL)
+                    == (scaffoldModeFilter == 1);
+        }
 
         private Setting(String label, int kind, float min, float max, float step,
                 int decimals, String suffix, String[] options, Binding binding) {

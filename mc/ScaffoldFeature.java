@@ -16,73 +16,9 @@ import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Scaffold（自动搭路 / 搭桥）——按 {@code ../OpenZen} 的
- * {@code shit.zen.modules.impl.movement.Scaffold} 全量重写。
- *
- * <p>OpenZen 的搭桥模型和之前的 Myau 移植差别很大，这里按它自己的状态机实现：
- *
- * <ol>
- *   <li><b>目标高度</b>：{@code targetYLevel = floor(y) - 1}，只在“落地 / 停下 /
- *       按住空格 / Normal 模式”时刷新，其余时间锁住 —— 这是 telly bridge 能连续
- *       在同一高度连续铺路的原因；物理空格允许主动升高桥面。</li>
- *   <li><b>目标格搜索</b>（{@code applyRotations}）：先看脚下这一格是不是已经能站；
- *       不能站就从 {@code targetYLevel} 开始按半径 1..6 的菱形向下扩，找到第一个
- *       “空气格 + 六个邻居里有实心支撑面 + 面中心在 4.5 格内且朝向可见”的组合。
- *       放置点记成 <em>支撑方块 + 指向目标格的那一面</em>。</li>
- *   <li><b>模式</b>：{@code Normal / Telly Bridge / Old Telly / Keep Y}。Telly 用
- *       一个独立的起步/空中旋转表（groundTicks 1/2、airTicks 1、俯角 75.5°、
- *       90°/50° 的单 tick 限速），Normal 用 snap 直接对齐。</li>
- *   <li><b>Eagle / Sneak</b>：{@code sneak} 是 OpenZen 的 18→21 tick 自动潜行节拍；
- *       {@code eagle} 是 Normal 模式下“贴边才潜行”。</li>
- *   <li><b>Clutch</b>：用两 tick 的垂直运动模拟判断“再掉下去目标就够不着了”，
- *       够不着时把 aim 锁在目标上并不放置（{@code rotationDelay} 计数，上限 8）。</li>
- *   <li><b>击退感知</b>：收到自己的 S12 且水平速度 ≥ 1.5 时 {@code velocityDelay=60}，
- *       期间同样走 clutch 的“按住不放”分支。</li>
- * </ol>
- *
- * <h3>与 OpenZen 的落地差异（OpenMaver 没有 Mixin / EventManager）</h3>
- *
- * <ul>
- *   <li><b>静默转向</b>：OpenZen 靠 {@code RotationHandler} 在 MotionEvent 里改出站
- *       rotation，客户端视角不动。OpenMaver 在
- *       {@link ScaffoldMovementInput}（vanilla {@code updatePlayerMoveState()} 之后、
- *       {@code moveFlying()} 之前）把 aim 写进 {@code rotationYaw/Pitch}，本 tick 的
- *       C03 自然带上它；{@code ClientTickEvent.END} 再恢复相机角度（第一人称不变，
- *       F5 身体保留服务端最后收到的 aim）。</li>
- *   <li><b>MoveFix</b>：OpenZen 的 {@code MovementUtil.handleStrafe} 把输入吸附到
- *       相对 aim 的 8 个整数方向。这里在同一个 hook 里做同一件事，潜行时保留
- *       原版的 0.3 倍输入；冲刺开关继续由原版按真实输入决定。</li>
- *   <li><b>C08 时序</b>：OpenZen 的 {@code onPreMotion} 在 {@code handleKeybinds} 里，
- *       也就是本 tick 的 C03 之后。OpenMaver 的等价点是“下一 tick 开头”，所以放置
- *       走 {@code pending → flush}：tick N 把 aim 写进 C03，tick N+1 开头用<em>服务端
- *       已经收到的那个角度</em>做 ray trace 再发 C08。放置成功的那一 tick 把 aim
- *       冻结成刚校验过的角度（{@code holdPlaceAim}），保证 C08 之后那条飞包携带同一
- *       个角度。</li>
- *   <li><b>快捷栏</b>：1.8.9 的 {@code inventory.currentItem} 不会自动同步给服务端，
- *       但原版每 tick 的 {@code playerController.updateController()}（以及每次右键 /
- *       挖掘的第一步）都会调 {@code syncCurrentPlayItem()}，按它自己的
- *       {@code currentPlayerItem} 缓存补一条 C09。所以模块只改客户端槽位，
- *       <b>不再自己发 C09</b> —— 手发会和缓存打架，服务端收到两条相同 slot 的 C09，
- *       直接命中 Grim 的 {@code BadPacketsA}（"Sent duplicate slot id"）。
- *       默认走 {@code SLOT = HOTBAR}：真的切到方块槽，C08 用 {@code getHeldItem()}
- *       那一组物品，服务端看到的选中槽 / C08 物品 / C09 顺序三者自洽；换手那一 tick
- *       不放置，下一 tick 的 C08 一定在 C09 之后。{@code SILENT} 是 OpenZen 的旧行为：
- *       客户端槽位只在本 tick 内临时切过去，tick 末尾由 {@code itemSpoof} 切回开启时
- *       的槽（不发包），手部渲染看到旧物品、服务端认为手持方块 —— 槽位不一致本身
- *       就是可判定特征，只在明确需要时开启。</li>
- *   <li><b>空闲时不转</b>：OpenZen 的 {@code getPlayerYawRotation()} 在
- *       {@code currentPlacement == null} 时返回 {@code (0,0)}，会让服务端视角在没有
- *       目标时漂到 yaw 0。这里改成回落到相机角度（见 {@link #getPlayerYawRotation}），
- *       其余状态机逻辑不变。</li>
- *   <li><b>{@code delayPackets}</b>：OpenZen 在 clutch 分支里往
- *       {@code ClientLevel#tickNonPassenger} 插 runnable 来“拆 tick”。1.8.9 没有这个
- *       注入点，这里只保留它的语义（hold aim + rotationDelay 计数 + 到期重试），
- *       不再拆 tick 发额外 C05。</li>
- * </ul>
- *
- * <p>独立 {@code Telly} 模块通过 {@link TellyFeature} 使用自己的参数，
- * 与 Scaffold 共用本状态机。行为说明见 {@code design/SCAFFOLD_HANDOFF.md}，回归测试见
- * {@code tools/scaffold-test/}。
+ * Scaffold transport and mode dispatch. Normal uses the independent AugustusScaffold
+ * controller; Simple / Telly / Keep Y retain the OpenZen controller below.
+ * Inventory sync, the movement-input hook and C03 -> C08 ordering are shared.
  */
 public final class ScaffoldFeature {
 
@@ -115,9 +51,7 @@ public final class ScaffoldFeature {
     /** 两个模块各自保存参数，共用一个放置状态机。 */
     static final class Settings {
         int mode = MODE_NORMAL;
-        boolean eagle = true;
         boolean sneak = true;
-        boolean snap = true;
         boolean clutch = true;
         int rotationTick = 3;
         boolean itemSpoof = true;
@@ -125,6 +59,7 @@ public final class ScaffoldFeature {
         boolean hud = true;
     }
 
+    private static final AugustusScaffold normal = new AugustusScaffold();
     private static final Settings scaffoldSettings = new Settings();
     private static Settings bridgeSettings = scaffoldSettings;
 
@@ -192,7 +127,9 @@ public final class ScaffoldFeature {
     private static long slotSwitchTick = Long.MIN_VALUE;
     private static int blockCount = -1;
 
-    private static int eagleTimer;
+    /** OpenZen periodic sneak timer, used only by Simple / Telly / Keep Y. */
+    private static int sneakTimer;
+    private static boolean sneakKeyOwned;
     private static int groundTicks;
     private static int airTicks;
     private static int rotationDelay;
@@ -220,6 +157,8 @@ public final class ScaffoldFeature {
     private static boolean rotationDirty;
     private static boolean hookArmed;
     private static long hookArmedNanos;
+    /** Normal 的 MoveFix 不得把后退/侧移变成原版允许疾跑的前进。 */
+    private static boolean sprintKeySuppressed;
     private static Object aimPlayer;
     /** 用于检测重生/切维度（玩家对象会换）。 */
     private static Object trackedPlayer;
@@ -258,12 +197,8 @@ public final class ScaffoldFeature {
     // ==================================================================
 
     /**
-     * 支撑方块与要点击的面。
-     *
-     * <p>{@code hitX/hitY/hitZ} 是这个面上的一次性随机点击点：它同时决定 aim
-     * （{@link #rotationToBlock}）和 C08 的 {@code hitVec}。瞄准方块正中心
-     * （{@code x+0.5, y+0.5, z+0.5}）是最好识别的一类 scaffold 特征 —— 每一下
-     * 都停在几何中心、yaw/pitch 完全一致；真人永远点在面上某个随机位置。
+     * 支撑方块、点击面和命中坐标。Normal 使用 Augustus 的真实射线交点；
+     * 其他模式使用一次性随机面点，并在放置前复验。
      */
     private static final class Placement {
         final int x;
@@ -298,6 +233,16 @@ public final class ScaffoldFeature {
             this.hitZ = hit[2];
         }
 
+        Placement(AugustusScaffold.Target hit) {
+            x = hit.x;
+            y = hit.y;
+            z = hit.z;
+            face = hit.face;
+            hitX = hit.hitX;
+            hitY = hit.hitY;
+            hitZ = hit.hitZ;
+        }
+
         boolean sameTarget(int x, int y, int z, int face) {
             return this.x == x && this.y == y && this.z == z && this.face == face;
         }
@@ -308,7 +253,8 @@ public final class ScaffoldFeature {
         final int x;
         final int y;
         final int z;
-        final int face;
+        /** Normal may update this to the current ray face of the same support. */
+        int face;
         /** C08 里真正发送的 {@code hitVec}：优先取 aim 射线与面平面的交点。 */
         double hitX;
         double hitY;
@@ -340,6 +286,7 @@ public final class ScaffoldFeature {
 
     /** 在 ClientTickEvent.START（vanilla 发送 C03 之前）调用。 */
     public static void onTickStart(Minecraft mc) {
+        restoreSprintKey(mc);
         Module telly = ModuleManager.getModule("Telly");
         boolean usingTelly = telly != null && telly.isEnabled();
         Module module = usingTelly ? telly : ModuleManager.getModule("Scaffold");
@@ -382,7 +329,9 @@ public final class ScaffoldFeature {
             hookArmed = true;
             hookArmedNanos = System.nanoTime();
             ensureMovementHook(mc, player);
-            tick(mc, player, world);
+            if (bridgeSettings.mode == MODE_NORMAL) tickNormal(mc, player, world);
+            else tick(mc, player, world);
+            hookArmedNanos = System.nanoTime();
         } catch (Throwable error) {
             disable(mc);
             failed = true;
@@ -399,6 +348,7 @@ public final class ScaffoldFeature {
      * {@code itemSpoof} 也在这里把客户端槽位切回开启时的槽。
      */
     public static void onTickEnd(Minecraft mc) {
+        restoreSprintKey(mc);
         hookArmed = false;
         Object player = aimPlayer;
         if (player == null || !active) {
@@ -429,7 +379,9 @@ public final class ScaffoldFeature {
         blockCount = -1;
         targetYLevel = 10000;
         velocityDelay = 0;
-        eagleTimer = 0;
+        sneakTimer = 0;
+        normal.reset();
+        sneakKeyOwned = false;
         groundTicks = 0;
         airTicks = 0;
         rotationDelay = 0;
@@ -451,7 +403,7 @@ public final class ScaffoldFeature {
             serverSlot = oldSlot;
             trackedPlayer = player;
             // OpenZen: 启用时 aim 放在“身后”，telly bridge 从这个角度起步。
-            rotsYaw = playerYaw(player) - 180.0F;
+            rotsYaw = bridgeSettings.mode == MODE_NORMAL ? playerYaw(player) : playerYaw(player) - 180.0F;
             rotsPitch = playerPitch(player);
             prevAimYaw = playerYaw(player);
             prevAimPitch = playerPitch(player);
@@ -473,6 +425,7 @@ public final class ScaffoldFeature {
     }
 
     private static void disable(Minecraft mc) {
+        restoreSprintKey(mc);
         active = false;
         hookArmed = false;
         Object player = aimPlayer;
@@ -487,6 +440,9 @@ public final class ScaffoldFeature {
         blockSlot = -1;
         blockCount = -1;
         rotationDelay = 0;
+        sneakTimer = 0;
+        normal.reset();
+        sneakKeyOwned = false;
         aimApplied = false;
         slotSwitchTick = Long.MIN_VALUE;
         OpenMaverDebug.trace("scaffold", "disabled");
@@ -494,6 +450,7 @@ public final class ScaffoldFeature {
 
     /** 配置重新加载 / 世界切换时由 OpenMaverFeatures 调用。 */
     public static void reset() {
+        restoreSprintKey(Minecraft.getMinecraft());
         if (active) disable(Minecraft.getMinecraft());
         active = false;
         failed = false;
@@ -504,6 +461,9 @@ public final class ScaffoldFeature {
         blockSlot = -1;
         blockCount = -1;
         rotationDelay = 0;
+        sneakTimer = 0;
+        normal.reset();
+        sneakKeyOwned = false;
         aimApplied = false;
         rotationDirty = false;
         trackedPlayer = null;
@@ -512,7 +472,7 @@ public final class ScaffoldFeature {
         slotSwitchTick = Long.MIN_VALUE;
     }
 
-    /** 由 OpenMaverFeatures 每 tick 递增，仅用于 debug 与 snap 的相位。 */
+    /** 由 OpenMaverFeatures 每 tick 递增，用于放置预算与切槽时序。 */
     public static void tickCounter(long tick) {
         currentTick = tick;
     }
@@ -520,6 +480,33 @@ public final class ScaffoldFeature {
     // ==================================================================
     // 主 tick（对应 OpenZen Scaffold#onTick）
     // ==================================================================
+
+    /** Augustus owns all Normal planning; the OpenZen controller is never entered. */
+    private static void tickNormal(Minecraft mc, Object player, Object world) {
+        updateHotbar(player);
+        if (pending != null) flushPending(mc, player, world);
+        if (holdPlaceAim) {
+            aimForThisTick();
+            return;
+        }
+        // Each pass plans from the current world, input and last transmitted rotation.
+        pending = null;
+        double sensitivity = OpenMaverFeatures.number(
+                OpenMaverFeatures.read(mc, "gameSettings", "field_71474_y", null),
+                "mouseSensitivity", "field_74341_c");
+        float scaled = (float) sensitivity * 0.6F + 0.2F;
+        AugustusScaffold.Aim aim = normal.update(player, world, cameraYaw, cameraPitch,
+                prevAimYaw, prevAimPitch, forwardSign(mc), strafeSign(mc), blockReachDistance(),
+                scaled * scaled * scaled * 1.2F, blockSlot >= 0);
+        rotsYaw = aim.yaw;
+        rotsPitch = aim.pitch;
+        placement = aim.target == null ? null : new Placement(aim.target);
+        if (placement != null && canPlaceNow(player, world) && normal.clickReady(player, world)) {
+            pending = new Pending(placement, rotsYaw, rotsPitch,
+                    aim.target.hitX, aim.target.hitY, aim.target.hitZ);
+        }
+        aimForThisTick();
+    }
 
     private static void tick(Minecraft mc, Object player, Object world) {
         updateAirGroundTicks(player);
@@ -546,8 +533,7 @@ public final class ScaffoldFeature {
                 || targetYLevel > floor(posY) - 1
                 || onGround
                 || !moving
-                || jumpHeld
-                || bridgeSettings.mode == MODE_NORMAL) {
+                || jumpHeld) {
             targetYLevel = floor(posY) - 1;
         }
 
@@ -596,7 +582,10 @@ public final class ScaffoldFeature {
             correctPitch = target[1];
         }
 
-        // 6) rots：clutch 按住 / 正常插值 + sneak / jump
+        // 潜行独立于 clutch 的瞄准锁定，每 tick 都更新、释放自己的按键。
+        updateSneak(mc, player);
+
+        // 6) rots：clutch 按住 / 正常插值 + jump
         boolean holding = false;
         if (placement != null && clutchHold(bridgeSettings.clutch, canBuildNow, velocityDelay, rotationDelay)) {
             float[] locked = rotationToBlock(player, placement, 1.0F);
@@ -605,20 +594,13 @@ public final class ScaffoldFeature {
             rotationDelay++;
             holding = true;
             pending = null;
-            if (bridgeSettings.mode != MODE_NORMAL) {
-                setKeyPressed(mc, "keyBindJump", false);
-            }
+            setKeyPressed(mc, "keyBindJump", false);
         } else {
             canBuildNow = true;
             rotationDelay = 0;
-            if (bridgeSettings.mode == MODE_NORMAL && bridgeSettings.snap) {
-                rotsYaw = correctYaw;
-            } else {
-                rotsYaw = rotateTowards(getBlockDistance(), rotsYaw, correctYaw);
-            }
+            rotsYaw = rotateTowards(getBlockDistance(), rotsYaw, correctYaw);
             rotsPitch = correctPitch;
 
-            updateSneak(mc, player, onGround);
             updateJumpKey(mc, moving, jumpHeld);
 
             if (isTellyMode() && airTicks < 1 && moving) {
@@ -629,9 +611,6 @@ public final class ScaffoldFeature {
                 // 既不改写 lastRots，也不规划新的放置。
                 aimForThisTick();
                 return;
-            }
-            if (bridgeSettings.mode == MODE_NORMAL && bridgeSettings.snap && !jumpHeld) {
-                resetSnap(player, world);
             }
         }
 
@@ -955,27 +934,6 @@ public final class ScaffoldFeature {
         return Math.max(base, 180.0D);
     }
 
-    /** OpenZen resetSnap：瞄准点没落在目标上时，每 4 tick 在相机角上加 ±0.25° 抖动。 */
-    private static void resetSnap(Object player, Object world) {
-        if (placement == null) {
-            return;
-        }
-        boolean lookingAtBlock = false;
-        Object mop = rayTraceFrom(world, eyePosition(player), rotsYaw, rotsPitch,
-                blockReachDistance());
-        if (mop != null) {
-            Object hitPos = OpenMaverFeatures.read(mop, "blockPos", "field_178783_e", null);
-            Object side = OpenMaverFeatures.read(mop, "sideHit", "field_178784_b", null);
-            if (hitPos != null && blockPosEquals(hitPos, placement.x, placement.y, placement.z)
-                    && facingIndex(side) != 1) {
-                lookingAtBlock = true;
-            }
-        }
-        if (!lookingAtBlock && currentTick % 4L == 0L) {
-            rotsYaw = playerYaw(player) + randomFloat(0.0F, 0.5F) - 0.25F;
-        }
-    }
-
     private static float[] getPlayerYawRotation(Object player) {
         if (placement == null) {
             // OpenZen 这里返回 (0,0)；没有目标时跟随相机更安全（见类注释）。
@@ -1056,23 +1014,46 @@ public final class ScaffoldFeature {
             }
             return;
         }
-        if (!canPlaceNow(player, world) || !shouldBuild(player, world)) {
+        boolean normalMode = bridgeSettings.mode == MODE_NORMAL;
+        if (!canPlaceNow(player, world)
+                || (normalMode ? !AugustusScaffold.canPlace(world, target.x, target.y, target.z, target.face)
+                    : !shouldBuild(player, world))
+                || (normalMode && !normal.clickReady(player, world))) {
             pending = null;
             return;
         }
-        Object mop = rayTraceFrom(world, eyePosition(player), target.sentYaw, target.sentPitch,
-                blockReachDistance());
-        boolean rayHit = mopMatches(mop, target.x, target.y, target.z, target.face);
-        if (rayHit && isTellyMode()) {
-            // START 规划后玩家还会移动一次，C08 必须使用移动后的实际交点。
-            double[] hit = rayFacePoint(eyePosition(player), target.sentYaw, target.sentPitch,
-                    target.x, target.y, target.z, target.face);
-            if (hit == null) {
-                rayHit = false;
-            } else {
-                target.hitX = hit[0];
-                target.hitY = hit[1];
-                target.hitZ = hit[2];
+        boolean rayHit;
+        if (normalMode) {
+            AugustusScaffold.Target hit = AugustusScaffold.ray(world,
+                    OpenMaverFeatures.number(player, "posX", "field_70165_t"),
+                    OpenMaverFeatures.number(player, "posY", "field_70163_u") + OpenMaverFeatures.eyeHeight(player),
+                    OpenMaverFeatures.number(player, "posZ", "field_70161_v"),
+                    target.sentYaw, target.sentPitch, blockReachDistance());
+            rayHit = hit != null && hit.x == target.x && hit.y == target.y
+                    && hit.z == target.z
+                    && AugustusScaffold.canPlace(world, hit.x, hit.y, hit.z, hit.face)
+                    && (hit.face != 1 || OpenMaverFeatures.number(player, "posY", "field_70163_u") - hit.y > 2);
+            if (rayHit) {
+                // At a corner movement may cross to another face of this support.
+                // Augustus clicks the current ray's face and exact intersection.
+                target.face = hit.face;
+                target.hitX = hit.hitX;
+                target.hitY = hit.hitY;
+                target.hitZ = hit.hitZ;
+            }
+        } else {
+            Object mop = rayTraceFrom(world, eyePosition(player), target.sentYaw, target.sentPitch,
+                    blockReachDistance());
+            rayHit = mopMatches(mop, target.x, target.y, target.z, target.face);
+            if (rayHit && isTellyMode()) {
+                double[] hit = rayFacePoint(eyePosition(player), target.sentYaw, target.sentPitch,
+                        target.x, target.y, target.z, target.face);
+                if (hit == null) rayHit = false;
+                else {
+                    target.hitX = hit[0];
+                    target.hitY = hit[1];
+                    target.hitZ = hit[2];
+                }
             }
         }
         int decision = pendingDecision(target.sent, rayHit, target.retries);
@@ -1087,6 +1068,7 @@ public final class ScaffoldFeature {
             return;
         }
         if (place(mc, player, world, target)) {
+            if (normalMode) normal.placed();
             holdPlaceAim = true;
             holdPlaceYaw = target.sentYaw;
             holdPlacePitch = target.sentPitch;
@@ -1121,7 +1103,9 @@ public final class ScaffoldFeature {
                     "onPlayerRightClick returned " + String.valueOf(result));
             return false;
         }
-        OpenMaverFeatures.callVoid(player, "swingItem", "func_71038_i", null);
+        if (bridgeSettings.mode != MODE_NORMAL || !AugustusScaffold.SETTINGS.noSwing) {
+            OpenMaverFeatures.callVoid(player, "swingItem", "func_71038_i", null);
+        }
         blockCount = countBlocks(player);
         OpenMaverDebug.place(target.x, target.y, target.z, FACING_NAMES[target.face],
                 target.sentYaw, target.sentPitch, false, false, 1);
@@ -1149,7 +1133,11 @@ public final class ScaffoldFeature {
     /** OpenZen doSnap 里的额外过滤：向上搭时空中平走不点顶面。 */
     private static boolean targetBlockReachableByFace(Object player, Pending target) {
         Minecraft mc = Minecraft.getMinecraft();
-        if (target.face != 1 || mc == null || bridgeSettings.mode == MODE_NORMAL) {
+        if (bridgeSettings.mode == MODE_NORMAL) {
+            Object world = OpenMaverFeatures.read(mc, "theWorld", "field_71441_e", null);
+            return AugustusScaffold.canPlace(world, target.x, target.y, target.z, target.face);
+        }
+        if (target.face != 1 || mc == null) {
             return true;
         }
         return OpenMaverFeatures.scaffoldOnGround(player)
@@ -1237,7 +1225,7 @@ public final class ScaffoldFeature {
             // 只有真的有 WASD 输入时才改输入向量：没有输入却套用 8 方向映射，
             // 会凭空造出一个 forward=-1 的“自己往后走”。
             if (!aimApplied && isMoving(mc)
-                    && (pending != null || holdPlaceAim || placement != null)) {
+                    && (bridgeSettings.mode == MODE_NORMAL || pending != null || holdPlaceAim || placement != null)) {
                 float aimYaw = holdPlaceAim ? holdPlaceYaw
                         : (pending != null ? pending.aimYaw : rotsYaw);
                 float cameraMoveYaw = adjustYaw(cameraYaw, forwardSign(mc), strafeSign(mc));
@@ -1265,6 +1253,16 @@ public final class ScaffoldFeature {
             if (forward != originalForward || strafe != originalStrafe) {
                 setNumber(input, "moveForward", "field_78900_b", forward);
                 setNumber(input, "moveStrafe", "field_78902_a", strafe);
+            }
+
+            if (bridgeSettings.mode == MODE_NORMAL && originalForward < 0.8F) {
+                // 原版在本回调之后读取修正后的 forward。除了取消已有疾跑，还要
+                // 挡住 Ctrl / 双击 W 在同 tick 重新启动它；END 再归还疾跑键。
+                setKeyPressed(mc, "keyBindSprint", false);
+                sprintKeySuppressed = true;
+                setNumber(player, "sprintToggleTimer", "field_71156_d", 0);
+                OpenMaverFeatures.callVoid(player, "setSprinting", "func_70031_b",
+                        null, Boolean.FALSE);
             }
 
             if (!aimApplied) {
@@ -1357,28 +1355,24 @@ public final class ScaffoldFeature {
     }
 
     // ==================================================================
-    // Eagle / Sneak / Jump（OpenZen onTick 的输入接管部分）
+    // Sneak / Jump（OpenZen onTick 的输入接管部分）
     // ==================================================================
 
-    /** OpenZen 的 sneak：第 18 tick 停下冲刺并按下潜行，第 21 tick 松开。 */
-    private static void updateSneak(Minecraft mc, Object player, boolean onGround) {
+    /** OpenZen periodic Sneak, called exclusively by the legacy modes. */
+    private static void updateSneak(Minecraft mc, Object player) {
         if (bridgeSettings.sneak) {
-            eagleTimer++;
-            if (eagleTimer == 18) {
-                if (Boolean.TRUE.equals(OpenMaverFeatures.call(player,
-                        "isSprinting", "func_70051_ag", null))) {
-                    setKeyPressed(mc, "keyBindSprint", false);
-                    OpenMaverFeatures.callVoid(player, "setSprinting", "func_70031_b",
-                            null, Boolean.FALSE);
-                }
-                setKeyPressed(mc, "keyBindSneak", true);
-            } else if (eagleTimer >= 21) {
-                setKeyPressed(mc, "keyBindSneak", false);
-                eagleTimer = 0;
-            }
-        }
-        if (bridgeSettings.mode == MODE_NORMAL && bridgeSettings.eagle) {
-            setKeyPressed(mc, "keyBindSneak", onGround && isOnBlockEdge(player, 0.3F));
+            sneakTimer++;
+            if (sneakTimer == 18) {
+                setKeyPressed(mc, "keyBindSprint", false);
+                OpenMaverFeatures.callVoid(player, "setSprinting", "func_70031_b", null, Boolean.FALSE);
+            } else if (sneakTimer >= 21) sneakTimer = 0;
+            boolean automatic = sneakTimer >= 18;
+            setKeyPressed(mc, "keyBindSneak", automatic || physicalKeyDown(mc, "keyBindSneak"));
+            sneakKeyOwned = true;
+        } else {
+            sneakTimer = 0;
+            if (sneakKeyOwned) restoreKey(mc, "keyBindSneak", "field_74311_E");
+            sneakKeyOwned = false;
         }
     }
 
@@ -1399,6 +1393,12 @@ public final class ScaffoldFeature {
         restoreKey(mc, "keyBindSprint", "field_74321_H");
     }
 
+    private static void restoreSprintKey(Minecraft mc) {
+        if (!sprintKeySuppressed) return;
+        restoreKey(mc, "keyBindSprint", "field_74321_H");
+        sprintKeySuppressed = false;
+    }
+
     private static void restoreKey(Minecraft mc, String fieldName, String srg) {
         Object settings = OpenMaverFeatures.read(mc, "gameSettings", "field_71474_y", null);
         Object binding = OpenMaverFeatures.read(settings, fieldName, srg, null);
@@ -1408,25 +1408,6 @@ public final class ScaffoldFeature {
         Object code = OpenMaverFeatures.call(binding, "getKeyCode", "func_151463_i", null);
         boolean physical = code instanceof Number && physicalCodeDown(((Number) code).intValue());
         setBoolean(binding, "pressed", "field_74513_e", physical);
-    }
-
-    /** 与 OpenZen isOnBlockEdge(0.3)：脚下半格、水平收缩一圈后没有碰撞面。 */
-    private static boolean isOnBlockEdge(Object player, float inflate) {
-        Minecraft mc = Minecraft.getMinecraft();
-        if (mc == null) {
-            return false;
-        }
-        Object world = OpenMaverFeatures.read(mc, "theWorld", "field_71441_e", null);
-        AxisAlignedBB box = OpenMaverFeatures.boundingBox(player);
-        if (world == null || box == null) {
-            return false;
-        }
-        AxisAlignedBB shrunk = new AxisAlignedBB(
-                box.minX + inflate, box.minY - 0.5D, box.minZ + inflate,
-                box.maxX - inflate, box.maxY - 0.5D, box.maxZ - inflate);
-        Object colliding = OpenMaverFeatures.call(world, "getCollidingBoundingBoxes",
-                "func_72945_a", null, player, shrunk);
-        return colliding instanceof List && ((List<?>) colliding).isEmpty();
     }
 
     // ==================================================================
@@ -1441,7 +1422,7 @@ public final class ScaffoldFeature {
      * 不碰任何游戏对象，因此可以在网络线程安全调用。
      */
     public static void noteInboundPacket(Object msg) {
-        if (!active || failed || msg == null) {
+        if (!active || failed || bridgeSettings.mode == MODE_NORMAL || msg == null) {
             return;
         }
         if (!msg.getClass().getName().startsWith(
@@ -1760,7 +1741,7 @@ public final class ScaffoldFeature {
         return ((AxisAlignedBB) box).maxY - y >= 0.999D;
     }
 
-    private static boolean isSolidSupport(Object world, int x, int y, int z) {
+    static boolean isSolidSupport(Object world, int x, int y, int z) {
         Object pos = blockPos(x, y, z);
         Object state = getBlockState(world, pos);
         Object block = state == null ? null
@@ -1780,7 +1761,7 @@ public final class ScaffoldFeature {
         return OpenMaverFeatures.call(world, "getBlockState", "func_180495_p", null, pos);
     }
 
-    private static boolean isAir(Object world, int x, int y, int z) {
+    static boolean isAir(Object world, int x, int y, int z) {
         if (world == null) {
             return false;
         }
@@ -1975,7 +1956,7 @@ public final class ScaffoldFeature {
         }
     }
 
-    private static Object vec3(double x, double y, double z) {
+    static Object vec3(double x, double y, double z) {
         try {
             if (vec3Constructor == null) {
                 if (vec3Type == null) {
@@ -1991,7 +1972,7 @@ public final class ScaffoldFeature {
         }
     }
 
-    private static Object vec3(double[] values) {
+    static Object vec3(double[] values) {
         return vec3(values[0], values[1], values[2]);
     }
 
@@ -2011,7 +1992,7 @@ public final class ScaffoldFeature {
         return facings[index];
     }
 
-    private static int facingIndex(Object facingObj) {
+    static int facingIndex(Object facingObj) {
         if (facings == null) {
             facing(0);
         }
@@ -2113,6 +2094,10 @@ public final class ScaffoldFeature {
         return code instanceof Number && physicalCodeDown(((Number) code).intValue());
     }
 
+    static boolean shouldRenderTarget(int mode) {
+        return mode != MODE_NORMAL;
+    }
+
     private static boolean physicalCodeDown(int code) {
         return code < 0 ? code >= -100 && Mouse.isButtonDown(code + 100)
                 : code > 0 && code < 256 && Keyboard.isKeyDown(code);
@@ -2202,9 +2187,9 @@ public final class ScaffoldFeature {
     // 世界渲染（OpenZen Scaffold#onRender）
     // ==================================================================
 
-    /** RenderWorldLastEvent：把目标空气格画成蓝色半透明方块。 */
+    /** RenderWorldLastEvent：Normal 不显示目标框，其它 Scaffold 模式显示蓝色目标格。 */
     public static void onRenderWorld(net.minecraftforge.client.event.RenderWorldLastEvent event) {
-        if (!active || failed || placement == null) {
+        if (!active || failed || placement == null || !shouldRenderTarget(bridgeSettings.mode)) {
             return;
         }
         Minecraft mc = Minecraft.getMinecraft();
@@ -2374,26 +2359,24 @@ public final class ScaffoldFeature {
     public static void load(Properties values) {
         reset();
         scaffoldSettings.mode = clamp(readInt(values, "scaffold.mode", MODE_NORMAL), 0, 3);
-        scaffoldSettings.eagle = readBoolean(values, "scaffold.eagle", true);
         scaffoldSettings.sneak = readBoolean(values, "scaffold.sneak", true);
-        scaffoldSettings.snap = readBoolean(values, "scaffold.snap", true);
         scaffoldSettings.clutch = readBoolean(values, "scaffold.clutch", true);
         scaffoldSettings.rotationTick = clamp(readInt(values, "scaffold.rotationTick", 3), 1, 6);
         scaffoldSettings.itemSpoof = readBoolean(values, "scaffold.itemSpoof", true);
         scaffoldSettings.slotMode = clamp(readInt(values, "scaffold.slotMode", SLOT_HOTBAR), SLOT_SILENT, SLOT_HOTBAR);
         scaffoldSettings.hud = readBoolean(values, "scaffold.hud", true);
+        AugustusScaffold.SETTINGS.load(values);
     }
 
     public static String save() {
         return "scaffold.mode=" + scaffoldSettings.mode
-                + "\nscaffold.eagle=" + scaffoldSettings.eagle
                 + "\nscaffold.sneak=" + scaffoldSettings.sneak
-                + "\nscaffold.snap=" + scaffoldSettings.snap
                 + "\nscaffold.clutch=" + scaffoldSettings.clutch
                 + "\nscaffold.rotationTick=" + scaffoldSettings.rotationTick
                 + "\nscaffold.itemSpoof=" + scaffoldSettings.itemSpoof
                 + "\nscaffold.slotMode=" + scaffoldSettings.slotMode
-                + "\nscaffold.hud=" + scaffoldSettings.hud;
+                + "\nscaffold.hud=" + scaffoldSettings.hud
+                + "\n" + AugustusScaffold.SETTINGS.save();
     }
 
     private static int readInt(Properties values, String key, int fallback) {
@@ -2432,15 +2415,6 @@ public final class ScaffoldFeature {
         OpenMaverFeatures.markDirty();
     }
 
-    public static boolean isEagle() {
-        return scaffoldSettings.eagle;
-    }
-
-    public static void setEagle(boolean value) {
-        scaffoldSettings.eagle = value;
-        OpenMaverFeatures.markDirty();
-    }
-
     public static boolean isSneak() {
         return scaffoldSettings.sneak;
     }
@@ -2451,22 +2425,13 @@ public final class ScaffoldFeature {
     }
 
     /**
-     * 是否正在接管 {@code keyBindSneak}（本类的 Eagle / Sneak）。
+     * 是否正在接管 {@code keyBindSneak}（其他模式的周期 Sneak）。
      *
      * <p>独立模块 {@code SafeWalkFeature} 用它判断让位：同一个按键两边都写会
      * 逐 tick 互相覆盖，服务端看到的是一串 STOP/START 潜行动作。
      */
     public static boolean ownsSneakKey() {
-        return active && !failed && ((bridgeSettings.mode == MODE_NORMAL && bridgeSettings.eagle) || bridgeSettings.sneak);
-    }
-
-    public static boolean isSnap() {
-        return scaffoldSettings.snap;
-    }
-
-    public static void setSnap(boolean value) {
-        scaffoldSettings.snap = value;
-        OpenMaverFeatures.markDirty();
+        return active && !failed && bridgeSettings.mode != MODE_NORMAL && bridgeSettings.sneak;
     }
 
     public static boolean isClutch() {

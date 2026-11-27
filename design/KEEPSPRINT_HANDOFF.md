@@ -29,6 +29,16 @@ ROTATE 始终在潜行、使用物品、水平撞墙、饱食度不满足原版�
 死亡或 GUI 打开时让位。`Scaffold` / `Scaffold2` / `Telly` / `GodBridge` / `KillAura`
 开启时整体让位（HUD：`YIELD`），避免输入改写后又拿旧相机重算方向。
 
+Scaffold 的 `Normal` 模式会完整暂停 KeepSprint（`YIELD SCAFFOLD`）：清理旧速度补偿、
+输入准备和攻击补包标记，并释放 KeepSprint 启动的疾跑。只释放一次，之后玩家仍可手动疾跑。
+暂停不修改模块开关或配置；关闭 Scaffold 后自动恢复，暂停期间手动关闭 KeepSprint 则保持关闭。
+START、输入 hook、攻击与 END 都检查暂停，模式在 tick 中途切换时也不再补发疾跑包；
+已用于移动物理的 yaw 仍保留到 C03，ClientTick END 再归还镜头。
+
+Scaffold 自身还会在 Normal 输入 hook 按 MoveFix 前的 forward 限制疾跑：后退、
+侧移与潜行不因转换为前进而保留疾跑，临时屏蔽疾跑键并清除双击计时。
+这条限制在 KeepSprint 关闭时同样执行；END 或清理状态时归还物理疾跑键。
+
 Velocity 不再凭开关阻止 KeepSprint。三个模式在实际写方向/跳跃时显式调用
 `AttackReduceFeature.claimMovementInput`，静默转向实际写 yaw 时也认领。即使写入值与
 原输入相同，也记录输入所有权；只比较前后数值会漏掉这种接管。KeepSprint 的回调在
@@ -78,6 +88,9 @@ KeepSprint 原有测试覆盖 OMNI 决策、属性 UUID、配置、打包后的�
 ScaffoldMovementInput 回调。七组相机 yaw（含多圈与 ±180° 边界）、八方向间的全部切换
 检查世界移动方向、单份原版速度、首 tick 冲刺、原版发送边界的 yaw 和镜头恢复；还覆盖
 持续后退、跳跃输入、暂停条件、模块让位、自定义输入、切世界、disable/reset 与攻击设置。
+Normal 回归还驱动 Scaffold 自身的 SRG 输入 hook 和后续原版疾跑判断，覆盖
+KeepSprint 开/关、八方向、已有疾跑、按住疾跑键和待处理双击；同时检查 Simple
+兼容、走路属性速度、END 与 reset 后的按键恢复。
 
 这些替身测试验证本地状态和边界，不是实际 Minecraft / Grim 联机测试。
 转向对齐使本地使用前进输入与对应 yaw，但 Simulation 是否消失仍需用新 jar 复测。

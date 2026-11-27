@@ -4,7 +4,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /**
- * Scaffold（OpenZen 移植版）回归测试。
+ * Scaffold（Augustus Normal / OpenZen 其他模式）回归测试。
  *
  * <p>覆盖三类不变量：
  *
@@ -14,8 +14,8 @@ import java.nio.file.Paths;
  *   <li><b>旋转数学</b>：{@code rotateTowards} 走最短路径且限速；
  *       {@code clampAngle} / {@code angleDiffDouble} / {@code oppositeFace} /
  *       {@code getBlockDistance} 与 OpenZen 的公式一致。</li>
- *   <li><b>结构</b>：源码里只能有一处 {@code onPlayerRightClick}、一处
- *       {@code new Pending}；静默 aim 必须在 movementInput hook 里写；切槽必须发 C09；
+ *   <li><b>结构</b>：源码里只能有一处 {@code onPlayerRightClick}、各模式独立规划的
+ *       {@code Pending}；静默 aim 必须在 movementInput hook 里写；切槽必须发 C09；
  *       Myau 时代的设置（rotations / safeWalk / tower / keepYonPress）不得残留。</li>
  * </ol>
  *
@@ -31,7 +31,7 @@ public final class ScaffoldPlaceOrderTest {
     private static final int PLACE = ScaffoldFeature.PENDING_PLACE;
 
     public static void main(String[] args) throws Exception {
-        System.out.println("Scaffold (OpenZen port) regression suite");
+        System.out.println("Scaffold (Augustus Normal / OpenZen legacy modes) regression suite");
         System.out.println("---------------------------------------");
 
         pendingDecisionTable();
@@ -40,6 +40,7 @@ public final class ScaffoldPlaceOrderTest {
         faceMapping();
         blockDistance();
         clutchWindow();
+        normalPlacement();
         floorBehaviour();
         faceAimPoint();
         sourceStructure();
@@ -174,6 +175,13 @@ public final class ScaffoldPlaceOrderTest {
         check("clutch off means no hold", !ScaffoldFeature.clutchHold(false, false, 0, 0));
     }
 
+    private static void normalPlacement() {
+        check("Normal mode hides the target frame",
+                !ScaffoldFeature.shouldRenderTarget(ScaffoldFeature.MODE_NORMAL));
+        check("Telly modes retain the target frame",
+                ScaffoldFeature.shouldRenderTarget(ScaffoldFeature.MODE_TELLY_BRIDGE));
+    }
+
     // ------------------------------------------------------------------
     // 7) floor
     // ------------------------------------------------------------------
@@ -256,8 +264,15 @@ public final class ScaffoldPlaceOrderTest {
                 feature.contains("pendingDecision(target.sent, rayHit, target.retries)"));
         check("flushPending validates the angle the server already received",
                 feature.contains("target.sentYaw") && feature.contains("target.sentPitch"));
-        check("pending is created once per tick inside tick()",
-                count(feature, "new Pending(") == 1);
+        check("each independent planner has one pending creation site",
+                count(feature, "new Pending(") == 2);
+        check("Normal dispatches to an independent Augustus planner",
+                feature.contains("tickNormal(mc, player, world)") && feature.contains("normal.update(player, world"));
+        check("old Normal manual use, Snap and Eagle paths are removed",
+                !feature.contains("manualUseHeld") && !feature.contains("resetSnap(")
+                        && !feature.contains("setEagle(") && !feature.contains("setSnap("));
+        check("normal mode skips target frame rendering",
+                feature.contains("!shouldRenderTarget(bridgeSettings.mode)"));
         check("the aim is written in the movement-input hook",
                 feature.contains("static void afterMovementInput(Object input)")
                         && feature.contains("setFloat(player, \"rotationYaw\""));
@@ -342,8 +357,8 @@ public final class ScaffoldPlaceOrderTest {
                         && input.contains("ScaffoldFeature.afterMovementInput(this)"));
 
         String gui = read("mc/GuiOpenMaverClickGui.java");
-        check("ClickGUI exposes the OpenZen mode list",
-                gui.contains("SCAFFOLD_MODES = ScaffoldFeature.MODE_NAMES"));
+        check("ClickGUI exposes only Normal and Simple modes",
+                gui.contains("SCAFFOLD_MODES = {\"NORMAL\", \"SIMPLE\"}"));
         check("ClickGUI exposes the slot mode select",
                 gui.contains("SCAFFOLD_SLOT_MODES = ScaffoldFeature.SLOT_NAMES")
                         && gui.contains("Setting.select(\"SLOT\""));

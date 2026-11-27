@@ -69,6 +69,8 @@ public final class KeepSprintFeature {
     private static boolean rotationDirty, rotatedThisTick;
     private static Object armedPlayer;
     private static long armedNanos;
+    /** 最后由 KeepSprint 启动疾跑的玩家，用于暂停时释放自己的疾跑状态。 */
+    private static Object sprintPlayer;
 
     /** 属性 / modifier / C0B 的反射缓存。 */
     private static Object boostModifier;
@@ -108,6 +110,7 @@ public final class KeepSprintFeature {
         restoreCameraView();
         setOwnBoost(armedPlayer, false);
         armedPlayer = null;
+        sprintPlayer = null;
         rotatedThisTick = false;
         attackPending = false;
         active = false;
@@ -169,6 +172,7 @@ public final class KeepSprintFeature {
         if (player == null) return;
         Module module = ModuleManager.getModule("KeepSprint");
         if (module == null || !module.isEnabled()) return;
+        if (pauseForNormalScaffold(player)) return;
         attackPending = true;
     }
 
@@ -183,6 +187,8 @@ public final class KeepSprintFeature {
         if (armedPlayer != player) setOwnBoost(armedPlayer, false);
         armedPlayer = null;
         rotatedThisTick = false;
+        if (!enabled() || sprintPlayer != player) sprintPlayer = null;
+        if (pauseForNormalScaffold(player)) return;
         if (rotate) {
             setOwnBoost(player, false);
             active = false;
@@ -241,6 +247,7 @@ public final class KeepSprintFeature {
      * 调用 {@code onUpdateWalkingPlayer()} 发 C0B / C03。
      */
     public static void onPlayerTickEnd(Object player) {
+        if (pauseForNormalScaffold(player)) return;
         if (rotate) {
             setOwnBoost(player, false);
             active = enabled() && rotatedThisTick && rotationPlayer == player;
@@ -313,6 +320,7 @@ public final class KeepSprintFeature {
         }
         if (!sprinting) {
             OpenMaverFeatures.callVoid(player, "setSprinting", "func_70031_b", null, Boolean.TRUE);
+            sprintPlayer = player;
         }
         if (plan.resendSprint) {
             sendStartSprinting(player);
@@ -327,6 +335,25 @@ public final class KeepSprintFeature {
     private static boolean enabled() {
         Module module = ModuleManager.getModule("KeepSprint");
         return module != null && module.isEnabled();
+    }
+
+    /** Normal 期间暂停接管，不改模块开关；退出后仍按用户的开关状态运行。 */
+    private static boolean pauseForNormalScaffold(Object player) {
+        Module scaffold = ModuleManager.getModule("Scaffold");
+        if (!enabled() || scaffold == null || !scaffold.isEnabled()
+                || ScaffoldFeature.getMode() != ScaffoldFeature.MODE_NORMAL) return false;
+        setOwnBoost(armedPlayer, false);
+        setOwnBoost(player, false);
+        armedPlayer = null;
+        active = false;
+        attackPending = false;
+        status = "YIELD SCAFFOLD";
+        // 只释放本模块留下的疾跑；暂停后玩家仍可自行按原版疾跑键。
+        if (player != null && sprintPlayer == player) {
+            OpenMaverFeatures.callVoid(player, "setSprinting", "func_70031_b", null, Boolean.FALSE);
+            sprintPlayer = null;
+        }
+        return true;
     }
 
     /** 这些模块拥有自己的 aim / 输入，不与其争用 yaw 或强制 sprint。 */
@@ -354,10 +381,11 @@ public final class KeepSprintFeature {
     }
 
     static void afterMovementInput(MovementInput input) {
+        Object player = armedPlayer;
+        if (pauseForNormalScaffold(player)) return;
         if (!rotate || !enabled() || armedPlayer == null || rotatedThisTick
                 || rotationBusy() || System.nanoTime() - armedNanos > 500_000_000L) return;
         Minecraft mc = Minecraft.getMinecraft();
-        Object player = armedPlayer;
         if (mc == null || OpenMaverFeatures.read(mc, "thePlayer", "field_71439_g", null) != player
                 || OpenMaverFeatures.read(player, "movementInput", "field_71158_b", null) != input
                 || OpenMaverFeatures.read(mc, "currentScreen", "field_71462_r", null) != null) return;
@@ -386,12 +414,13 @@ public final class KeepSprintFeature {
         input.moveStrafe = 0.0F;
         // 在原版 sprint 检查 / jump / moveFlying 之前启动，首 tick 不借 END 补速度。
         OpenMaverFeatures.callVoid(player, "setSprinting", "func_70031_b", null, Boolean.TRUE);
+        sprintPlayer = player;
     }
 
     public static void onTickEnd(Minecraft mc) {
         restoreCameraView();
         armedPlayer = null;
-        if (!enabled()) { active = false; status = "OFF"; attackPending = false; }
+        if (!enabled()) { active = false; status = "OFF"; attackPending = false; sprintPlayer = null; }
     }
 
     private static void restoreCameraView() {

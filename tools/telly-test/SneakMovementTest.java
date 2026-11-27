@@ -43,7 +43,6 @@ public final class SneakMovementTest {
         } else {
             ScaffoldFeature.setMode(mode);
             ScaffoldFeature.setSneak(sneak == 2);
-            ScaffoldFeature.setEagle(false);
             ScaffoldFeature.setClutch(false);
         }
         Minecraft mc = new Minecraft();
@@ -83,7 +82,7 @@ public final class SneakMovementTest {
             if (armed.getBoolean(null) && (pending.get(null) != null || placement.get(null) != null || hold.getBoolean(null))) remapped++;
             player.movementInput.updatePlayerMoveState();
             MovementInput input = player.movementInput;
-            boolean expectedSneak = sneak == 1 || (sneak == 2 && frame >= 18 && frame <= 20);
+            boolean expectedSneak = sneak == 1 || (sneak == 2 && (standalone || mode != 0) && frame >= 18 && frame <= 20);
             check(input.sneak == expectedSneak, "manual/automatic sneak lifecycle");
             double[] actual = acceleration(input.moveStrafe, input.moveForward, player.rotationYaw);
             double[] expected = closestVanillaInput(actual, player.rotationYaw, expectedSneak);

@@ -58,13 +58,26 @@ public final class ClickGuiInteractionTest {
         Object scaffoldMode = findSetting(scaffold, "MODE");
         String[] scaffoldOptions = (String[]) get(scaffoldMode, "options");
         check(scaffoldOptions.length == 2 && "Normal".equals(scaffoldOptions[0])
-                && "Telly".equals(scaffoldOptions[1]), "Scaffold exposes only Normal and Telly");
+                && "Simple".equals(scaffoldOptions[1]), "Scaffold exposes only Normal and Simple");
+        check(findSetting(scaffold, "EAGLE") == null && findSetting(scaffold, "SNAP") == null,
+                "Scaffold removes the old Normal settings");
+        Object normalSpeed = findSetting(scaffold, "YAW SPEED");
+        Object legacySneak = findSetting(scaffold, "SNEAK");
         invoke(scaffoldMode, "set", new Class<?>[] {double.class}, 1.0D);
         check(ScaffoldFeature.getMode() == ScaffoldFeature.MODE_TELLY_BRIDGE,
-                "Scaffold Telly selection maps to the Telly bridge implementation");
+                "Scaffold Simple selection preserves the existing bridge implementation");
+        check(Boolean.FALSE.equals(invoke(normalSpeed, "visible", new Class<?>[0]))
+                && Boolean.TRUE.equals(invoke(legacySneak, "visible", new Class<?>[0])),
+                "Simple shows its own settings");
         invoke(scaffoldMode, "set", new Class<?>[] {double.class}, 0.0D);
         check(ScaffoldFeature.getMode() == ScaffoldFeature.MODE_NORMAL,
                 "Scaffold Normal selection maps to the normal implementation");
+        check(Boolean.TRUE.equals(invoke(normalSpeed, "visible", new Class<?>[0]))
+                && Boolean.FALSE.equals(invoke(legacySneak, "visible", new Class<?>[0])),
+                "Normal shows Augustus settings and hides legacy controls");
+        invoke(normalSpeed, "setLowPercent", new Class<?>[] {double.class}, .2D);
+        check(AugustusScaffold.SETTINGS.yawSpeed.low == 36,
+                "Normal range slider updates the actual controller settings");
         Properties legacyKeepSprint = new Properties();
         legacyKeepSprint.setProperty("keepSprint.rotate", "false");
         KeepSprintFeature.load(legacyKeepSprint);

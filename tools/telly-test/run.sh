@@ -15,3 +15,5 @@ javac --release 8 -Xlint:-options -encoding UTF-8 -cp "$classpath" -d "$out_dir"
 java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" TellyBehaviorTest
 java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" TellyMotionTest
 java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" SneakMovementTest
+java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" ScaffoldNormalTest
+java -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" ScaffoldNormalBridgeTest

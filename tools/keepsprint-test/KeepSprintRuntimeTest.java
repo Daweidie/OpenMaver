@@ -34,10 +34,7 @@ public final class KeepSprintRuntimeTest {
         System.out.println("KeepSprint runtime behaviour suite");
         System.out.println("----------------------------------");
 
-        KeepSprintFeature.reset();
-        java.util.Properties legacy = new java.util.Properties();
-        legacy.setProperty("keepSprint.rotate", "false");
-        KeepSprintFeature.load(legacy);
+        useLegacyOmni();
 
         module.movement.KeepSprint module = new module.movement.KeepSprint();
         ModuleManager.register(module);
@@ -150,6 +147,19 @@ public final class KeepSprintRuntimeTest {
     }
 
     private KeepSprintRuntimeTest() {
+    }
+
+    /** Exercise the retained OMNI branch explicitly; user configuration always selects silent rotation. */
+    static void useLegacyOmni() {
+        KeepSprintFeature.reset();
+        KeepSprintFeature.load(new java.util.Properties());
+        try {
+            java.lang.reflect.Field rotate = KeepSprintFeature.class.getDeclaredField("rotate");
+            rotate.setAccessible(true);
+            rotate.setBoolean(null, false);
+        } catch (ReflectiveOperationException error) {
+            throw new AssertionError(error);
+        }
     }
 
     /** 替身玩家：只保留 KeepSprintFeature 反射会碰到的成员。 */

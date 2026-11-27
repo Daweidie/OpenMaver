@@ -62,7 +62,10 @@ public final class KeepSprintRotationTest {
         player.alive = false; untouched("dead"); player.alive = true;
         mc.field_71462_r = new Object(); untouched("GUI"); mc.field_71462_r = null;
 
-        for (String name : new String[]{"Scaffold", "Scaffold2", "Telly", "GodBridge", "KillAura"}) {
+        normalScaffoldPause();
+        normalScaffoldSprintInput();
+
+        for (String name : new String[]{"Scaffold2", "Telly", "GodBridge", "KillAura"}) {
             Module owner = new Module(name) { };
             ModuleManager.register(owner); owner.setEnabled(true);
             untouched("rotation owner " + name);
@@ -73,7 +76,7 @@ public final class KeepSprintRotationTest {
         Module velocity = new Module("Velocity") { };
         ModuleManager.register(velocity); velocity.setEnabled(true);
         movementTick(38, -1, 0);
-        check("idle Velocity does not block KeepSprint", "ROTATE".equals(KeepSprintFeature.getStatus()));
+        check("idle Velocity does not block KeepSprint", "SILENT".equals(KeepSprintFeature.getStatus()));
         velocity.setEnabled(false);
 
         player.movementInput = new MovementInput();
@@ -172,12 +175,95 @@ public final class KeepSprintRotationTest {
         near("END leaves vanilla air factor intact", player.jumpMovementFactor, 0.026);
         near("native movement yaw matches physics yaw", player.rotationYaw, Math.toDegrees(yaw));
         near("pitch remains the camera pitch", player.rotationPitch, 17.5);
-        check("ROTATE status reaches the HUD", KeepSprintFeature.getSummary().contains("ROTATE"));
+        check("silent status reaches the summary", KeepSprintFeature.getSummary().contains("SILENT"));
         check("movement creates no extra packets", player.sendQueue.packets.isEmpty());
         finish();
         near("camera yaw is restored after native C03", player.rotationYaw, view);
         near("previous camera yaw is restored", player.prevRotationYaw, view - 1.25);
         near("arm yaw is restored", player.renderArmYaw, view);
+    }
+
+    private static void normalScaffoldPause() {
+        Module scaffold = new module.movement.Scaffold();
+        ModuleManager.register(scaffold);
+        ScaffoldFeature.setMode(ScaffoldFeature.MODE_NORMAL);
+        movementTick(38, 1, 0);
+        check("KeepSprint is sprinting before Normal is enabled", player.sprinting);
+        scaffold.setEnabled(true);
+        player.attribute.modifier = new AttributeModifier(KeepSprintFeature.BOOST_UUID, "stale OMNI", 0.3, 2);
+        begin();
+        check("Normal releases the previous KeepSprint sprint", !player.sprinting);
+        check("Normal removes the old speed modifier", player.attribute.modifier == null);
+        near("Normal leaves camera yaw intact", player.rotationYaw, 38);
+        KeepSprintFeature.onAttack(player);
+        KeepSprintFeature.onPlayerTickEnd(player);
+        check("Normal suspends KeepSprint without changing its switch", keepSprint.isEnabled()
+                && "YIELD SCAFFOLD".equals(KeepSprintFeature.getSummary()));
+        check("attacking during Normal does not resend sprint", player.sendQueue.packets.isEmpty());
+        finish();
+
+        settings.set(-1, 1);
+        begin();
+        check("Normal preserves the original movement input", player.movementInput.field_78900_b == -1
+                && player.movementInput.field_78902_a == 1);
+        KeepSprintFeature.onPlayerTickEnd(player);
+        check("Normal does not force sprint on subsequent ticks", !player.sprinting);
+        finish();
+
+        player.setSprinting(true);
+        begin();
+        KeepSprintFeature.onPlayerTickEnd(player);
+        check("paused KeepSprint leaves later manual sprint alone", player.sprinting);
+        finish();
+        scaffold.setEnabled(false);
+        movementTick(38, -1, 0);
+        check("closing Scaffold resumes KeepSprint", player.sprinting);
+
+        // A mode switch can happen after START has armed the input callback.
+        ScaffoldFeature.setMode(ScaffoldFeature.MODE_TELLY_BRIDGE);
+        scaffold.setEnabled(true);
+        begin();
+        KeepSprintFeature.onPlayerTickEnd(player);
+        check("Simple retains the existing rotation yield", "YIELD".equals(KeepSprintFeature.getStatus()));
+        finish();
+        ScaffoldFeature.setMode(ScaffoldFeature.MODE_NORMAL);
+        begin();
+        KeepSprintFeature.onPlayerTickEnd(player);
+        check("switching Simple to Normal releases the carried sprint", !player.sprinting);
+        finish();
+        scaffold.setEnabled(false);
+
+        player.rotationYaw = 38;
+        begin();
+        float nativeYaw = player.rotationYaw;
+        KeepSprintFeature.onAttack(player);
+        scaffold.setEnabled(true);
+        KeepSprintFeature.onPlayerTickEnd(player);
+        check("mid-tick Normal cancels the pending sprint resend", player.sendQueue.packets.isEmpty());
+        check("mid-tick Normal releases automatic sprint", !player.sprinting);
+        near("mid-tick pause retains physics yaw until C03", player.rotationYaw, nativeYaw);
+        finish();
+        near("mid-tick pause restores camera after C03", player.rotationYaw, 38);
+        scaffold.setEnabled(false);
+        movementTick(38, -1, 0);
+        check("resume does not replay paused attacks", player.sendQueue.packets.isEmpty());
+
+        // Normal can also be enabled between START and movement-input processing.
+        player.rotationYaw = 38;
+        KeepSprintFeature.onPlayerTickStart(mc, player);
+        scaffold.setEnabled(true);
+        player.movementInput.func_78898_a();
+        check("input hook catches Normal enabled after START", !player.sprinting);
+        near("input-hook pause does not rotate the player", player.rotationYaw, 38);
+        KeepSprintFeature.onPlayerTickEnd(player);
+        finish();
+
+        keepSprint.setEnabled(false);
+        scaffold.setEnabled(false);
+        untouched("disabled during Normal pause");
+        check("closing Scaffold respects a manual KeepSprint disable", !keepSprint.isEnabled());
+        keepSprint.setEnabled(true);
+        movementTick(38, -1, 0);
     }
 
     private static void untouched(String reason) {
@@ -189,6 +275,91 @@ public final class KeepSprintRotationTest {
         check(reason + " does not force sprint", !player.sprinting);
         check(reason + " has no custom modifier", player.attribute.modifier == null);
         finish();
+    }
+
+    /** Exercise Scaffold's own remapping, then vanilla's sprint checks, with KeepSprint off/on. */
+    private static void normalScaffoldSprintInput() {
+        Module scaffold = ModuleManager.getModule("Scaffold");
+        int[][] directions = {{1,0},{1,1},{0,1},{-1,1},{-1,0},{-1,-1},{0,-1},{1,-1}};
+        for (int mode : new int[]{ScaffoldFeature.MODE_NORMAL, ScaffoldFeature.MODE_TELLY_BRIDGE}) {
+            for (boolean enabled : new boolean[]{false, true}) {
+                for (int[] direction : directions) for (boolean held : new boolean[]{false, true}) {
+                    for (boolean sprinting : new boolean[]{false, true}) {
+                        ScaffoldFeature.setMode(mode);
+                        scaffold.setEnabled(true);
+                        keepSprint.setEnabled(enabled);
+                        player.rotationYaw = 37;
+                        player.setSprinting(sprinting);
+                        player.field_71156_d = 7; // Pending double-tap must not bypass the guard.
+                        settings.set(direction[0], direction[1]);
+                        settings.field_74321_H.field_74513_e = held;
+                        org.lwjgl.input.Keyboard.setKeyDown(29, held);
+                        KeepSprintFeature.onPlayerTickStart(mc, player);
+                        // Fix the planner's aim to face this movement; every key becomes forward=1.
+                        float aim = 37 - (float) Math.toDegrees(Math.atan2(direction[1], direction[0]));
+                        seedScaffold("active", true);
+                        seedScaffold("aimPlayer", player);
+                        seedScaffold("cameraYaw", 37F);
+                        seedScaffold("cameraPitch", player.rotationPitch);
+                        seedScaffold("holdPlaceAim", true);
+                        seedScaffold("holdPlaceYaw", aim);
+                        seedScaffold("tickAimYaw", aim);
+                        seedScaffold("tickAimPitch", 60F);
+                        seedScaffold("hookArmed", true);
+                        seedScaffold("hookArmedNanos", System.nanoTime());
+                        player.movementInput.func_78898_a();
+                        near("Scaffold remaps the actual hook input to forward", player.movementInput.field_78900_b, 1);
+                        boolean allowed = mode != ScaffoldFeature.MODE_NORMAL || direction[0] > 0;
+                        if (!allowed) {
+                            check("Normal clears stale double-tap intent", player.field_71156_d == 0);
+                            check("Normal blocks sprint key until vanilla checks finish", !settings.field_74321_H.field_74513_e);
+                        }
+                        // Vanilla onLivingUpdate: old input was below .8 before the key update.
+                        if (!player.sprinting && player.movementInput.field_78900_b >= .8F) {
+                            if (player.field_71156_d > 0 || settings.field_74321_H.field_74513_e)
+                                player.setSprinting(true);
+                            else player.field_71156_d = 7;
+                        }
+                        KeepSprintFeature.onPlayerTickEnd(player);
+                        check("Scaffold respects original sprint eligibility with KeepSprint " + enabled,
+                                player.sprinting == allowed);
+                        near("Normal walking has no sprint speed modifier", player.attribute.value(), allowed ? .13 : .1);
+                        check("input guard respects the KeepSprint switch", keepSprint.isEnabled() == enabled);
+                        finish();
+                        ScaffoldFeature.onTickEnd(mc);
+                        check("END restores the physically held sprint key", settings.field_74321_H.field_74513_e == held);
+                    }
+                }
+            }
+        }
+        // A missing END must also release the temporarily suppressed key on reset/disable.
+        ScaffoldFeature.setMode(ScaffoldFeature.MODE_NORMAL);
+        seedScaffold("active", true);
+        seedScaffold("aimPlayer", player);
+        seedScaffold("hookArmed", true);
+        seedScaffold("hookArmedNanos", System.nanoTime());
+        settings.set(-1, 0);
+        settings.field_74321_H.field_74513_e = true;
+        org.lwjgl.input.Keyboard.setKeyDown(29, true);
+        player.movementInput.func_78898_a();
+        check("reset case suppresses sprint before vanilla", !settings.field_74321_H.field_74513_e);
+        ScaffoldFeature.reset();
+        check("reset restores physically held sprint", settings.field_74321_H.field_74513_e);
+        scaffold.setEnabled(false);
+        keepSprint.setEnabled(true);
+        settings.field_74321_H.field_74513_e = false;
+        org.lwjgl.input.Keyboard.reset();
+        movementTick(38, -1, 0);
+    }
+
+    private static void seedScaffold(String name, Object value) {
+        try {
+            java.lang.reflect.Field field = ScaffoldFeature.class.getDeclaredField(name);
+            field.setAccessible(true);
+            field.set(null, value);
+        } catch (ReflectiveOperationException error) {
+            throw new AssertionError(error);
+        }
     }
 
     private static void begin() {
@@ -212,6 +383,7 @@ public final class KeepSprintRotationTest {
         public final Food food = new Food();
         public float prevRotationYaw, renderArmYaw, prevRenderArmYaw, renderYawOffset, rotationYawHead;
         public float jumpMovementFactor = 0.02F;
+        public int field_71156_d;
         public boolean sprinting, isCollidedHorizontally, usingItem, riding, blind, alive = true;
         public boolean isEntityAlive() { return alive; }
         public boolean isRiding() { return riding; }
@@ -237,9 +409,14 @@ public final class KeepSprintRotationTest {
     public static final class Settings extends GameSettings {
         public final Key field_74351_w = new Key(), field_74368_y = new Key(), field_74370_x = new Key(),
                 field_74366_z = new Key(), field_74311_E = new Key(), field_74314_A = new Key();
+        public final SprintKey field_74321_H = new SprintKey();
         void set(int forward, int strafe) {
             field_74351_w.pressed = forward > 0; field_74368_y.pressed = forward < 0;
             field_74370_x.pressed = strafe > 0; field_74366_z.pressed = strafe < 0;
         }
+    }
+    public static final class SprintKey {
+        public boolean field_74513_e;
+        public int func_151463_i() { return 29; }
     }
 }

@@ -6,9 +6,8 @@ import util.Logger;
 /**
  * SafeWalk（方块边缘潜行）模块开关。
  *
- * <p>这一份是从 Scaffold 里拆出来的独立功能：原来只有
- * {@code scaffold.eagle} 在 {@code NORMAL} 模式下“贴边才按 Shift”，
- * 现在任何手持物品、任何移动场景都能用，不必先开 Scaffold。
+ * <p>独立的边缘潜行功能，任何手持物品和移动场景都能用，不必先开 Scaffold。
+ * Scaffold / Normal 默认不接管潜行，可按需组合本模块。
  *
  * <p>完整行为在 MC 侧的 {@code SafeWalkFeature}：站在方块边缘时替玩家按住
  * {@code keyBindSneak}（原版潜行键），由原版自己发 C0B START/STOP_SNEAKING，

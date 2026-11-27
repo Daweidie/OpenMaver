@@ -12,8 +12,6 @@ public final class TellyFeature {
     static final ScaffoldFeature.Settings SETTINGS = new ScaffoldFeature.Settings();
     static {
         SETTINGS.mode = ScaffoldFeature.MODE_TELLY_BRIDGE;
-        SETTINGS.eagle = false;
-        SETTINGS.snap = false;
     }
 
     private TellyFeature() { }

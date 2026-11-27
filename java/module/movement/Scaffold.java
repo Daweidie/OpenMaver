@@ -7,10 +7,9 @@ import util.Logger;
 /**
  * Scaffold（自动搭路 / 搭桥）模块开关。
  *
- * <p>完整行为在 MC 侧的 {@code ScaffoldFeature}，按 {@code ../OpenZen} 的
- * {@code shit.zen.modules.impl.movement.Scaffold} 重写：
- * {@code Normal / Telly Bridge / Old Telly / Keep Y} 四种模式、Eagle/Sneak、
- * Snap、Clutch、Rotation Tick 与 S12 击退抑制。
+ * <p>Normal 使用 MC 侧独立的 AugustusScaffold 控制器，参考 ../OpenAugustus-Maver。
+ * Simple / Old Telly / Keep Y 保留 OpenZen 行为；ScaffoldFeature 负责模式分派、
+ * 快捷栏与静默旋转的放置时序。
  *
  * <p>配置路径由基类按包名约定推导：{@code module.movement.Scaffold -> "movement.scaffold"}，
  * 对应 default.jsonc 中的：
@@ -18,7 +17,7 @@ import util.Logger;
  *   "movement": { "scaffold": { "enabled": false, "key": "B" } }
  * </pre>
  *
- * <p>模块自身的设置（模式、Eagle/Sneak/Snap/Clutch/旋转速度/物品伪装/HUD）
+ * <p>模块自身的设置（模式、Normal 旋转区间与放置参数、其他模式 Sneak/Clutch、物品伪装/HUD）
  * 由 {@code ScaffoldFeature} 持有，写入 {@code config/openmaver.properties} 的
  * {@code scaffold.*}，在 ClickGUI 里展开 Scaffold 直接调。
  */

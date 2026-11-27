@@ -1,4 +1,7 @@
-# Scaffold（自动搭路 / 搭桥）实现说明 —— OpenZen 移植版
+# Scaffold（自动搭路 / 搭桥）实现说明
+
+ClickGUI 仅显示 `Normal` / `Simple`；原界面模式名 `Telly` 已改为 `Simple`，避免与 Telly 搭桥手法混淆。
+`Simple` 仍映射到 `scaffold.mode=1`（内部 `MODE_TELLY_BRIDGE`）；本文保留 OpenZen 原分支名称说明实现。
 
 > **2026-11-17**：本模块已**整体重写**为 `../OpenZen` 的
 > `shit.zen.modules.impl.movement.Scaffold`。旧的 Myau 移植（`rotations` /
@@ -6,6 +9,12 @@
 > 连同 `OpenMaverFeatures` 里的旧放置路径一起删除。
 > Grim `RotationPlace` 的判定链见 `design/SCAFFOLD_ROTATIONPLACE_HANDOFF.md`
 > —— 结论没变，新实现仍然遵守。
+
+2026-11-27：Normal 完整替换为独立 Augustus 控制器，进入 `tickNormal()`，不会调用下文的
+OpenZen 目标搜索、旋转或输入状态机。来源映射、默认设置与适配限制见
+[SCAFFOLD_NORMAL_HANDOFF.md](SCAFFOLD_NORMAL_HANDOFF.md)。旧 Normal 的 Snap、Eagle、手动右键
+门槛已删除；旧配置键不再读写。下文 OpenZen 算法只适用于 Simple / Old Telly / Keep Y，
+包序、快捷栏、输入 hook 和生命周期由所有模式共享。
 
 2026-11-25：`TELLY BRIDGE` / `OLD TELLY` 接入独立 Telly 的放置修复，
 共享一步运动预测、未命中后继续转向和放置前重算实际射线交点；配置仍由 `scaffold.*` 独立保存。
@@ -20,22 +29,21 @@ Reach 关闭时停用延迟，传送/重生时保护 C0F→C06 顺序。
 
 | 文件 | 作用 |
 |---|---|
-| `java/module/movement/Scaffold.java` | 模块开关（`movement.scaffold`，默认键 `B`） |
-| `mc/ScaffoldFeature.java` | 全部行为（OpenZen Scaffold 的 1:1 状态机） |
+| `java/module/movement/Scaffold.java` | 模块开关（`movement.scaffold`，无默认热键） |
+| `mc/AugustusScaffold.java` | Normal 的支撑搜索、旋转、射线目标和点击节奏 |
+| `mc/ScaffoldFeature.java` | 模式分派、其他模式的 OpenZen 状态机及共享放置传输 |
 | `mc/ScaffoldMovementInput.java` | `movementInput` hook：MoveFix + 把 aim 写进本 tick 的 C03 |
 | `mc/ScaffoldHud.java` | OpenZen 的方块计数卡（图标 + 进度条 + `N blocks` / `b/s`） |
-| `mc/GuiOpenMaverClickGui.java` | 展开 Scaffold 的 8 个设置 |
+| `mc/GuiOpenMaverClickGui.java` | 按当前模式显示对应参数 |
 | `mc/OpenMaverFeatures.java` | 每 tick 驱动 `onTickStart` / `onTickEnd`，以及 S12 观察入口 |
 | `mc/AttackReducePacketHook.java` + `AttackReduceFeature` | 入站 S12 转发给 `ScaffoldFeature.noteInboundPacket` |
-| `tools/scaffold-test/` | 70 项回归（决策表 / 旋转数学 / 源码结构） |
+| `tools/scaffold-test/` | 共享放置决策表 / 旋转数学 / 源码结构回归 |
 
 配置写在 `config/openmaver.properties`：
 
 ```properties
 scaffold.mode=0          # 0 NORMAL / 1 TELLY BRIDGE / 2 OLD TELLY / 3 KEEP Y
-scaffold.eagle=true
 scaffold.sneak=true
-scaffold.snap=true
 scaffold.clutch=true
 scaffold.rotationTick=3  # 1..6，单 tick 步长 360/tick（下限 180）
 scaffold.itemSpoof=true
@@ -62,7 +70,7 @@ scaffold.hud=true
 | `MovementUtil.handleStrafe` | `afterMovementInput()` 的 8 方向吸附 | 见“MoveFix” |
 | `ClientBase.delayPackets` | `rotationDelay` 计数 + 重试 | 1.8.9 没有 `ClientLevel#tickNonPassenger` 注入点 |
 
-## 主 tick（`onTickStart` → `tick`）
+## 其他模式主 tick（`onTickStart` → `tick`）
 
 顺序与 OpenZen `onTick` 一致：
 
@@ -75,7 +83,7 @@ scaffold.hud=true
 4. **targetYLevel**：
    ```java
    if (targetYLevel == -1 || targetYLevel > floor(posY) - 1
-           || onGround || !moving || jumpHeld || mode == NORMAL) {
+           || onGround || !moving || jumpHeld) {
        targetYLevel = floor(posY) - 1;
    }
    ```
@@ -88,9 +96,10 @@ scaffold.hud=true
 9. **rots 更新**：
    - `clutchHold(...)` 成立：把 aim 锁在 `rotationToBlock(placement, 1.0)`，
      `rotationDelay++`，本 tick 不放置。
-   - 否则：`NORMAL + snap` 直接对齐；其余 `rotateTowards(getBlockDistance(), ...)`；
-     然后 `updateSneak` / `updateJumpKey`；`TELLY/OLD TELLY && airTicks < 1 && moving`
-     时提前返回（保留 lastRots）；`NORMAL + snap && !jumpHeld` 时 `resetSnap()`。
+   - 否则：`rotateTowards(getBlockDistance(), ...)`；
+     然后 `updateJumpKey`；`updateSneak` 在 clutch 分支之前每 tick 独立执行；
+     `TELLY/OLD TELLY && airTicks < 1 && moving`
+     时提前返回（保留 lastRots）。
 10. **规划下一 tick**：`placement != null && shouldBuild()`（脚下这一格是空气，Telly 还预测下一步脚下）时
     生成 `Pending(placement, rotsYaw, rotsPitch, hit)`，`hit` 是 C08 要发的点击点
     （见下节）。Telly 未命中时每拍更新目标角度，同目标保留重试次数。
@@ -144,12 +153,10 @@ for radius in 1..6:
 
 ## 旋转
 
-### Normal / Keep Y
+### Keep Y
 
-- `snap`：`rotsYaw = correctYaw`；否则 `rotateTowards(step, rotsYaw, correctYaw)`。
-- `rotsPitch = correctPitch`（俯角不做插值，和 OpenZen 一致）。
-- `resetSnap()`：当前 aim 的 ray trace 没有落在 `placement` 上、且
-  `currentTick % 4 == 0` 时，`rotsYaw = 相机 yaw ± 0.25°`。
+- `rotsYaw` 使用 `rotateTowards(step, rotsYaw, correctYaw)`。
+- `rotsPitch = correctPitch`，其余旋转复用下述 OpenZen 辅助函数。
 
 ### Telly Bridge（`tellyRotation`）
 
@@ -224,10 +231,10 @@ tick N+1 : flushPending()
   `sideHit` 等于要点击的面。
 - `shouldBuild()`：脚下方块（`floor(y - 0.5)`）必须是空气 —— OpenZen 的
   `BlockUtil.isPlaceable` + `isEmptyBlock(below)`。
-- `targetBlockReachableByFace()`：向上搭时，空中平走且没按空格、非 `NORMAL` 模式
-  不点顶面（OpenZen `doSnap` 里的过滤）。
+- `targetBlockReachableByFace()`：向上搭时，空中平走且没按空格
+  不点顶面；Normal 独立校验支撑和相邻空气格（OpenZen `doSnap` 里的过滤）。
 
-## Clutch / 击退
+## 其他模式 Clutch / 击退
 
 - `clutchHold(clutch, canBuildNow, velocityDelay, rotationDelay)`：
   `clutch && (!canBuildNow || velocityDelay > 0) && rotationDelay <= 8`。
@@ -239,12 +246,17 @@ tick N+1 : flushPending()
 
 ## 输入接管
 
-- `sneak`：`eagleTimer++`；第 18 tick 停冲刺（`keyBindSprint` + `setSprinting(false)`）
+- `sneak`：`sneakTimer++`；第 18 tick 停冲刺（`keyBindSprint` + `setSprinting(false)`）
   并按 `keyBindSneak`，第 21 tick 松开并归零。
-- `eagle`（仅 `NORMAL`）：`keyBindSneak = onGround && isOnBlockEdge(0.3)`。
-  `isOnBlockEdge` = 碰撞箱下移半格、水平收缩 0.3 后 `getCollidingBoundingBoxes` 为空。
+- 其他模式的周期潜行合并物理 Shift；关闭设置、GUI、切世界、切模式和 reset 时归还按键。
+  Normal 默认不接管潜行和跳跃，独立 SafeWalk 可照常运行。
 - `TELLY / OLD TELLY / KEEP Y`：`keyBindJump = moving || jumpHeld`。
 - 关闭模块：按 `KeyBinding.getKeyCode()` 的**物理**状态恢复 jump/sneak/sprint。
+- `Normal` 的 MoveFix 会把后退/侧移映射为 aim 坐标系的前进；原版在输入 hook
+  之后检查疾跑，因此只暂停 KeepSprint 不足以阻止意外疾跑。hook 按修正前的
+  `forward < 0.8` 取消疾跑、清空 `sprintToggleTimer / field_71156_d`，并临时屏蔽
+  疾跑键；ClientTick END / 下一 START / reset / disable 按物理状态归还。
+  与 KeepSprint 开关无关，正常前进仍由原版决定是否疾跑，Simple/Telly 保持原有行为。
 
 ## 快捷栏 / 物品
 
@@ -280,7 +292,6 @@ tick N+1 : flushPending()
 5. **HUD 位置**：OpenZen 是居中 HUD 元素；这里挂在准星右侧（与 Target HUD 同一套
    卡片语言），尺寸 196×32。
 6. **`rotationDelay`**：OpenZen 里它同时驱动拆 tick；这里只作为 clutch/击退的抑制窗口。
-
 ## 反射 / SRG 名称
 
 | 用途 | MCP | SRG |
@@ -302,7 +313,7 @@ tick N+1 : flushPending()
 | 是否空气 | `World.isAirBlock` | `func_175623_d` |
 | 射线 | `World.rayTraceBlocks(Vec3,Vec3)` | `func_72933_a` |
 | 碰撞箱列表 | `World.getCollidingBoundingBoxes` | `func_72945_a` |
-| 方块碰撞箱 | `Block.getCollisionBoundingBox` | `func_180646_a` |
+| 方块碰撞箱 | `Block.getCollisionBoundingBox` | `func_180640_a` |
 | 右键 | `PlayerControllerMP.onPlayerRightClick` | `func_178890_a` |
 | 切换槽包 | `C09PacketHeldItemChange` | （类名不变） |
 | 击退包 | `S12PacketEntityVelocity` | （类名不变） |
@@ -319,7 +330,8 @@ tick N+1 : flushPending()
 
 ```bash
 cmake --build build -j        # 先构建一次（需要 mc-classes / mcstubs-classes）
-tools/scaffold-test/run.sh    # 70 项
+tools/scaffold-test/run.sh    # 共享传输和其他模式数学
+tools/telly-test/run.sh       # 含 ScaffoldNormalTest / ScaffoldNormalBridgeTest
 ```
 
 覆盖：
@@ -329,9 +341,11 @@ tools/scaffold-test/run.sh    # 70 项
 - `oppositeFace` 六面双向一致；
 - `getBlockDistance` 的速度档位（Old Telly 180、rotationTick 1..6）；
 - `clutchHold` 窗口（掉落、击退、预算上限、关闭）；
-- 源码结构：唯一 `onPlayerRightClick`、唯一 `new Pending(`、aim 只在 movementInput
+- Normal 八方向连续桥面、double 远坐标、默认无潜行/跳跃、无需右键、真实射线交点；
+- Normal 设置范围/持久化、CPS 与强制放置、挥手、GUI/模式切换/无方块时的状态释放；
+- 源码结构：唯一 `onPlayerRightClick`、各控制器独立生成 `Pending`、aim 只在 movementInput
   hook 写、C09 同步、S12 观察、旧 Myau 设置与旧放置路径不得残留；
-- HUD / ClickGUI 的 OpenZen 版式与设置集合。
+- HUD / ClickGUI 的模式参数可见性和绑定。
 
 ## 已知边界
 

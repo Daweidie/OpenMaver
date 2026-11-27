@@ -467,6 +467,7 @@ public final class TellyBehaviorTest {
         public String typeOfHit = "BLOCK";
         public BlockPos blockPos = new BlockPos(0, 63, 0);
         public EnumFacing sideHit = EnumFacing.SOUTH;
+        public Vec3 hitVec;
     }
     public static final class World {
         private final boolean runtimeCollision;
@@ -481,7 +482,10 @@ public final class TellyBehaviorTest {
             double t = (1 - from.zCoord) / (to.zCoord - from.zCoord);
             double x = from.xCoord + t * (to.xCoord - from.xCoord);
             double y = from.yCoord + t * (to.yCoord - from.yCoord);
-            return t > 0 && t <= 1 && x > 0 && x < 1 && y > 63 && y < 64 ? new Hit() : null;
+            if (!(t > 0 && t <= 1 && x > 0 && x < 1 && y > 63 && y < 64)) return null;
+            Hit hit = new Hit();
+            hit.hitVec = new Vec3(x, y, 1);
+            return hit;
         }
     }
     public static final class Controller {

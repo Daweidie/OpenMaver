@@ -180,14 +180,14 @@ public final class KeepSprintTest {
         values.setProperty("keepSprint.attackResend", "false");
         KeepSprintFeature.load(values);
 
-        check("load reads rotation mode", !KeepSprintFeature.isRotate());
+        check("legacy rotate=false keeps silent rotation enabled", KeepSprintFeature.isRotate());
         check("load reads pauseSneak", !KeepSprintFeature.isPauseSneak());
         check("load reads pauseItem", !KeepSprintFeature.isPauseItem());
         check("load reads speed", !KeepSprintFeature.isSpeedBoost());
         check("load reads attackResend", !KeepSprintFeature.isAttackResend());
 
         String saved = KeepSprintFeature.save();
-        check("save writes rotation mode", saved.contains("keepSprint.rotate=false"));
+        check("save writes the fixed rotation mode", saved.contains("keepSprint.rotate=true"));
         check("save writes pauseSneak", saved.contains("keepSprint.pauseSneak=false"));
         check("save writes pauseItem", saved.contains("keepSprint.pauseItem=false"));
         check("save writes speed", saved.contains("keepSprint.speed=false"));
@@ -235,9 +235,9 @@ public final class KeepSprintTest {
     private static void sourceStructure() throws Exception {
         String feature = readText("mc/KeepSprintFeature.java");
 
-        check("sprint is forced on, never off",
+        check("sprint uses the vanilla state setter",
                 feature.contains("setSprinting\", \"func_70031_b\"")
-                        && !feature.contains("Boolean.FALSE"));
+                        && feature.contains("Boolean.TRUE"));
         check("the only fabricated packet is C0B START_SPRINTING",
                 feature.contains("C0BPacketEntityAction")
                         && feature.contains("\"START_SPRINTING\"")
@@ -293,18 +293,14 @@ public final class KeepSprintTest {
         check("ClickGUI has a KeepSprint settings panel",
                 gui.contains("\"KeepSprint\".equals(module.getName())")
                         && gui.contains("private void addKeepSprintSettings(Entry entry)"));
-        check("ClickGUI exposes speed, sneak, item and hit-resend switches",
-                gui.contains("Setting.check(\"ROTATE\"")
-                        && gui.contains("Setting.check(\"OMNI BOOST\"")
-                        && gui.contains("Setting.check(\"PAUSE SNEAK\"")
+        check("ClickGUI exposes sneak, item and hit-resend switches",
+                gui.contains("Setting.check(\"PAUSE SNEAK\"")
                         && gui.contains("Setting.check(\"PAUSE ITEM\"")
                         && gui.contains("Setting.check(\"HIT RESEND\""));
         check("ClickGUI shows the live KeepSprint summary",
                 gui.contains("return KeepSprintFeature.getSummary();"));
-        check("HUD shows the KeepSprint state",
-                readText("mc/OpenMaverHud.java").contains("\"KeepSprint\".equals(name)")
-                        && readText("mc/OpenMaverHud.java")
-                                .contains("KeepSprintFeature.getSummary()"));
+        check("HUD omits the KeepSprint parameter preview",
+                !readText("mc/OpenMaverHud.java").contains("KeepSprintFeature.getSummary()"));
 
         String module = readText("java/module/movement/KeepSprint.java");
         check("the core module stays MC-free",
