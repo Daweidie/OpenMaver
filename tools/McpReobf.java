@@ -64,6 +64,9 @@ public final class McpReobf {
         final String MINPUT = "net/minecraft/util/MovementInput";
         final String MIFO = "net/minecraft/util/MovementInputFromOptions";
 
+        m("net/minecraft/util/BlockPos", "getX", "func_177958_n");
+        m("net/minecraft/util/BlockPos", "getY", "func_177956_o");
+        m("net/minecraft/util/BlockPos", "getZ", "func_177952_p");
         m(MC, "getMinecraft", "func_71410_x");
         m(MC, "displayGuiScreen", "func_147108_a");
         m(MC, "toggleFullscreen", "func_71352_k");

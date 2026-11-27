@@ -994,6 +994,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             public double get() { return AttackReduceFeature.getMode(); }
             public void set(double value) { AttackReduceFeature.setMode((int) Math.round(value)); }
         }));
+        int legacyStart=entry.settings.size();
         entry.settings.add(Setting.slider("ATTACK AMOUNT (NOXZ)", 1, 20, 1, 0, "", new Binding() {
             public double get() { return AttackReduceFeature.getAttackAmount(); }
             public void set(double value) { AttackReduceFeature.setAttackAmount((int) Math.round(value)); }
@@ -1034,6 +1035,15 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             public double get() { return AttackReduceFeature.getMovementOverride() ? 1 : 0; }
             public void set(double value) { AttackReduceFeature.setMovementOverride(value > 0.5D); }
         }));
+        for(int i=legacyStart;i<entry.settings.size();i++)entry.settings.get(i).when(()->AttackReduceFeature.getMode()<3);
+        for(final AugustusVelocity.Option option:AugustusVelocity.options()) {
+            Binding binding=new Binding() {
+                public double get() {return option.value;}
+                public void set(double value) {option.set(value);}
+            };
+            Setting setting=option.toggle?Setting.check(option.label,binding):option.choices!=null?Setting.select(option.label,option.choices,binding):Setting.slider(option.label,(float)option.min,(float)option.max,(float)Math.pow(10,-option.decimals),option.decimals,"",binding);
+            entry.settings.add(setting.when(()->option.visible()));
+        }
         entry.settings.add(Setting.check("DEBUG CHAT", new Binding() {
             public double get() { return AttackReduceFeature.getDebugChat() ? 1 : 0; }
             public void set(double value) { AttackReduceFeature.setDebugChat(value > 0.5D); }
@@ -2967,6 +2977,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         /** RANGE 的上限手柄；其它类型为 null。 */
         final Binding bindingHigh;
         private int scaffoldModeFilter = -1;
+        private java.util.function.BooleanSupplier condition;
+        Setting when(java.util.function.BooleanSupplier test) { condition=test;return this; }
 
         Setting scaffoldMode(boolean normal) {
             scaffoldModeFilter = normal ? 1 : 0;
@@ -2974,8 +2986,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
 
         boolean visible() {
-            return scaffoldModeFilter < 0 || (ScaffoldFeature.getMode() == ScaffoldFeature.MODE_NORMAL)
-                    == (scaffoldModeFilter == 1);
+            return (condition==null || condition.getAsBoolean()) && (scaffoldModeFilter < 0 || (ScaffoldFeature.getMode() == ScaffoldFeature.MODE_NORMAL)
+                    == (scaffoldModeFilter == 1));
         }
 
         private Setting(String label, int kind, float min, float max, float step,

@@ -34,6 +34,7 @@ public final class ClickGuiInteractionTest {
         ModuleManager.register(new Module("Telly", "movement.telly") {});
         ModuleManager.register(new Module("GodBridge", "movement.godbridge") {});
         ModuleManager.register(new Module("Scaffold2", "movement.scaffold2") {});
+        ModuleManager.register(new module.movement.AttackReduce());
         for (String category : new String[] {"movement", "render", "player", "misc"}) {
             ModuleManager.register(new Module(category + " Demo", category + ".demo") {});
         }
@@ -44,6 +45,7 @@ public final class ClickGuiInteractionTest {
 
         GuiOpenMaverClickGui gui = open(null, null, 1200, 600);
         check(columns(gui).size() == 7, "Five module categories plus Config and Personalization");
+        velocitySettings(gui);
         for (String hidden : new String[] {"Telly", "God Bridge", "Scaffold2"}) {
             check(!hasEntry(gui, hidden), hidden + " standalone row is hidden");
         }
@@ -275,6 +277,75 @@ public final class ClickGuiInteractionTest {
         check("false".equals(persisted.getProperty("nametag.throughWalls")), "NameTag options are saved with feature settings");
         check("true".equals(persisted.getProperty("antibot.nameCheck")), "Anti Bot options are saved with feature settings");
         System.out.println("ClickGUI interaction checks passed: " + checks);
+    }
+
+    private static void velocitySettings(GuiOpenMaverClickGui gui) throws Exception {
+        Object entry = findEntry(gui, "Velocity");
+        Object mode = findSetting(entry, "MODE");
+        String[] names = (String[]) get(mode, "options");
+        check(names.length == 20, "Velocity exposes three legacy and seventeen Augustus modes");
+        for (int i = 0; i < names.length; i++) {
+            check(names[i].equalsIgnoreCase(AttackReduceFeature.MODE_NAMES[i]), "Velocity mode order " + i);
+            invoke(mode, "set", new Class<?>[] {double.class}, (double) i);
+            check(AttackReduceFeature.getMode() == i, "Velocity selector binds mode " + i);
+            check(Boolean.valueOf(i < 3).equals(invoke(findSetting(entry, "CHANCE (RESETS)"), "visible", new Class<?>[0])),
+                    "Legacy settings visibility for mode " + i);
+        }
+        invoke(mode, "set", new Class<?>[] {double.class}, 3D);
+        Object lag = findSetting(entry, "Lag");
+        check(Boolean.TRUE.equals(invoke(lag, "visible", new Class<?>[0])), "Augustus common controls are visible");
+        invoke(lag, "setPercent", new Class<?>[] {double.class}, .5D);
+        check(AugustusVelocity.value("common", "Lag") == 200, "Common Lag slider binds runtime settings");
+        invoke(lag, "set", new Class<?>[] {double.class}, 0D);
+        Object explosion = findSetting(entry, "Explosion");
+        Object explosionXZ = findSetting(entry, "XZVelocityInAirExplosion");
+        invoke(explosion, "set", new Class<?>[] {double.class}, 0D);
+        check(Boolean.FALSE.equals(invoke(explosionXZ, "visible", new Class<?>[0])), "Basic hides disabled explosion controls");
+        invoke(explosion, "set", new Class<?>[] {double.class}, 1D);
+        check(Boolean.TRUE.equals(invoke(explosionXZ, "visible", new Class<?>[0])), "Basic reveals explosion controls");
+
+        invoke(mode, "set", new Class<?>[] {double.class}, 6D);
+        Object pushMode = findSetting(entry, "PushMode");
+        Object expertMotion = findSetting(entry, "PushMotion1");
+        check(Boolean.FALSE.equals(invoke(expertMotion, "visible", new Class<?>[0])), "Push Simple hides expert controls");
+        invoke(pushMode, "set", new Class<?>[] {double.class}, 1D);
+        check(Boolean.TRUE.equals(invoke(expertMotion, "visible", new Class<?>[0])), "Push Expert reveals per-hurt-time controls");
+        invoke(expertMotion, "setPercent", new Class<?>[] {double.class}, .25D);
+        check(AugustusVelocity.value("Push", "PushMotion1") == 5, "Expert slider binds the actual mode");
+
+        // Exercise scrolling and hit testing on the actual overflowing Velocity panel.
+        Object col = column(gui, "movement");
+        int originalHeight=gui.height;
+        gui.height=320;
+        invoke(gui, "bringToFront", new Class<?>[] {col.getClass()}, col);
+        ((java.util.Set<Object>) get(gui, "expanded")).add(get(entry, "id"));
+        set(entry, "expandProgress", 1F);
+        set(col, "scroll", 0);
+        render(gui);
+        check((Integer) get(col, "maxScroll") > 0, "Velocity expert settings overflow into a scrollable panel");
+        boolean reached = false;
+        for (int i = 0; i < 100; i++) {
+            for (Object hit : (List<?>) get(col, "hits")) {
+                if (get(hit, "setting") != expertMotion) continue;
+                int y = (Integer) get(hit, "y") + (Integer) get(hit, "h") / 2;
+                if (y > (Integer) get(col, "bodyY") && y < (Integer) get(col, "bodyY") + (Integer) get(col, "bodyH")) {
+                    reached = true;
+                    break;
+                }
+            }
+            if (reached) break;
+            invoke(gui, "scrollColumn", new Class<?>[] {int.class, int.class, int.class},
+                    (Integer) get(col, "headerX") + 15, (Integer) get(col, "bodyY") + 15, -120);
+            render(gui);
+        }
+        check(reached && (Integer) get(col, "scroll") > 0, "Last Expert motion setting is reachable by wheel scrolling");
+        ((java.util.Set<?>) get(gui, "expanded")).remove(get(entry, "id"));
+        set(entry, "expandProgress", 0F);
+        set(col, "scroll", 0);
+        set(col, "scrollVis", 0F);
+        gui.height=originalHeight;
+        invoke(mode, "set", new Class<?>[] {double.class}, 1D);
+        render(gui);
     }
 
     private static GuiOpenMaverClickGui open(GuiScreen parent, String initial, int w, int h) throws Exception {

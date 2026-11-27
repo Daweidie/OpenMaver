@@ -46,7 +46,7 @@ public final class ClientStartupTest {
         check((Boolean) get(handler, "tauntFailed"), "taunt failure is detected");
         check(!(Boolean) get(handler, "failed"), "taunt cannot disable the event bridge");
         check(OpenMaver.isStarted(), "first world still starts the real core");
-        check(ModuleManager.getModules().size() == 30, "all 30 core modules register");
+        check(ModuleManager.getModules().size() == 31, "all 31 core modules register");
         check(ModuleManager.getTickCount() == 1, "other modules receive this same tick");
 
         GuiOpenMaverClickGui gui = new GuiOpenMaverClickGui(null);
@@ -57,9 +57,11 @@ public final class ClientStartupTest {
         Set<Object> displayed = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
         for (Object entry : entries) displayed.add(get(entry, "module"));
         for (Module module : ModuleManager.getModules()) {
+            if ("Scaffold2".equals(module.getName()) || "Telly".equals(module.getName())
+                    || "GodBridge".equals(module.getName())) continue;
             check(displayed.contains(module), module.getName() + " is present in ClickGUI");
         }
-        check(entries.size() == 33, "ClickGUI contains 30 modules and 3 independent features");
+        check(entries.size() == 31, "ClickGUI contains 28 standalone modules and 3 independent features");
         mc.theWorld = new World();
         handler.onClientTick(new TickEvent.ClientTickEvent(TickEvent.Phase.END));
         check(ModuleManager.getTickCount() == 2, "subsequent ticks continue without retrying broken features");

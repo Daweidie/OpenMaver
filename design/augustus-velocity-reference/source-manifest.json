@@ -1,0 +1,155 @@
+{
+  "archives": {
+    "build-inputs/recovered-analysis.jar": "a279332bbfb894fa061d6a008001411f3e99ec20bc640ec6d8da576ddfd5a1b8",
+    "build-inputs/zkm27-original-core.jar": "f323c3c0ed6c91f7f64c1a8b0e2e4764c1ed913822531f548fa389e996b87312",
+    "lib/retained-templates.jar": "a5db369256af7c695d3f00c4407c032c0dad7ccc4bb7b618e57f650e354c01d5",
+    "lib/runtime-additions.jar": "5b805a6caded5755911e7d861b040154f84164ac549b19ae620d5cffa62155ba"
+  },
+  "classes": {
+    "net/47Cc.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "529c5e70149e8b0ef129289c551d358bff133fdd2dbe6bc6dd267203f417f442"
+    },
+    "net/47GJ.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "7bd4bc6f8c64a6102afe81b08c68b42a7f12d8f86e2ae808d37e1b82c3c40527"
+    },
+    "net/47Gw.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "00a0235b2eac483cab7abaab31ff328d2468acb27138cc6a84ece536d09a00cb"
+    },
+    "net/47GN.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "05731add9e5b697621aa96f7849e776fd3a34309f84911d2e5acb9f9872cbbad"
+    },
+    "net/47Gk.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "f1ecfa107a24dd624c6aac91c89b59395092f8bb144fb1a3447c71083d4fe99f"
+    },
+    "net/47GT.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "aae18d6965622ff12cb858297bbf1de499f2db1b8c42615ccdb2d241cc76f07d"
+    },
+    "net/47GA.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "9a94983438aaaab2e2fdee3082aa09eb1a69258d5996109384b01b7b4fde7654"
+    },
+    "net/47GX.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "cdc946769490cf9be0784fec96dd69d61af5962d082de2975e8742f4a39d97bd"
+    },
+    "net/47GO.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "3720506162d23deeffc75a0c77ecf368acc04dba298b36d00463f038710bea1a"
+    },
+    "net/47G7.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "f40e0e0ed47e42458672e26f3e808e9fd41610ae60e5522aed15b501a8140556"
+    },
+    "net/47Gz.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "7eb8200ecf34561b0fb8f1df8b5315dc59e2d19ec1fcd3b093e0435362ba1811"
+    },
+    "net/47Gl.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "05c0e45c998b2af9affdc9231a88faf3087447aef1c09ffddb7b5dd991e1c487"
+    },
+    "net/47G_.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "fb19331b5a18ca9ddc876c750bc9c92a749845f48d9364d4191160839eadc2ab"
+    },
+    "net/47GQ.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "3e515d6927bc2aca4a9632548d82e275917c43dca8fe5e99cd78107d3ee1d3bc"
+    },
+    "net/47GC.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "5d323f5856c08a297671dd6b466f4b4e48bb336fd1e8ad2baba30e104adc59ff"
+    },
+    "net/47GW.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "f613a2d00df786efb953c26270e1338dbd8762c2d4d6a9c7817d5569b9f68867"
+    },
+    "net/47Gm.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "af9f2c7295b88d810e6664883f09d437ac0b5fab4aa21828d9f74a0d35cc14fe"
+    },
+    "net/47Gn.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "397d653b28a766396dbb91578d18665df314eb7ae88d1bd7578b8584a071ce39"
+    },
+    "net/47G6.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "6b28aabe41938e5142034038e029ff01860a6e3c7f5b460c0ca8636c0f812472"
+    },
+    "net/47GH.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "c25582be588cdf7ce1f122d50f85d9bf5fb82996ad55ce2a69e59da42825b42e"
+    },
+    "net/47TT.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "44346bbaee912677ef53f8d1472c0875ef307696b212ff0b01928572df934bd3"
+    },
+    "net/47Ts.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "3b0c853225807ab99f705c580357856b2a8e23d04e89c07596381bb8e919d61a"
+    },
+    "net/47TU.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "98b4169c298569b4534317f0650769268a735a3bac820281f9ff46baf47aa290"
+    },
+    "net/47TS.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "2acd1966c3676667f27829987838d1cbd201a319116430cc419bb527bfe66d1a"
+    },
+    "net/47zh.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "15fba256c87bc194ee188b7cb140857d036bb430443e00196e21f138276146e9"
+    },
+    "net/47gg.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "589806e32460b4a9fb257be1704fe65bf703498f627c3606be16b0414966e92e"
+    },
+    "net/47vS.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "0e5ccbad7d5927737f7d682c3efd1f74cdeb1eb5b036fd91d364c1096231cc00"
+    },
+    "net/46s.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "1805d1795cba9ec6124dcbb5ffbb4c209a1c46fe0a1b17095878fa2f22a3659d"
+    },
+    "net/42L.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "d7eac37fffdbeb6e171ea05637885652b49d2653ea177e39cf98c40a03a93768"
+    },
+    "net/474i.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "0ba413d2123c7c4350376755b760e85a724bb98b0771beb669f26bd641f92691"
+    },
+    "net/47jB.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "4bebea9e6aa877ec2d51f874ba5714d15e8ecd12f2fe3d7bd6d995d784515337"
+    },
+    "net/47rn.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "ea6e07db586fdaf85ea42fdac82cf6b4e3170b4292da9b5ce41a621cf35076c8"
+    },
+    "net/47AC.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "d6258c5557e3682c6e483d25145873d343f0a108c0e2739f84bf24607d31fcbb"
+    },
+    "net/49S.class": {
+      "archive": "build-inputs/recovered-analysis.jar",
+      "sha256": "9717971eea4bf4ce2584286334ca50e3ea2db69c1cdac49c5f18c3ea21562d4d"
+    },
+    "net/47uP.class": {
+      "archive": "lib/runtime-additions.jar",
+      "sha256": "3214662d4acdf400269614a3c96f6c0a5e4c1444524ad907cd14530c2813ad87"
+    }
+  },
+  "missing": [],
+  "recovered_module": {
+    "path": "../OpenAugustus-Maver/src/main/java/augustus/recovered/modules/combat/Velocity_47Cc.java",
+    "sha256": "837c1017a49f0f22337f97d3ca2f119c6648f16b6e07dbbfa7c06ccd933036f9"
+  }
+}

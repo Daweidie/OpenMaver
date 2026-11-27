@@ -5,11 +5,12 @@ import net.minecraft.client.Minecraft;
 import util.Logger;
 import java.lang.reflect.Field;
 
-/** 旧协议声音名称兼容；独立于 Velocity 开关，保留原包坐标、音量与音高。 */
+/** 旧协议兼容入口（保留已有 hook 名）：声音名称与队伍包保护，独立于 Velocity。 */
 public final class LegacySoundFeature {
     static final String NAME = "openmaver_legacy_sound";
     private static ChannelPipeline pipeline;
     private static ChannelDuplexHandler hook;
+    private static Object handlerOwner;
     private static int tick, retry;
     private static boolean warned;
     private LegacySoundFeature() { }
@@ -17,14 +18,14 @@ public final class LegacySoundFeature {
     public static void onTick(Minecraft mc) {
         tick++;
         Object player = AttackReduceFeature.read(mc, "thePlayer", "field_71439_g");
-        Object handler = AttackReduceFeature.read(player, "sendQueue", "field_71174_a");
+        final Object handler = AttackReduceFeature.read(player, "sendQueue", "field_71174_a");
         Object manager = AttackReduceFeature.fieldByType(handler, "net.minecraft.network.NetworkManager");
         Object channel = AttackReduceFeature.fieldByType(manager, "io.netty.channel.Channel");
         ChannelPipeline next = (ChannelPipeline) AttackReduceFeature.call(channel, "pipeline", "pipeline");
-        if (next == pipeline && next != null && next.context(NAME) != null) return;
+        if (next == pipeline && next != null && handler == handlerOwner && next.context(NAME) != null) return;
         if (pipeline != null) {
             try { pipeline.remove(hook); } catch (Exception ignored) { }
-            pipeline = null; hook = null;
+            pipeline = null; hook = null; handlerOwner = null;
             retry = tick;
         }
         if (next == null || !next.names().contains("packet_handler") || tick < retry) return;
@@ -34,13 +35,15 @@ public final class LegacySoundFeature {
             ChannelDuplexHandler added = new ChannelDuplexHandler() {
                 @Override public void channelRead(ChannelHandlerContext ctx, Object packet) throws Exception {
                     normalize(packet);
-                    ctx.fireChannelRead(packet);
+                    if (!TeamPacketGuard.capture(mc, handler, ctx, packet)) ctx.fireChannelRead(packet);
                 }
             };
-            next.addBefore("packet_handler", NAME, added);
-            pipeline = next; hook = added; warned = false;
+            String before = next.context(AttackReducePacketHook.NAME) != null
+                    ? AttackReducePacketHook.NAME : "packet_handler";
+            next.addBefore(before, NAME, added);
+            pipeline = next; hook = added; handlerOwner = handler; warned = false;
         } catch (Exception error) {
-            if (!warned) Logger.warn("Protocol 1.8", "Sound hook retry: " + error);
+            if (!warned) Logger.warn("Protocol 1.8", "Compatibility hook retry: " + error);
             warned = true;
         }
     }

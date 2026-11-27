@@ -3,6 +3,7 @@ package net.minecraft.network;
 /** 测试替身：与真实 1.8.9 NetHandlerPlayClient 一样持有 netManager 字段。 */
 public class NetHandlerPlayClient {
     private final NetworkManager netManager;
+    public Object field_147300_g;
     public java.util.function.Consumer<Object> outbound;
     public java.util.function.Consumer<Object> inbound;
     public void process(Object packet) { if (inbound != null) inbound.accept(packet); }

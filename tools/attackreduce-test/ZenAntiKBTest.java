@@ -35,6 +35,15 @@ public final class ZenAntiKBTest {
         public boolean onGround = true, sprinting = true, serverSprintState = true, isInWeb, water, lava, burning, ladder, sleeping, jumpBoost, alive = true;
         public boolean usingItem, swingFails, isAirBorne;
         public int hurtTime = 10, jumpCalls;
+        public int ticksExisted=200, jumpTicks;
+        public double field_175172_bI=10,field_175166_bJ=20,field_175167_bK=30;
+        public float fallDistance, moveForward, moveStrafing, stepHeight=.6f, jumpMovementFactor=.02f;
+        public boolean isCollidedHorizontally, sneaking;
+        public AxisAlignedBB bounds;
+        public AxisAlignedBB getEntityBoundingBox() {return bounds==null?new AxisAlignedBB(posX-.3,posY,posZ-.3,posX+.3,posY+1.8,posZ+.3):bounds;}
+        public void setPosition(double x,double y,double z) {posX=x;posY=y;posZ=z;bounds=null;}
+        public float getAIMoveSpeed() {return .1f;}
+        public boolean isSneaking() {return sneaking;}
         EmbeddedChannel channel;
         public boolean func_70051_ag() { return sprinting; }
         public void func_70031_b(boolean v) { sprinting = v; }
@@ -46,6 +55,7 @@ public final class ZenAntiKBTest {
         public boolean isPlayerSleeping() { return sleeping; }
         public boolean func_82165_m(int id) { return id == 8 && jumpBoost; }
         public boolean isPotionActive(int id) { return func_82165_m(id); }
+        public PotionStatus getActivePotionEffect(net.minecraft.potion.Potion potion) {return potion==null?null:new PotionStatus();}
         public float getEyeHeight() { return 1.62F; }
         public boolean isUsingItem() { return usingItem; }
         // 1.8.9 EntityLivingBase.jump：原版方法本身没有 onGround 限制。
@@ -64,6 +74,7 @@ public final class ZenAntiKBTest {
             channel.writeOutbound(new C0APacketAnimation());
         }
     }
+    public static class PotionStatus { public int getAmplifier(){return 2;} }
     public static class Target extends EntityLivingBase {
         public boolean alive = true;
         public boolean acceptsDamage = true;
@@ -100,6 +111,7 @@ public final class ZenAntiKBTest {
         S0BPacketAnimation(int id) { field_148981_a = id; }
     }
     public static class S08PacketPlayerPosLook extends PacketStub { }
+    public static class S01PacketJoinGame extends PacketStub { }
     public static class S07PacketRespawn extends PacketStub { }
     public static class S40PacketDisconnect extends PacketStub { }
     public static class S00PacketKeepAlive extends PacketStub { }
@@ -109,13 +121,15 @@ public final class ZenAntiKBTest {
         final Player player = new Player();
         final Target target = new Target();
         final Controller controller = new Controller();
-        final Object world = new Object();
+        final Object world;
         final List<Object> applied = new ArrayList<Object>();
         final EmbeddedChannel channel;
         final Thread main = Thread.currentThread();
         final MovingObjectPosition hit = new MovingObjectPosition();
         Fixture(int mode) { this(mode, true); }
-        Fixture(int mode, boolean establishSprintFrame) {
+        Fixture(int mode, boolean establishSprintFrame) {this(mode,establishSprintFrame,new Object());}
+        Fixture(int mode, boolean establishSprintFrame,Object testWorld) {
+            world=testWorld;
             AttackReduceFeature.load(new Properties()); MODULE.setEnabled(true); AURA.setEnabled(false);
             channel = new EmbeddedChannel(new ChannelDuplexHandler() {
                 public void channelRead(ChannelHandlerContext ctx, final Object msg) {
@@ -176,6 +190,7 @@ public final class ZenAntiKBTest {
 
     public static void main(String[] args) throws Exception {
         ModuleManager.register(MODULE); ModuleManager.register(AURA);
+        TeamPacketGuardTest.run();
         settings(); noXZ(); jumpReset(); mix(); lifecycle(); threadIsolation(); debugChat(); Protocol18Test.run();
         keepSprintCoexistence();
         System.out.println("ZenAntiKBTest: " + passed + " passed, 0 failed");
@@ -197,7 +212,7 @@ public final class ZenAntiKBTest {
                     f.start();
                     coexistInput(f, -1, 0, false);
                     check("idle Velocity permits KeepSprint in mode " + mode,
-                            "ROTATE".equals(KeepSprintFeature.getStatus())
+                            "SILENT".equals(KeepSprintFeature.getStatus())
                                     && near(Math.abs(f.player.rotationYaw), 180)
                                     && !AttackReduceFeature.ownsMovementInput(f.player, f.player.movementInput));
                     coexistEnd(f);
@@ -241,7 +256,7 @@ public final class ZenAntiKBTest {
                         coexistEnd(f);
                     }
                     check("KeepSprint resumes automatically after Velocity pulse " + mode,
-                            "ROTATE".equals(KeepSprintFeature.getStatus()));
+                            "SILENT".equals(KeepSprintFeature.getStatus()));
                     MODULE.setEnabled(false);
                     f.start();
                     check("disabled Velocity cannot retain ownership " + mode,
@@ -275,7 +290,7 @@ public final class ZenAntiKBTest {
         Properties old = new Properties(); old.setProperty("velocity.mode", "2"); old.setProperty("velocity.horizontal", "0");
         AttackReduceFeature.load(old);
         check("old numeric mode uses JumpReset default", AttackReduceFeature.getMode() == AttackReduceFeature.MODE_JUMP_RESET);
-        check("three modes with JumpReset default", AttackReduceFeature.MODE_NAMES.length == 3 && "JumpReset".equals(AttackReduceFeature.getSummary()));
+        check("legacy mode prefix and JumpReset default", AttackReduceFeature.MODE_NAMES.length == 20 && "JumpReset".equals(AttackReduceFeature.getSummary()));
         check("Zen default settings", AttackReduceFeature.getAttackAmount() == 5 && AttackReduceFeature.getChance() == 100 && AttackReduceFeature.getAccuracy() == 100
                 && AttackReduceFeature.getWaterCheck() && !AttackReduceFeature.getOnlyWhenTargeting()
                 && AttackReduceFeature.getSprintStateCheck() && !AttackReduceFeature.getRotate() && !AttackReduceFeature.getInstantAttack());
@@ -309,8 +324,8 @@ public final class ZenAntiKBTest {
                     && AttackReduceFeature.save().startsWith("velocity.zen.mode=JumpReset\n")
                     && !AttackReduceFeature.save().contains("followDirection") && !AttackReduceFeature.save().contains("rotateTicks"));
         }
-        AttackReduceFeature.setMode(3);
-        check("removed mode index falls back to JumpReset", AttackReduceFeature.getMode() == AttackReduceFeature.MODE_JUMP_RESET);
+        AttackReduceFeature.setMode(20);
+        check("invalid mode index falls back to JumpReset", AttackReduceFeature.getMode() == AttackReduceFeature.MODE_JUMP_RESET);
     }
     static boolean has(List<String> lines, String needle) {
         for (String line : lines) if (line.contains(needle)) return true;

@@ -20,15 +20,19 @@
 // ---------------------------------------------------------------------------
 
 #include "bridge.h"
+#include "velocity_hooks.h"
 
 #include <jvmti.h>
 
 #include <cstdio>
 #include <cstring>
 #include <cstdarg>
+#include <atomic>
 #include <unistd.h>
 
 namespace {
+
+using openmaver_velocity::installVelocityHooks;
 
 void agentLog(const char* format, ...) {
     char path[128];
@@ -92,6 +96,12 @@ bool installGameUi(JNIEnv* env, const char* mcJar, const char* coreJar) {
         std::fputs("[OpenMaver] agent: 未找到 OpenMaverMcBridge（core jar 里应包含）\n", stderr);
         env->ExceptionClear();
         return false;
+    }
+    JNINativeMethod velocityNative={const_cast<char*>("installVelocityHooks"),
+        const_cast<char*>("(Ljava/lang/Object;[Ljava/lang/Class;[Ljava/lang/String;)Z"),
+        reinterpret_cast<void*>(&installVelocityHooks)};
+    if(env->RegisterNatives(bridge,&velocityNative,1)!=JNI_OK) {
+        env->ExceptionClear();agentLog("Velocity retransformation native registration failed");return false;
     }
 
     jmethodID install = env->GetStaticMethodID(

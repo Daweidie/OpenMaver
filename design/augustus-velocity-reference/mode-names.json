@@ -1,0 +1,104 @@
+[
+  {
+    "order": 1,
+    "name": "Basic",
+    "original_class": "net/47GN",
+    "readable_class": "net/C_47GN"
+  },
+  {
+    "order": 2,
+    "name": "Legit",
+    "original_class": "net/47Gk",
+    "readable_class": "net/C_47Gk"
+  },
+  {
+    "order": 3,
+    "name": "PushGround",
+    "original_class": "net/47GT",
+    "readable_class": "net/C_47GT"
+  },
+  {
+    "order": 4,
+    "name": "Push",
+    "original_class": "net/47GA",
+    "readable_class": "net/C_47GA"
+  },
+  {
+    "order": 5,
+    "name": "Intave/PolarFlag",
+    "original_class": "net/47GX",
+    "readable_class": "net/C_47GX"
+  },
+  {
+    "order": 6,
+    "name": "Intave",
+    "original_class": "net/47GO",
+    "readable_class": "net/C_47GO"
+  },
+  {
+    "order": 7,
+    "name": "Intave13",
+    "original_class": "net/47G7",
+    "readable_class": "net/C_47G7"
+  },
+  {
+    "order": 8,
+    "name": "Reverse",
+    "original_class": "net/47Gz",
+    "readable_class": "net/C_47Gz"
+  },
+  {
+    "order": 9,
+    "name": "Spoof",
+    "original_class": "net/47Gl",
+    "readable_class": "net/C_47Gl"
+  },
+  {
+    "order": 10,
+    "name": "SafeWalk",
+    "original_class": "net/47G_",
+    "readable_class": "net/C_47G_"
+  },
+  {
+    "order": 11,
+    "name": "OldMinemen",
+    "original_class": "net/47GQ",
+    "readable_class": "net/C_47GQ"
+  },
+  {
+    "order": 12,
+    "name": "Karhu",
+    "original_class": "net/47GC",
+    "readable_class": "net/C_47GC"
+  },
+  {
+    "order": 13,
+    "name": "CustomMotion",
+    "original_class": "net/47GW",
+    "readable_class": "net/C_47GW"
+  },
+  {
+    "order": 14,
+    "name": "BoundingBox",
+    "original_class": "net/47Gm",
+    "readable_class": "net/C_47Gm"
+  },
+  {
+    "order": 15,
+    "name": "Grim-1.17",
+    "original_class": "net/47Gn",
+    "readable_class": "net/C_47Gn"
+  },
+  {
+    "order": 16,
+    "name": "HypixelTest",
+    "original_class": "net/47G6",
+    "readable_class": "net/C_47G6"
+  },
+  {
+    "order": 17,
+    "name": "PolarBlock",
+    "original_class": "net/47GH",
+    "readable_class": "net/C_47GH"
+  }
+]

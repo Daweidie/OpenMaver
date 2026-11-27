@@ -22,15 +22,21 @@ import java.util.Properties;
 /** Velocity 的 1.8.9 适配层；输入式重置与 OpenZen 状态机位于 antikb/。 */
 public final class AttackReduceFeature {
     public static final int MODE_NOXZ = 0, MODE_JUMP_RESET = 1, MODE_MIX = 2;
-    public static final String[] MODE_NAMES = {"NoXZ", "JumpReset", "Mix"};
+    public static final String[] MODE_NAMES = {"NoXZ", "JumpReset", "Mix", "Basic", "Legit", "PushGround", "Push", "Intave/PolarFlag", "Intave", "Intave13", "Reverse", "Spoof", "SafeWalk", "OldMinemen", "Karhu", "CustomMotion", "BoundingBox", "Grim-1.17", "HypixelTest", "PolarBlock"};
     private static int mode = MODE_JUMP_RESET;
+    private static boolean velocityHooksAvailable=true;
+    /** Attach reports a retransformation failure explicitly; coremod validates at load time. */
+    public static void setVelocityHooksAvailable(boolean available) {
+        velocityHooksAvailable=available;
+        if(!available)Logger.warn("Velocity","Augustus hooks unavailable; Augustus modes are paused until hooks install successfully");
+    }
     private static boolean rotate, tryAttack, movementOverride, instantAttack;
     private static boolean onlyWhenTargeting, waterCheck = true;
     private static int chance = 100, accuracy = 100;
     private static boolean sprintStateCheck = true;
     private static boolean debugChat;
     private static int attackAmount = 5;
-    private static final AntiKBMode[] MODES = {new NoXZMode(), new JumpResetMode(), new MixMode()};
+    private static final AntiKBMode[] MODES = {new NoXZMode(), new JumpResetMode(), new MixMode(), new AugustusBasic(), new AugustusLegit(), new AugustusPushGround(), new AugustusPush(), new AugustusFlag(), new AugustusIntave(), new AugustusIntave13(), new AugustusReverse(), new AugustusSpoof(), new AugustusSafeWalk(), new AugustusOldMinemen(), new AugustusKarhu(), new AugustusCustomMotion(), new AugustusBoundingBox(), new AugustusGrim(), new AugustusHypixel(), new AugustusPolarBlock()};
     private static volatile Session session;
     private static long knockbacks, attacks;
     private static int tick, nextHookAttempt;
@@ -87,6 +93,7 @@ public final class AttackReduceFeature {
         final Object raw;
         final Session owner;
         final Method process;
+        boolean horizontal = true, vertical = true, resetHorizontal, resetVertical;
         Packet(Object raw, Session owner, Method process) { this.raw = raw; this.owner = owner; this.process = process; }
         boolean is(String name) { return packetName(raw, name); }
         int id() { return integer(raw, "entityID", "entityId", "field_149417_a", "field_148981_a"); }
@@ -100,7 +107,21 @@ public final class AttackReduceFeature {
             else deferredReplays.add(this);
         }
         void process() {
-            try { process.invoke(raw, owner.handler); }
+            try {
+                Object velocityEntity=owner.player;
+                if(is("S12PacketEntityVelocity") && id()!=owner.entityId) velocityEntity=call(owner.world,"getEntityByID","func_73045_a",id());
+                double oldX = number(velocityEntity, "motionX", "field_70159_w");
+                double oldY = number(velocityEntity, "motionY", "field_70181_x");
+                double oldZ = number(velocityEntity, "motionZ", "field_70179_y");
+                if (TeamPacketGuard.prepare(raw, owner.handler)) process.invoke(raw, owner.handler);
+                if (is("S12PacketEntityVelocity") && velocityEntity!=null) {
+                    if (!horizontal) { set(velocityEntity, "motionX", "field_70159_w", oldX); set(velocityEntity, "motionZ", "field_70179_y", oldZ); }
+                    if (!vertical) set(velocityEntity, "motionY", "field_70181_x", oldY);
+                } else if (is("S27PacketExplosion")) {
+                    if (resetHorizontal) { set(owner.player, "motionX", "field_70159_w", 0); set(owner.player, "motionZ", "field_70179_y", 0); }
+                    if (resetVertical) set(owner.player, "motionY", "field_70181_x", 0);
+                }
+            }
             catch (Exception error) {
                 Throwable cause = error instanceof InvocationTargetException
                         && ((InvocationTargetException) error).getCause() != null
@@ -150,6 +171,7 @@ public final class AttackReduceFeature {
         Object world = read(mc, "theWorld", "field_71441_e");
         Object handler = read(player, "sendQueue", "field_71174_a");
         Session s = session;
+        if(mode>=3&&!velocityHooksAvailable) {stop(true);status("HOOKS UNAVAILABLE");return;}
         if (!enabled() || player == null || world == null || handler == null) { stop(true); return; }
         if (s != null && (!sameConnection(s) || s.mode != mode || !isPacketHookInstalled())) {
             stop(true); nextHookAttempt = tick; s = null;
@@ -168,7 +190,7 @@ public final class AttackReduceFeature {
                 s = new Session(mc, player, world, handler, ((Number) id).intValue(), mode, hook, pipeline);
                 session = s;
                 lastReplayFailure = null;
-                current().onEnable();
+                current().onEnable(); AugustusVelocity.reset();
                 pipeline.addBefore("packet_handler", AttackReducePacketHook.NAME, hook);
                 Logger.info("Velocity", MODE_NAMES[mode] + " packet hook installed");
             } catch (Exception error) {
@@ -177,7 +199,8 @@ public final class AttackReduceFeature {
         }
         if (s == null) return;
         ensureMovementHook(s);
-        current().onTick();
+        AugustusVelocity.tick();
+        if(mode<3) current().onTick();
     }
     /** 目标与 AutoSprint 更新后执行攻击；此阶段的包回放留到下次 scheduled-task。 */
     public static void onTickStart(Minecraft mc) {
@@ -209,18 +232,21 @@ public final class AttackReduceFeature {
                 try {
                     drainDeferredReplays();
                     if (!sameConnection(s)) {
-                        // S07 会在同一网络连接中更换 player/world；其后的批量包属于新世界。
+                        // S01/S07 会在同一网络连接中更换 player/world；其后的批量包属于新世界。
                         if (s.worldTransition && s.pipeline.channel().isOpen()
                                 && read(read(s.mc, "thePlayer", "field_71439_g"), "sendQueue", "field_71174_a") == s.handler) packet.process();
                         return;
                     }
                     if (session != s || !enabled()) { packet.handle(); return; }
-                    if (packet.is("S08PacketPlayerPosLook") || packet.is("S07PacketRespawn") || packet.is("S40PacketDisconnect")) {
+                    boolean worldTransition = packet.is("S01PacketJoinGame") || packet.is("S07PacketRespawn");
+                    if ((packet.is("S08PacketPlayerPosLook") && mode < 3) || worldTransition || packet.is("S40PacketDisconnect")) {
                         synchronized (s.moves) { s.sprintFrameKnown = false; s.correctionDepth++; }
                         try {
-                            current().release(); current().onMotion(); current().onEnable(); restoreTimer(); rotationYaw = null;
+                            current().release(); current().onMotion();
+                            if(mode>=3) {current().onDisable();AugustusVelocity.reset();}
+                            current().onEnable(); restoreTimer(); rotationYaw = null;
                             if (packet.is("S08PacketPlayerPosLook")) current().onCorrection();
-                            if (packet.is("S07PacketRespawn")) s.worldTransition = true;
+                            if (worldTransition) s.worldTransition = true;
                             packet.handle();
                         } finally {
                             // Queue behind vanilla's async C06 write; teleport acknowledgements never
@@ -234,13 +260,14 @@ public final class AttackReduceFeature {
                         return;
                     }
                     // 新击退是新的物理边界：先按序应用旧队列，避免旧 S12 最后覆盖新 S12。
-                    if (ownVelocity(packet) && current().isSuspending) {
+                    if (mode < 3 && ownVelocity(packet) && current().isSuspending) {
                         current().release(); current().onMotion(); current().onEnable();
                     }
                     if (ownVelocity(packet)) knockbacks++;
-                    if (ignored()) { current().release(); current().onMotion(); packet.handle(); return; }
+                    if (mode < 3 && ignored()) { current().release(); current().onMotion(); packet.handle(); return; }
                     ReceivePacketEvent event = new ReceivePacketEvent(packet);
-                    current().onReceivePacket(event);
+                    if (mode >= 3) AugustusVelocity.receive(event);
+                    else current().onReceivePacket(event);
                     if (!event.cancelled) packet.handle();
                     if (current().pendingCount() >= MAX_PENDING) { current().release(); current().onMotion(); status("QUEUE LIMIT"); }
                 } finally { replayAllowed = previous; }
@@ -250,7 +277,27 @@ public final class AttackReduceFeature {
     /** 挂起移动时保留整个出站包序，避免 action/ack 越过先前的 C03。 */
     static boolean captureOutbound(AttackReducePacketHook source, ChannelHandlerContext ctx, Object packet, ChannelPromise promise) {
         final Session s = session;
-        if (s == null || s.hook != source || s.closed) return false;
+        if (s == null || s.hook != source || s.closed || s.worldTransition) return false;
+        if (s.mode >= 3) {
+            final Object raw=packet; final ChannelHandlerContext context=ctx; final ChannelPromise completion=promise;
+            return schedule(s,new Runnable() { public void run() {
+                AugustusVelocity.Outbound write=new AugustusVelocity.Outbound() {
+                    public Object packet() {return raw;}
+                    public void discard() {completion.tryFailure(new IllegalStateException("Velocity session ended"));}
+                    public void send() {
+                        context.channel().eventLoop().execute(new Runnable() {public void run() {
+                            if(completion.isDone())return;
+                            if(!context.channel().isOpen()) {discard();return;}
+                            synchronized(s.moves) {observeSprintPacket(s,raw);}
+                            context.write(raw,completion);context.flush();
+                        }});
+                    }
+                };
+                if(!sameConnection(s)&&!(s.worldTransition&&context.channel().isOpen()&&read(read(s.mc,"thePlayer","field_71439_g"),"sendQueue","field_71174_a")==s.handler))write.discard();
+                else if(session!=s||!enabled())write.send();
+                else AugustusVelocity.outbound(write);
+            }});
+        }
         synchronized (s.moves) {
             if (!s.holdMoves) observeSprintPacket(s, packet);
             VelocityDebug.outbound(packet, s.holdMoves, s.moves.size());
@@ -354,7 +401,7 @@ public final class AttackReduceFeature {
         if (s != null) {
             if (!sameConnection(s)) s.closed = true;
             if (release && sameConnection(s)) { MODES[s.mode].release(); MODES[s.mode].onMotion(); }
-            MODES[s.mode].onDisable(); flushMoves(s); session = null;
+            MODES[s.mode].onDisable(); AugustusVelocity.reset(); flushMoves(s); session = null;
             try { s.pipeline.remove(s.hook); } catch (Exception ignored) { }
         }
         rotationYaw = null; restoreCamera(); restoreTimer(); status = "IDLE";
@@ -365,6 +412,7 @@ public final class AttackReduceFeature {
         restoreCamera();
         Session s = session;
         if (s == null || !sameConnection(s) || !enabled()) return;
+        if (mode >= 3) AugustusVelocity.input(input);
         current().onStrafe(input);
         if (rotationYaw != null && !rotationBusy()) {
             cameraPlayer = s.player;
@@ -504,20 +552,21 @@ public final class AttackReduceFeature {
                 || backtrack != null && backtrack.isEnabled()
                 && (truth(backtrack, "isActive", "isActive") || truth(backtrack, "isBacktracking", "isBacktracking"));
     }
-    private static boolean enabled() { return moduleEnabled("Velocity"); }
-    private static boolean sameConnection(Session s) { return !s.closed && read(s.mc, "thePlayer", "field_71439_g") == s.player && read(s.mc, "theWorld", "field_71441_e") == s.world && read(s.player, "sendQueue", "field_71174_a") == s.handler; }
+    static boolean enabled() { return moduleEnabled("Velocity"); }
+    static boolean sameConnection(Session s) { return !s.closed && read(s.mc, "thePlayer", "field_71439_g") == s.player && read(s.mc, "theWorld", "field_71441_e") == s.world && read(s.player, "sendQueue", "field_71174_a") == s.handler; }
+    static boolean livePlayer(Object player) {Session s=session;return enabled()&&s!=null&&s.player==player&&sameConnection(s);}
     static Object read(Object o, String m, String s) { return OpenMaverFeatures.read(o, m, s, null); }
     static double number(Object o, String m, String s) { return OpenMaverFeatures.number(o, m, s); }
     static void set(Object o, String m, String s, double v) { OpenMaverFeatures.setNumber(o, m, s, v); }
     static Object call(Object o, String m, String s, Object... args) { return OpenMaverFeatures.call(o, m, s, null, args); }
     static boolean truth(Object o, String m, String s, Object... args) { return Boolean.TRUE.equals(call(o, m, s, args)); }
     static boolean flag(Object o, String m, String s) { return Boolean.TRUE.equals(read(o, m, s)); }
-    private static int integer(Object o, String... names) { Field f = OpenMaverFeatures.findField(o, names); try { return f == null ? 0 : f.getInt(o); } catch (Exception ignored) { return 0; } }
-    private static Method packetMethod(Object raw, Object handler) {
+    static int integer(Object o, String... names) { Field f = OpenMaverFeatures.findField(o, names); try { return f == null ? 0 : f.getInt(o); } catch (Exception ignored) { return 0; } }
+    static Method packetMethod(Object raw, Object handler) {
         for (Method m : raw.getClass().getMethods()) if ((m.getName().equals("processPacket") || m.getName().equals("func_148833_a")) && m.getParameterTypes().length == 1 && m.getParameterTypes()[0].isInstance(handler)) { m.setAccessible(true); return m; }
         return null;
     }
-    private static boolean packetName(Object packet, String name) { for (Class<?> c = packet.getClass(); c != null; c = c.getSuperclass()) if (name.equals(c.getSimpleName())) return true; return false; }
+    static boolean packetName(Object packet, String name) { for (Class<?> c = packet.getClass(); c != null; c = c.getSuperclass()) if (name.equals(c.getSimpleName())) return true; return false; }
     private static boolean schedule(Session s, Runnable task) { return OpenMaverFeatures.callVoid(s.mc, "addScheduledTask", "func_152344_a", null, task); }
     static Object fieldByType(Object target, String name) {
         if (target != null) for (Class<?> c = target.getClass(); c != null; c = c.getSuperclass()) for (Field f : c.getDeclaredFields()) if (name.equals(f.getType().getName())) try { f.setAccessible(true); return f.get(target); } catch (Exception ignored) { }
@@ -538,6 +587,7 @@ public final class AttackReduceFeature {
         attackAmount = bounded(p, "attackAmount", 5, 1, 20);
         debugChat = bool(p, "debug", false);
         VelocityDebug.setEnabled(debugChat);
+        AugustusVelocity.load(p);
         nextHookAttempt = tick;
     }
     private static boolean bool(Properties p, String key, boolean fallback) { return Boolean.parseBoolean(p.getProperty("velocity.zen." + key, String.valueOf(fallback))); }
@@ -550,7 +600,7 @@ public final class AttackReduceFeature {
                 + "\nvelocity.zen.chance=" + chance + "\nvelocity.zen.accuracy=" + accuracy
                 + "\nvelocity.zen.onlyWhenTargeting=" + onlyWhenTargeting + "\nvelocity.zen.waterCheck=" + waterCheck
                 + "\nvelocity.zen.instantAttack=" + instantAttack + "\nvelocity.zen.sprintStateCheck=" + sprintStateCheck + "\n"
-                + "velocity.zen.debug=" + debugChat + "\n";
+                + "velocity.zen.debug=" + debugChat + "\n" + AugustusVelocity.save();
     }
     public static int getMode() { return mode; }
     public static void setMode(int v) { stop(true); mode = v >= 0 && v < MODES.length ? v : MODE_JUMP_RESET; nextHookAttempt = tick; OpenMaverFeatures.markDirty(); }

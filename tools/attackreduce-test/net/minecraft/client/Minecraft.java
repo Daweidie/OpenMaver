@@ -11,6 +11,7 @@ public class Minecraft {
     public Object objectMouseOver;
     public Object playerController;
     public int leftClickCounter;
+    public boolean inGameHasFocus=true;
     public net.minecraft.client.settings.GameSettings gameSettings = new net.minecraft.client.settings.GameSettings();
     public final Timer timer = new Timer();
     public static final class Timer { public float timerSpeed = 1; }

@@ -65,6 +65,16 @@ public final class OpenMaverMcBridge {
             if (coreJar != null && !coreJar.isEmpty()) {
                 addUrl(gameLoader, coreJar);
             }
+            // These classes have already been loaded in an attached client. Registering
+            // a LaunchWrapper transformer alone cannot add movement/collision hooks.
+            Class<?> transformerClass=Class.forName("VelocityTransformer",true,gameLoader);
+            String[] velocityTargets={"net.minecraft.entity.Entity","net.minecraft.world.World",
+                    "net.minecraft.client.entity.EntityPlayerSP","net.minecraft.entity.player.EntityPlayer"};
+            Class<?>[] loadedTargets=new Class<?>[velocityTargets.length];
+            for(int i=0;i<loadedTargets.length;i++)loadedTargets[i]=Class.forName(velocityTargets[i],false,gameLoader);
+            boolean velocityHooks=installVelocityHooks(transformerClass.getDeclaredConstructor().newInstance(),loadedTargets,velocityTargets);
+            debug("Velocity runtime hooks="+velocityHooks);
+            Class.forName("AttackReduceFeature",true,gameLoader).getMethod("setVelocityHooksAvailable",boolean.class).invoke(null,velocityHooks);
 
             // 通过 LaunchClassLoader 加载（FML 转换器会对 SRG 名做映射）
             Class<?> hudClass = Class.forName("OpenMaverHud", true, gameLoader);
@@ -87,6 +97,9 @@ public final class OpenMaverMcBridge {
             return false;
         }
     }
+
+    /** Bound by the attach agent; retransformation preserves other transformers' code. */
+    private static native boolean installVelocityHooks(Object transformer,Class<?>[] targets,String[] names);
 
     /** 取 Forge 1.8.9 的 LaunchClassLoader（net.minecraft.launchwrapper.Launch.classLoader）。 */
     private static ClassLoader launchClassLoader() throws Exception {

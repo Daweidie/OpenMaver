@@ -700,17 +700,19 @@ IO 失败只记录一次并自动停用 debug。
 
 ### Velocity 防击退
 
-- Velocity 提供三模式：`JumpReset`（新配置默认）、`NoXZ`、`Mix`；NoXZ / Mix 基于 `../OpenZen` 适配。旧 `SPRINT HIT / SIMPLE / SLAP ATTACK` 实现及控件已移除。ClickGUI/HUD 仍显示 `Velocity`，开关与热键保留 `movement.attackreduce`。
+- Velocity 保留 `JumpReset`（新配置默认）、`NoXZ`、`Mix`，并新增来源于 `../OpenAugustus-Maver` 字节码的 17 个模式：Basic、Legit、PushGround、Push、Intave/PolarFlag、Intave、Intave13、Reverse、Spoof、SafeWalk、OldMinemen、Karhu、CustomMotion、BoundingBox、Grim-1.17、HypixelTest、PolarBlock。ClickGUI/HUD 仍显示 `Velocity`，开关与热键保留 `movement.attackreduce`。
 - `NoXZ`：所有 S12 在主线程收到后立即应用，不额外延迟，也不缩放速度或缓存其他入站/出站包；不会因受击额外强制跳跃。地面有目标且疾跑时安排原版攻击，空中只保留最多 12 tick 的落地补刀意图。落地补刀使用当时速度，不重新施加旧 S12；无目标、超时、新击退、校正或退出环境会清理旧意图。Aura 目标优先，否则取准星生物，眼睛到可见目标 AABB 距离上限为 3.0，减速由原版伤害结果决定。
 - `JumpReset`：参考 `~/Downloads/script.lua` 的短按跳跃与 GUI 暂停思路；自己的正 Y 且带水平分量的 S12 立即应用，地面和空中受击都可触发。下一次有效输入短暂向前疾跑 2 tick：地面写入一次跳跃输入；空中保持原包 Y，在有效 Aura/准星目标上尝试一次原版疾跑攻击，水平减速只由原版伤害结果决定。没有有效目标时仅接管移动输入；攻击名额忙时最多等到下一输入 tick，不与 AutoClicker/Aura 同 tick 重复攻击。随后归还输入和模块开启的疾跑；不在空中调用 `jump()`，不缓存/改写/回放 S12，不伪造 onGround，不改写相机或 Timer。
 - JumpReset 参数：`Chance=100%`（每次有效受击触发概率）、`Accuracy=100%`（下一次输入准时响应概率；失准时仅输入延后 1–2 tick）、`Only When Targeting=false`（开启后需要 Aura 或准星可见生物，距离 ≤ 3.0）、`Water Check=true`（开启后水中跳过；关闭仅放开水中检查）。执行前重查条件；离地后仍可执行重置，尚未执行的空中意图在落地时取消，避免补跳。目标失效、GUI、潜行、使用物品、Scaffold/GodBridge、校正及退出同样取消旧意图，缺少输入回调时最多 3–5 tick 过期。
 - `Mix`：选择性缓存速度、实体移动、事务和传送包，落地或连续空中 24 tick 释放；支持受伤跳跃、短时方向接管、静默转向及 Aura 双击。两次攻击分配到两个空闲 tick，按执行时的疾跑状态走原版物理；与 AutoClicker/Aura 共享每 tick 的实体攻击名额。
 - NoXZ 参数默认：`Attack Amount=5`、`Sprint State Check=true`，`Instant Attack=false`；Mix 的开关默认 false。`Instant Attack` 按等待落地时长增加最多 3 次补刀，与基础攻击一起分摊到正常 tick；始终保留原 Timer 倍率，并与其他模块共享每 tick 的实体攻击名额。
-- 配置版本 20，使用 `velocity.zen.*` 字符串模式配置；升级旧配置清除历史 Velocity 参数，缺省/无效模式使用 `JumpReset`；旧 `Sprint Reset` / `Jump Reset` 配置统一迁移到 `JumpReset`，其余模式、模块开关和键位保留。HUD 显示模式、管线状态、击退/攻击计数和状态。
-- 1.8.9 适配包括主线程包回放、真实 Netty 出站队列、输入回调、相机/计时恢复、重连/重生与队列上限。构建：`cmake --build build -j2`；行为测试：`tools/attackreduce-test/run.sh`。来源、依赖映射、差异及验证范围见 `design/ATTACKREDUCE_HANDOFF.md`；游戏内及服务器端到端效果仍待实测。
-- 所有实体攻击统一为必要的 C0B 疾跑同步 → C0A 挥手 → C02 攻击。到期入站队列在模块动作前回放，Motion/禁用/切模式中产生的迟到回放推迟到下一次准备阶段，避免 S32 回执插在动作和移动之间。连续 S12 先释放旧队列再接收新击退，避免旧速度覆盖新速度。
+- 配置版本沿用 23：模式仍保存为 `velocity.zen.mode` 字符串，原有三个模式索引和参数不变；新增参数独立保存于 `velocity.augustus.*`。缺省/无效模式仍使用 `JumpReset`，旧 `Sprint Reset` / `Jump Reset` 迁移规则保留。界面按模式及子选项显示参数，Push Expert 的逐 hurtTime 参数可滚动访问。
+- Augustus 公共设置包括 S 输入/LongJump/着火过滤、0–400ms 的双向 Lag、伤害声音过滤，以及 S00/S32/S48 的地空条件与取消次数。SafeWalk/BoundingBox/CustomMotion 接入实际移动与碰撞；Intave 接入原版成功攻击分支及无副作用的单步位置预测。来源→实现→测试对照、完整参数表、保留的来源异常行为和适配限制见 [移植记录](design/augustus-velocity-reference/PORT_AUDIT.md)。
+- 1.8.9 的移动/碰撞/攻击钩子通过 mods JAR 的 coremod 或动态注入的 JVMTI 重转换安装；注入明确失败时 Augustus 模式暂停并显示 `HOOKS UNAVAILABLE`。构建：`cmake --build build -j2`；行为测试：`tools/attackreduce-test/run.sh`；真实类/重转换验证：`python3 tools/augustus-velocity/test_transform.py`。本地验证不能证明游戏内及服务器端效果，Java 8 字节码已检查，实际 Java 8 VM 尚未运行。
+- 原有模式发起的实体攻击统一为必要的 C0B 疾跑同步 → C0A 挥手 → C02 攻击，继续共享每 tick 名额。旧模式到期入站队列在模块动作前回放，Motion/禁用/切模式中产生的迟到回放推迟到下一次准备阶段；连续 S12 先释放旧队列再接收新击退。Augustus 的 Lag 与 Flag 按各自来源状态机保序释放，Intave 的攻击钩子只调整已发生的原版攻击，不另发攻击。
 - JumpReset 调试中 `PASS AIR RESET READY` 仅表示意图就绪；`RESET JUMPRESET` / `RESET AIR ATTACK` / `RESET AIR MOVE / NO TARGET` 分别记录地面输入、实际发起的空中攻击和无目标移动，附动作后的本地速度。`AIR ATTACK` 不是服务端命中确认。已删除曾导致空中额外 `0.42` 起跳的直接 `jump()` 路径；本地回归测试验证物理与包序，服务器端效果仍待复测。
 - 独立的声音兼容 hook 将旧协议未注册的 `damage.thorns` 映射到 1.8 原生 `game.player.hurt`，保留位置、音高和音量；Velocity 关闭时仍生效。
+- 同一兼容 hook 在主线程按序检查 S3E 队伍包，忽略针对不存在队伍的更新、删除和成员操作，避免原版 `handleTeams` 空指针刷屏；Velocity 重放入口也做同样检查。S01/S07 切换世界后，已入队且仍属于同一连接的数据包继续处理。
 
 ### FPS / CPS 统计 HUD
 

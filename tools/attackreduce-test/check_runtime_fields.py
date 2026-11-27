@@ -41,13 +41,20 @@ class ClassFile:
         self.name = self.class_name(self.u2())
         parent = self.u2()
         self.parent = self.class_name(parent) if parent else None
-        self.take(2 * self.u2())  # interfaces
+        self.interfaces = [self.class_name(self.u2()) for _ in range(self.u2())]
         self.fields = set()
         for _ in range(self.u2()):
             self.u2()  # access flags
             self.fields.add((self.utf(self.u2()), self.utf(self.u2())))
             for _ in range(self.u2()):
                 self.u2()  # attribute name
+                self.take(struct.unpack(">I", self.take(4))[0])
+        self.methods = set()
+        for _ in range(self.u2()):
+            self.u2()
+            self.methods.add((self.utf(self.u2()), self.utf(self.u2())))
+            for _ in range(self.u2()):
+                self.u2()
                 self.take(struct.unpack(">I", self.take(4))[0])
 
     def take(self, size):
@@ -67,6 +74,13 @@ class ClassFile:
     def field_refs(self):
         for entry in self.pool:
             if entry and entry[0] == 9:
+                owner, nat = entry[1]
+                name, descriptor = self.pool[nat][1]
+                yield self.class_name(owner), self.utf(name), self.utf(descriptor)
+
+    def method_refs(self):
+        for entry in self.pool:
+            if entry and entry[0] in (10, 11):
                 owner, nat = entry[1]
                 name, descriptor = self.pool[nat][1]
                 yield self.class_name(owner), self.utf(name), self.utf(descriptor)

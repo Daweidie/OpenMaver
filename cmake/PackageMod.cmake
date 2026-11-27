@@ -2,7 +2,7 @@ string(TIMESTAMP OPENMAVER_BUILD_DATE "%Y-%m-%d")
 set(OPENMAVER_MOD_JAR "${OPENMAVER_OUTPUT_DIR}/openmaver-b2.2.0-${OPENMAVER_BUILD_DATE}.jar")
 
 execute_process(
-    COMMAND "${OPENMAVER_JAR_EXECUTABLE}" cf "${OPENMAVER_MOD_JAR}"
+    COMMAND "${OPENMAVER_JAR_EXECUTABLE}" cfm "${OPENMAVER_MOD_JAR}" "${CMAKE_CURRENT_LIST_DIR}/../mc/velocity-manifest.mf"
             -C "${OPENMAVER_MC_REOBF_DIR}" .
             -C "${OPENMAVER_JAVA_CLASSES_DIR}" .
             -C "${OPENMAVER_MOD_STAGE}" .

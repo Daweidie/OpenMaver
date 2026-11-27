@@ -195,7 +195,7 @@ final class Protocol18Test {
         }
     }
     static void replayBoundaries() {
-        for (int mode = 0; mode < AttackReduceFeature.MODE_NAMES.length; mode++) try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(mode)) {
+        for (int mode = 0; mode < 3; mode++) try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(mode)) {
             f.channel.writeOutbound(new C03PacketPlayer(0)); outbound(f);
             f.player.onGround = false;
             S12PacketEntityVelocity velocity = f.velocity(); f.receive(velocity);
@@ -269,7 +269,7 @@ final class Protocol18Test {
         }
     }
     static void repeatedVelocity() {
-        for (int mode = 0; mode < AttackReduceFeature.MODE_NAMES.length; mode++) try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(mode)) {
+        for (int mode = 0; mode < 3; mode++) try (ZenAntiKBTest.Fixture f = new ZenAntiKBTest.Fixture(mode)) {
             f.player.onGround = false;
             S12PacketEntityVelocity first = f.velocity(), second = new S12PacketEntityVelocity(7, .2, .3, .1);
             f.receive(first); f.receive(second);

@@ -6,6 +6,7 @@
 #   - 输入/静默转向、时间倍率、包序、释放与断线清理
 #   - Zen 参数持久化与旧配置迁移
 #   - 真实 Netty pipeline 的安装位置、重连与自愈
+#   - S3E 失效队伍保护、主线程保序及 S01/S07 同连接换世界
 #   - 最终 SRG jar 的 MovementInput 字段名/类型对照真实 1.8.9 + Forge
 #
 # 用法：
@@ -48,9 +49,11 @@ classpath="$netty_jar:build/mc-classes:build/java-classes:build/mcstubs-classes"
 mkdir -p "$out_dir"
 echo "[attackreduce-test] netty: $netty_jar"
 javac -source 8 -target 8 -Xlint:-options -encoding UTF-8 -cp "$classpath" -d "$out_dir" \
+    tools/keepsprint-test/support/net/minecraft/entity/SharedMonsterAttributes.java \
     $(find "$test_src" -name '*.java')
 
 echo "[attackreduce-test] JumpReset / NoXZ / Mix"
 java -cp "$out_dir:$classpath" ZenAntiKBTest
+java -cp "$out_dir:$classpath" AugustusVelocityTest
 
 python3 "$test_src/check_runtime_fields.py"
