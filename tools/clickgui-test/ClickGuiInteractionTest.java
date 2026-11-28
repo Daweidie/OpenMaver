@@ -133,6 +133,9 @@ public final class ClickGuiInteractionTest {
         Object throughWalls = settingHit(renderColumn, "THROUGH WALLS");
         clickHit(gui, throughWalls);
         check(!NameTagFeature.isThroughWalls(), "NameTag depth setting changes from the expanded controls");
+        render(gui);
+        clickHit(gui, settingHit(renderColumn, "HEALTH BAR"));
+        check(NameTagFeature.getHealthBarPosition() == 1, "NameTag side bar binds to the renderer");
         Object combatColumn = column(gui, "combat");
         Object antiBotHit = entryHit(combatColumn, "Anti Bot");
         clickHit(gui, antiBotHit);
@@ -227,6 +230,16 @@ public final class ClickGuiInteractionTest {
         check((Integer) get(get(config, "state"), "x") == oldX + 30, "Position persists when reopened");
 
         Object wallpaper = column(gui, "personalization");
+        int sectionY = -1, previousRight = -1, sectionCount = 0;
+        for (Object hit : (List<?>) get(wallpaper, "hits")) {
+            if (!"section".equals(get(hit, "action"))) continue;
+            int hy = (Integer) get(hit, "y"), hx = (Integer) get(hit, "x");
+            if (sectionY < 0) sectionY = hy;
+            check(hy == sectionY && hx > previousRight, "Personalization sections share a single nonoverlapping row");
+            previousRight = hx + (Integer) get(hit, "w");
+            sectionCount++;
+        }
+        check(sectionCount == 4, "All four personalization sections fit in the selector");
         click(gui, wallpaper, "section", "color");
         check(!MaverPersonalization.isModuleListRainbow(), "Function list rainbow defaults to off");
         click(gui, wallpaper, "moduleRainbow");
@@ -418,10 +431,24 @@ public final class ClickGuiInteractionTest {
         set(col, "scrollVis", 0F);
         render(gui);
         clickHit(gui, settingHit(col, "MODE"));
-        check(AttackReduceFeature.getMode() == 7, "Left-click cycles forward through Velocity modes");
+        check(AttackReduceFeature.getMode() == 6 && Boolean.TRUE.equals(get(mode, "open")),
+                "Velocity opens a dropdown without changing the active mode");
         render(gui);
-        rightClickHit(gui, settingHit(col, "MODE"));
-        check(AttackReduceFeature.getMode() == 6, "Right-click cycles backward through Velocity modes");
+        Object selectedOption = null;
+        for (Object hit : (List<?>) get(col, "hits")) {
+            if (get(hit, "setting") == mode && Integer.valueOf(3).equals(get(hit, "optionIndex"))) selectedOption = hit;
+        }
+        check(selectedOption != null, "Velocity dropdown exposes individual mode click targets");
+        clickHit(gui, selectedOption);
+        check(AttackReduceFeature.getMode() == 3 && Boolean.FALSE.equals(get(mode, "open")),
+                "Selecting Basic jumps directly to that mode and closes the dropdown");
+        render(gui);
+        clickHit(gui, settingHit(col, "MODE"));
+        render(gui);
+        gui.keyTyped('\0', Keyboard.KEY_ESCAPE);
+        check(Boolean.FALSE.equals(get(mode, "open")) && !Boolean.TRUE.equals(get(gui, "closing")),
+                "Escape closes the mode dropdown and keeps the settings screen open");
+        render(gui);
 
         // Check the text actually sent to the renderer, including long conditional labels.
         for (int i = 0; i < names.length; i++) {

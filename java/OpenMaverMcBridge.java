@@ -65,6 +65,18 @@ public final class OpenMaverMcBridge {
             if (coreJar != null && !coreJar.isEmpty()) {
                 addUrl(gameLoader, coreJar);
             }
+            // Connections can begin before a world exists. Patch the loaded manager now,
+            // independently of module startup, using the same JVMTI bridge as the other hooks.
+            try {
+                Object networkTransformer = Class.forName("NetworkManagerTransformer", true, gameLoader)
+                        .getDeclaredConstructor().newInstance();
+                String networkManager = "net.minecraft.network.NetworkManager";
+                boolean networkHook = installVelocityHooks(networkTransformer,
+                        new Class<?>[] {Class.forName(networkManager, false, gameLoader)}, new String[] {networkManager});
+                debug("NetworkManager queue fix=" + networkHook);
+            } catch (Throwable error) {
+                debug("NetworkManager queue fix failed: " + error);
+            }
             // These classes have already been loaded in an attached client. Registering
             // a LaunchWrapper transformer alone cannot add movement/collision hooks.
             Class<?> transformerClass=Class.forName("VelocityTransformer",true,gameLoader);

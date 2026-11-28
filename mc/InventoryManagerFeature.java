@@ -38,7 +38,8 @@ import java.util.Properties;
  * 只在「当前窗口就是玩家背包」时动手：开着箱子 / 漏斗 / 创造物品栏时完全不碰，
  * 那段时间交给 {@code ChestFeature}。背包界面开着时点的是同一个窗口；
  * 界面关掉时服务端的 {@code openContainer} 仍然是背包（windowId 0），
- * 所以两种情况都会自动整理。头颅、箱子等功能物品以及带自定义名称 / Lore 的物品
+ * 默认两种情况都会自动整理；开启 ONLY INVENTORY 后仅在背包界面打开时整理。
+ * 头颅、箱子等功能物品以及带自定义名称 / Lore 的物品
  * 始终保留原位，快捷栏排序也避开其槽位。核心模块不引用 MC 类型，mod 与 bootstrap
  * 注入两种类加载方式都能用，因此所有 MC 成员都按 MCP / SRG 双名反射访问。
  */
@@ -55,6 +56,7 @@ public final class InventoryManagerFeature {
     // 设置
     // ==================================================================
 
+    private static boolean onlyInventoryOpen = false;
     private static boolean autoArmor = true;
     private static boolean autoSort = true;
     private static boolean dropExtras = true;
@@ -127,6 +129,9 @@ public final class InventoryManagerFeature {
             return;
         }
         Object screen = read(mc, "currentScreen", "field_71462_r", null);
+        if (onlyInventoryOpen && screen == null) {
+            return;
+        }
         if (screen != null && !isInventoryScreen(screen)) {
             // 聊天 / 设置 / 其它界面：不偷偷点格子。
             return;
@@ -526,6 +531,7 @@ public final class InventoryManagerFeature {
                 return;
             }
         }
+        onlyInventoryOpen = readBoolean(values, "inventory.onlyInventoryOpen", false);
         autoArmor = readBoolean(values, "inventory.autoArmor", true);
         autoSort = readBoolean(values, "inventory.autoSort", true);
         dropExtras = readBoolean(values, "inventory.dropExtras", true);
@@ -553,6 +559,7 @@ public final class InventoryManagerFeature {
         }
         try (FileOutputStream out = new FileOutputStream(file)) {
             out.write(("inventory.version=" + SETTINGS_VERSION
+                    + "\ninventory.onlyInventoryOpen=" + onlyInventoryOpen
                     + "\ninventory.autoArmor=" + autoArmor
                     + "\ninventory.autoSort=" + autoSort
                     + "\ninventory.dropExtras=" + dropExtras
@@ -609,6 +616,15 @@ public final class InventoryManagerFeature {
     // ==================================================================
     // ClickGUI / HUD 用的读写接口
     // ==================================================================
+
+    public static boolean isOnlyInventoryOpen() {
+        return onlyInventoryOpen;
+    }
+
+    public static void setOnlyInventoryOpen(boolean value) {
+        onlyInventoryOpen = value;
+        markDirty();
+    }
 
     public static boolean isAutoArmor() {
         return autoArmor;

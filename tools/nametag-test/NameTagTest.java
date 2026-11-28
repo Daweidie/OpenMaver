@@ -13,7 +13,7 @@ import net.minecraft.client.settings.GameSettings;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
-import net.minecraft.world.World;
+import net.minecraft.client.multiplayer.WorldClient;
 import net.minecraftforge.client.event.RenderLivingEvent;
 
 /** Runs the real label callback without a Minecraft window or native OpenGL. */
@@ -25,7 +25,7 @@ public final class NameTagTest {
         ModuleManager.register(module);
         Minecraft mc = new Minecraft();
         mc.thePlayer = new EntityPlayerSP();
-        mc.theWorld = new World();
+        mc.field_71441_e = new WorldClient();
         mc.renderManager = new RenderManager();
         mc.gameSettings = new GameSettings();
         RecordingFont font = new RecordingFont();
@@ -82,19 +82,69 @@ public final class NameTagTest {
         NameTagFeature.setRange(96);
         NameTagFeature.setScale(1.25F);
         NameTagFeature.setThroughWalls(false);
+        NameTagFeature.setHealthBarPosition(1);
+        NameTagFeature.setHurtFill(false);
         Properties saved = new Properties();
         saved.load(new ByteArrayInputStream(NameTagFeature.save().getBytes(StandardCharsets.US_ASCII)));
         NameTagFeature.load(new Properties());
         NameTagFeature.load(saved);
         check(NameTagFeature.getRange() == 96 && NameTagFeature.getScale() == 1.25F
-                && !NameTagFeature.isThroughWalls(), "Range, size and depth setting survive save/load");
+                && !NameTagFeature.isThroughWalls() && NameTagFeature.getHealthBarPosition() == 1
+                && !NameTagFeature.isHurtFill(), "NameTag range, scale, depth, bar direction and hurt fill survive save/load");
         check(render(mc, player).isCanceled(), "Depth-tested labels still replace vanilla names");
+        org.lwjgl.opengl.GL11.reset();
+        render(mc, player);
+        check(org.lwjgl.opengl.GL11.maxY - org.lwjgl.opengl.GL11.minY > 60,
+                "Side health bar spans the player body instead of the name label");
+        for (int view : new int[] {0, 2}) {
+            mc.gameSettings.thirdPersonView = view;
+            for (float pitch : new float[] {-65, 0, 50}) {
+                mc.renderManager.playerViewX = pitch;
+                mc.renderManager.playerViewY = 63;
+                org.lwjgl.opengl.GL11.reset();
+                render(mc, player);
+                java.util.List<double[]> points = org.lwjgl.opengl.GL11.points;
+                double[] bottom = points.get(0), top = points.get(3);
+                check(Math.abs(top[0] - bottom[0]) < 0.00001 && Math.abs(top[2] - bottom[2]) < 0.00001,
+                        "Side bar stays parallel to the body at pitch " + pitch + " in camera view " + view);
+                check(Math.abs(points.get(4)[1] - 1.25) < 0.00001
+                        && Math.abs(points.get(7)[1] - (1.25 + player.height)) < 0.00001,
+                        "Side bar endpoints align with the feet and head regardless of camera pitch");
+            }
+        }
+        mc.gameSettings.thirdPersonView = 0;
+        mc.renderManager.playerViewX = mc.renderManager.playerViewY = 0;
+        mc.field_71441_e.loadedEntityList.add(player);
+        player.hurtTime = 8;
+        NameTagFeature.setHurtFill(true);
+        org.lwjgl.opengl.GL11.reset();
+        NameTagFeature.onRenderWorld(mc, 0.5F);
+        check(org.lwjgl.opengl.GL11.vertices3d == 24,
+                "Hurt fill reads the SRG WorldClient field and draws all six faces");
+        player.hurtTime = 0;
+        org.lwjgl.opengl.GL11.reset();
+        NameTagFeature.onRenderWorld(mc, 0.5F);
+        check(org.lwjgl.opengl.GL11.vertices3d == 0, "Red fill disappears when hurt animation ends");
+        player.hurtTime = 8;
+        NameTagFeature.setHurtFill(false);
+        NameTagFeature.onRenderWorld(mc, 0.5F);
+        check(org.lwjgl.opengl.GL11.vertices3d == 0, "Hurt fill toggle disables geometry");
         Properties invalid = new Properties();
         invalid.setProperty("nametag.range", "NaN");
         invalid.setProperty("nametag.scale", "Infinity");
         NameTagFeature.load(invalid);
         check(NameTagFeature.getRange() == 64 && NameTagFeature.getScale() == 1,
                 "Invalid numeric settings restore safe defaults");
+        check(NameTagFeature.getHealthBarPosition() == 0, "Old profiles default to the top health bar");
+
+        player.hurtTime = 8;
+        org.lwjgl.opengl.GL11.failNextBegin = true;
+        NameTagFeature.onRenderWorld(mc, 0.5F);
+        check(!org.lwjgl.opengl.GL11.failNextBegin, "Injected hurt fill rendering failure was exercised");
+        org.lwjgl.opengl.GL11.reset();
+        NameTagFeature.onRenderWorld(mc, 0.5F);
+        check(org.lwjgl.opengl.GL11.vertices3d == 0, "Failed hurt fill stops retrying without throwing into the world bridge");
+        check(render(mc, player).isCanceled(), "Name labels still render after a hurt fill failure");
 
         font.fail = true;
         check(!render(mc, player).isCanceled(), "Rendering failure falls back to vanilla labels");
@@ -117,6 +167,7 @@ public final class NameTagTest {
         checks++;
     }
     private static final class Player extends EntityPlayer {
+        public int hurtTime;
         float health = 18;
         float maxHealth = 20;
         double distanceSquared = 100;
@@ -127,6 +178,9 @@ public final class NameTagTest {
         @Override public float getMaxHealth() { return maxHealth; }
         @Override public double getDistanceSqToEntity(Entity entity) { return distanceSquared; }
         @Override public boolean isInvisibleToPlayer(EntityPlayer player) { return invisible; }
+        @Override public net.minecraft.util.AxisAlignedBB getEntityBoundingBox() {
+            return new net.minecraft.util.AxisAlignedBB(-0.3, 0, -0.3, 0.3, height, 0.3);
+        }
     }
     private static final class RecordingFont extends FontRenderer {
         final List<String> text = new ArrayList<String>();

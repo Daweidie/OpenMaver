@@ -7,5 +7,9 @@ out_dir="build/nametag-test-classes"
 classpath="build/mc-classes:build/java-classes:build/mcstubs-classes"
 mkdir -p "$out_dir"
 javac --release 8 -Xlint:-options -encoding UTF-8 -cp "$classpath" -d "$out_dir" \
+    tools/nametag-test/support/org/lwjgl/opengl/GL11.java \
+    tools/nametag-test/support/net/minecraft/client/Minecraft.java \
+    tools/nametag-test/support/net/minecraft/client/multiplayer/WorldClient.java \
     tools/nametag-test/NameTagTest.java
 java -Djava.awt.headless=true -Dfile.encoding=UTF-8 -cp "$out_dir:$classpath" NameTagTest
+python3 tools/check_runtime_fields.py

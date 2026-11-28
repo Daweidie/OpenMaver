@@ -58,6 +58,7 @@ public final class ChestStealerTest {
         ChestFeature.setHumanize(false);
 
         try {
+            fullColorTracksOpenedChests();
             disconnectedGuiWithNoPlayer();
             visibleSweepKeepsGuiThenCloses();
             windowItemsPacketGatesClicks();
@@ -89,6 +90,45 @@ public final class ChestStealerTest {
             error.printStackTrace();
             System.exit(1);
         }
+    }
+
+    private static void fullColorTracksOpenedChests() {
+        try {
+            module.Module stealer = ModuleManager.getModule("Chest Stealer");
+            stealer.setEnabled(false);
+            Fixture f = new Fixture();
+            java.lang.reflect.Field opened = ChestFeature.class.getDeclaredField("openedChests");
+            opened.setAccessible(true);
+            java.util.Set<?> keys = (java.util.Set<?>) opened.get(null);
+            ContainerChest container = new ContainerChest(f.player.inventory, f.chest);
+            ChestFeature.onGuiOpen(new GuiOpenEvent(new GuiChest(f.chest, container)));
+            check("Full color records manual chest openings with Chest Stealer off", keys.contains("3:64:-2"));
+            ChestFeature.setEspFullColor(true);
+            check("Full color can be enabled independently", ChestFeature.isEspFullColor());
+            // A double chest wraps both tile inventories; opening either half clears both.
+            TileEntityChest second = new TileEntityChest(new BlockPos(4, 64, -2));
+            java.lang.reflect.Method mark = ChestFeature.class.getDeclaredMethod("markOpenedInventory", Object.class, int.class);
+            mark.setAccessible(true);
+            mark.invoke(null, new DoubleChest(f.chest, second), 0);
+            check("Double chest records both halves", keys.contains("3:64:-2") && keys.contains("4:64:-2"));
+            Fixture nextWorld = new Fixture();
+            ChestFeature.onTick(nextWorld.mc);
+            check("Switching worlds clears previously opened positions", keys.isEmpty());
+            GuiOpenEvent canceled = new GuiOpenEvent(new GuiChest(nextWorld.chest,
+                    new ContainerChest(nextWorld.player.inventory, nextWorld.chest)));
+            canceled.setCanceled(true);
+            ChestFeature.onGuiOpen(canceled);
+            check("Canceled chest GUI does not mark it opened", keys.isEmpty());
+            ChestFeature.setEspFullColor(false);
+            stealer.setEnabled(true);
+        } catch (ReflectiveOperationException error) {
+            throw new AssertionError(error);
+        }
+    }
+
+    private static final class DoubleChest {
+        final Object upperChest, lowerChest;
+        DoubleChest(Object upper, Object lower) { upperChest = upper; lowerChest = lower; }
     }
 
     private static void disconnectedGuiWithNoPlayer() {

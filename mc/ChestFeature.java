@@ -128,6 +128,9 @@ public final class ChestFeature {
     private static float espOpacity = 0.85F;
     /** Chest ESP：颜色索引（见 {@link #ESP_COLORS}）。 */
     private static int espColor = 0;
+    private static boolean espFullColor;
+    private static Object espWorld;
+    private static final java.util.Set<String> openedChests = new java.util.HashSet<String>();
     /** Chest ESP：是否同时标记漏斗 / 熔炉 / 发射器等机器容器。 */
     private static boolean espStorageBlocks = true;
 
@@ -296,6 +299,7 @@ public final class ChestFeature {
         espThickness = clamp(readFloat(values, "chest.esp.thickness", 1.5F), 0.5F, 4.0F);
         espOpacity = clamp(readFloat(values, "chest.esp.opacity", 0.85F), 0.15F, 1.0F);
         espColor = clamp(readInt(values, "chest.esp.color", 0), 0, ESP_COLORS.length - 1);
+        espFullColor = readBoolean(values, "chest.esp.fullColor", false);
         espStorageBlocks = readBoolean(values, "chest.esp.storageBlocks", true);
         takeFilter = clamp(readInt(values, "chest.stealer.takeFilter", 0), 0, 2);
         storeFilter = clamp(readInt(values, "chest.stealer.storeFilter", 1), 0, 2);
@@ -354,6 +358,7 @@ public final class ChestFeature {
                     + "\nchest.esp.thickness=" + espThickness
                     + "\nchest.esp.opacity=" + espOpacity
                     + "\nchest.esp.color=" + espColor
+                    + "\nchest.esp.fullColor=" + espFullColor
                     + "\nchest.esp.storageBlocks=" + espStorageBlocks
                     + "\nchest.stealer.takeFilter=" + takeFilter
                     + "\nchest.stealer.storeFilter=" + storeFilter
@@ -429,6 +434,12 @@ public final class ChestFeature {
 
     public static int getEspColor() {
         return espColor;
+    }
+
+    public static boolean isEspFullColor() { return espFullColor; }
+    public static void setEspFullColor(boolean value) {
+        espFullColor = value;
+        markDirty();
     }
 
     public static void setEspColor(int value) {
@@ -896,6 +907,12 @@ public final class ChestFeature {
             return;
         }
         clientTicks++;
+        updateEspWorld(read(mc, "theWorld", "field_71441_e", null));
+        try {
+            refreshSettings();
+        } catch (Throwable ignored) {
+            // Keep settings I/O failures out of the tick loop.
+        }
         if (!isStealerEnabled()) {
             // 模块被关掉时，开着的容器要替玩家关掉，不能把服务端容器挂在那里。
             if (chestSession) {
@@ -903,11 +920,6 @@ public final class ChestFeature {
             }
             resetSession();
             return;
-        }
-        try {
-            refreshSettings();
-        } catch (Throwable ignored) {
-            // 设置读写出错不能影响游戏循环。
         }
         try {
             pollActionKeys();
@@ -1081,6 +1093,13 @@ public final class ChestFeature {
     public static void onGuiOpen(GuiOpenEvent event) {
         if (event == null || event.gui == null) {
             return;
+        }
+        if (!event.isCanceled()) {
+            try {
+                trackOpenedChest(Minecraft.getMinecraft(), event.gui);
+            } catch (Throwable ignored) {
+                // Optional ESP bookkeeping must not interfere with opening the container.
+            }
         }
         if (!isStealerEnabled()) {
             openArmed = false;
@@ -2687,7 +2706,51 @@ public final class ChestFeature {
     // 存储方块 ESP
     // ==================================================================
 
-    /** 世界渲染（RenderWorldLastEvent）：穿墙线框。 */
+    private static void updateEspWorld(Object world) {
+        if (world != espWorld) {
+            espWorld = world;
+            openedChests.clear();
+        }
+    }
+
+    private static String chestKey(int[] pos) {
+        return pos[0] + ":" + pos[1] + ":" + pos[2];
+    }
+
+    private static boolean markOpenedInventory(Object inventory, int depth) {
+        if (inventory == null || depth > 2) return false;
+        int[] pos = positionOf(inventory);
+        if (pos != null && kindOf(inventory) >= 0) {
+            openedChests.add(chestKey(pos));
+            return true;
+        }
+        // InventoryLargeChest wraps both halves; mark each tile, including the second half.
+        boolean found = false;
+        for (String[] names : new String[][] {{"upperChest", "field_70477_b"}, {"lowerChest", "field_70478_c"}}) {
+            found |= markOpenedInventory(read(inventory, names[0], names[1], null), depth + 1);
+        }
+        return found;
+    }
+
+    private static void trackOpenedChest(Minecraft mc, Object gui) {
+        if (mc == null) return;
+        Object world = read(mc, "theWorld", "field_71441_e", null);
+        updateEspWorld(world);
+        if (world == null) return;
+        Object inventory = chestInventoryOf(gui);
+        if (inventory == null) return;
+        if (markOpenedInventory(inventory, 0)) return;
+        // Ender chest inventories have no position; resolve the block being opened.
+        Object hit = read(mc, "objectMouseOver", "field_71476_x", null);
+        Object blockPos = call(hit, "getBlockPos", "func_178782_a", null);
+        if (blockPos == null) blockPos = read(hit, "blockPos", "field_178783_e", null);
+        Object tile = tileEntityAt(world, blockPos);
+        int kind = kindOf(tile);
+        int[] pos = positionOf(tile);
+        if (pos != null && (kind == KIND_CHEST || kind == KIND_ENDER)) openedChests.add(chestKey(pos));
+    }
+
+    /** World-space wireframes or blue translucent fills for unopened storage. */
     public static void onRenderWorld(RenderWorldLastEvent event) {
         if (espFailed || !isEspEnabled()) {
             return;
@@ -2702,6 +2765,7 @@ public final class ChestFeature {
             if (world == null || player == null) {
                 return;
             }
+            updateEspWorld(world);
             List<?> tiles = worldTileEntities(world);
             if (tiles == null || tiles.isEmpty()) {
                 return;
@@ -2729,7 +2793,7 @@ public final class ChestFeature {
             GL11.glLineWidth(espThickness);
             GlColor.set(rgb[0], rgb[1], rgb[2], espOpacity);
 
-            GL11.glBegin(GL11.GL_LINES);
+            if (!espFullColor) GL11.glBegin(GL11.GL_LINES);
             for (int i = 0; i < tiles.size(); i++) {
                 Object tile = tiles.get(i);
                 if (tile == null) {
@@ -2743,16 +2807,29 @@ public final class ChestFeature {
                 if (pos == null) {
                     continue;
                 }
+                if ((kind == KIND_CHEST || kind == KIND_ENDER)
+                        && (number(tile, "lidAngle", "field_145989_m") > 0
+                        || number(tile, "numPlayersUsing", "field_145987_o") > 0)) {
+                    openedChests.add(chestKey(pos));
+                }
                 double dx = pos[0] + 0.5D - playerX;
                 double dy = pos[1] + 0.5D - playerY;
                 double dz = pos[2] + 0.5D - playerZ;
                 if (dx * dx + dy * dy + dz * dz > rangeSq) {
                     continue;
                 }
-                boxLines(pos[0] - cameraX, pos[1] - cameraY, pos[2] - cameraZ,
-                        pos[0] + 1 - cameraX, pos[1] + 1 - cameraY, pos[2] + 1 - cameraZ);
+                if (espFullColor) {
+                    if (openedChests.contains(chestKey(pos))) continue;
+                    double inset = kind == KIND_CHEST || kind == KIND_ENDER ? 0.0625D : 0;
+                    FilledBox.draw(pos[0] + inset - cameraX, pos[1] - cameraY, pos[2] + inset - cameraZ,
+                            pos[0] + 1 - inset - cameraX, pos[1] + 1 - inset - cameraY,
+                            pos[2] + 1 - inset - cameraZ, 0.08F, 0.48F, 1.0F, espOpacity * 0.45F, true);
+                } else {
+                    boxLines(pos[0] - cameraX, pos[1] - cameraY, pos[2] - cameraZ,
+                            pos[0] + 1 - cameraX, pos[1] + 1 - cameraY, pos[2] + 1 - cameraZ);
+                }
             }
-            GL11.glEnd();
+            if (!espFullColor) GL11.glEnd();
 
             GL11.glPopAttrib();
             GlColor.restore();

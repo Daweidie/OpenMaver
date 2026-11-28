@@ -498,6 +498,9 @@ public final class OpenMaverClientHandler {
             OpenMaverFeatures.onRender(event);
             ScaffoldFeature.onRenderWorld(event);
             ChestFeature.onRenderWorld(event);
+            Object tagPartial = OpenMaverFeatures.read(event, "partialTicks", "partialTicks", Float.class);
+            NameTagFeature.onRenderWorld(Minecraft.getMinecraft(),
+                    tagPartial instanceof Number ? ((Number) tagPartial).floatValue() : 1.0F);
             ProjectileFeature.onRenderWorld(event);
             ModuleManager.onRender();
             if (!motionBlurFailed) {

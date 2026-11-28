@@ -160,6 +160,12 @@ mc/*.java --javac(对 MCP API)--> mc-classes --McpReobf(MCP->SRG)--> mc-classes-
 > 用 PrismLauncher 的 vanilla 实例直接实现不了——`mc/` 的事件（`TickEvent`、`RenderGameOverlayEvent` 等）
 > 全部来自 Forge，必须先给该实例装上 Forge。
 
+连接队列修复：1.8.9 的 `NetworkManager.flushOutboundQueue` 原先使用读锁，连接线程与
+客户端线程同时刷新时可能在取包后得到空值，触发 `InboundHandlerTuplePacketListener.access$100`
+空指针异常。现在刷新全程使用同一把锁的写锁，保留原包、监听器和异常释放路径；Mod 启动和
+运行期注入均自动安装。构建后运行 `python3 tools/network-test/run.py`，使用本机 Prism 的真实
+1.8.9 字节码复现旧异常，验证并发包序、MCP/SRG/混淆名及 JVMTI 重转换。
+
 ### 4) 把 jar 发给别人时：为什么「我这里能跑，他装上什么都不工作」
 
 平台能力（B2.2.0）：
@@ -982,6 +988,8 @@ IO 失败只记录一次并自动停用 debug。
 
 - 配置路径 `player.inventorymanager`，默认关闭、无默认热键；参数在 ClickGUI 的
   **Player** 分类里展开，写入 `config/openmaver-inventory.properties`（`inventory.*`）。
+- `ONLY INVENTORY`（`inventory.onlyInventoryOpen`，默认关闭）：开启后仅在打开玩家背包
+  界面时执行穿甲、排序和丢弃，关闭背包立即暂停。
 - 实现分三层，只有最外层碰 MC：
   | 文件 | 职责 |
   |---|---|
@@ -1016,7 +1024,8 @@ IO 失败只记录一次并自动停用 debug。
   - 合并物品时同时比较 NBT，避免把外观相同、服务端数据不同的物品当作同一摞。
   - 只在 `openContainer == inventoryContainer`（窗口号 0）时动手；开着箱子 / 漏斗 /
     创造物品栏时完全不碰，那段时间交给 Chest Stealer。背包界面开着时点的是同一个窗口；
-    界面关掉时服务端的 `openContainer` 仍是背包，所以两种情况都会自动整理。
+    界面关掉时服务端的 `openContainer` 仍是背包，默认两种情况都会自动整理；
+    开启 `ONLY INVENTORY` 后只在背包界面打开时整理。
   - 光标上还拿着东西（玩家正在拖）时不动手，等玩家放完。
   - 聊天 / 设置 / 其它界面里不偷偷点格子。
   - 同一动作连续 8 次没生效（服务端拒绝、窗口错位）就停 1 秒再来，避免刷包。
