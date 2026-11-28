@@ -66,7 +66,7 @@ public final class KeepSprintFeature {
     private static boolean warned;
     private static Object rotationPlayer;
     private static float cameraYaw, previousCameraYaw, writtenYaw;
-    private static boolean rotationDirty, rotatedThisTick;
+    private static boolean rotationDirty, rotatedThisTick, placementThisTick;
     private static Object armedPlayer;
     private static long armedNanos;
     /** 最后由 KeepSprint 启动疾跑的玩家，用于暂停时释放自己的疾跑状态。 */
@@ -108,6 +108,7 @@ public final class KeepSprintFeature {
     /** 关闭 / 切世界 / 批量停用时清掉每 tick 记号。 */
     public static void reset() {
         restoreCameraView();
+        KeepSprintPlacement.reset();
         setOwnBoost(armedPlayer, false);
         armedPlayer = null;
         sprintPlayer = null;
@@ -184,9 +185,11 @@ public final class KeepSprintFeature {
     public static void onPlayerTickStart(Minecraft mc, Object player) {
         // END 缺失、切世界或配置切换时也归还上一份相机状态。
         restoreCameraView();
+        KeepSprintPlacement.onPlayerTickStart(mc, player);
         if (armedPlayer != player) setOwnBoost(armedPlayer, false);
         armedPlayer = null;
         rotatedThisTick = false;
+        placementThisTick = false;
         if (!enabled() || sprintPlayer != player) sprintPlayer = null;
         if (pauseForNormalScaffold(player)) return;
         if (rotate) {
@@ -258,7 +261,7 @@ public final class KeepSprintFeature {
             }
             attackPending = false;
             if (!enabled()) status = "OFF";
-            else if (active) status = "SILENT";
+            else if (active) status = placementThisTick ? KeepSprintPlacement.getStatus() : "SILENT";
             // C03 尚未发送，此处保留 yaw，ClientTick END 才恢复。
             return;
         }
@@ -357,7 +360,7 @@ public final class KeepSprintFeature {
     }
 
     /** 这些模块拥有自己的 aim / 输入，不与其争用 yaw 或强制 sprint。 */
-    private static boolean rotationBusy() {
+    static boolean rotationBusy() {
         String[] owners = {"Scaffold", "Scaffold2", "Telly", "GodBridge", "KillAura"};
         for (String name : owners) {
             Module module = ModuleManager.getModule(name);
@@ -394,15 +397,16 @@ public final class KeepSprintFeature {
             status = "YIELD VELOCITY";
             return;
         }
-        // ROTATE 遵守原版的缩放/停止条件，不用自定义 modifier 强行续跑。
-        if (input.sneak || !canSprint(player)) return;
         float forward = input.moveForward;
         float strafe = input.moveStrafe;
-        if (!Float.isFinite(forward) || !Float.isFinite(strafe)
-                || Math.max(Math.abs(forward), Math.abs(strafe)) < 0.8F) return;
+        if (!Float.isFinite(forward) || !Float.isFinite(strafe)) return;
         float viewYaw = (float) OpenMaverFeatures.number(player, "rotationYaw", "field_70177_z");
         if (!Float.isFinite(viewYaw)) return;
-        float aimYaw = movementYaw(viewYaw, forward, strafe);
+        boolean sprintAllowed = !input.sneak && canSprint(player);
+        Float placementYaw = KeepSprintPlacement.movementYaw(viewYaw, forward, strafe, sprintAllowed);
+        if (placementYaw == null && (!sprintAllowed
+                || Math.max(Math.abs(forward), Math.abs(strafe)) < 0.8F)) return;
+        float aimYaw = placementYaw == null ? movementYaw(viewYaw, forward, strafe) : placementYaw;
         previousCameraYaw = (float) OpenMaverFeatures.number(player, "prevRotationYaw", "field_70126_B");
         cameraYaw = viewYaw;
         writtenYaw = aimYaw;
@@ -410,14 +414,25 @@ public final class KeepSprintFeature {
         OpenMaverFeatures.setNumber(player, "rotationYaw", "field_70177_z", aimYaw);
         rotationDirty = true;
         rotatedThisTick = true;
-        input.moveForward = 1.0F;
-        input.moveStrafe = 0.0F;
+        placementThisTick = placementYaw != null;
+        if (placementThisTick) KeepSprintPlacement.remapInput(input, viewYaw, aimYaw);
+        else {
+            input.moveForward = 1.0F;
+            input.moveStrafe = 0.0F;
+        }
+        KeepSprintPlacement.recordRotation(mc, player, aimYaw - viewYaw);
         // 在原版 sprint 检查 / jump / moveFlying 之前启动，首 tick 不借 END 补速度。
-        OpenMaverFeatures.callVoid(player, "setSprinting", "func_70031_b", null, Boolean.TRUE);
-        sprintPlayer = player;
+        boolean sprint = sprintAllowed && input.moveForward >= 0.8F;
+        OpenMaverFeatures.callVoid(player, "setSprinting", "func_70031_b", null, Boolean.valueOf(sprint));
+        sprintPlayer = sprint ? player : null;
     }
 
     public static void onTickEnd(Minecraft mc) {
+        Object currentPlayer = OpenMaverFeatures.read(mc, "thePlayer", "field_71439_g", null);
+        float currentYaw = (float) OpenMaverFeatures.number(currentPlayer, "rotationYaw", "field_70177_z");
+        float viewYaw = rotationDirty && rotationPlayer == currentPlayer
+                ? cameraYaw + OpenMaverFeatures.wrapDegrees(currentYaw - writtenYaw) : currentYaw;
+        KeepSprintPlacement.onTickEnd(mc, viewYaw);
         restoreCameraView();
         armedPlayer = null;
         if (!enabled()) { active = false; status = "OFF"; attackPending = false; sprintPlayer = null; }

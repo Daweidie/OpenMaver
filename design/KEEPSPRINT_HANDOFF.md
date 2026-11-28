@@ -23,6 +23,42 @@
 留下的镜头。模块在输入与 C03 之间被禁用时仍保留本 tick 物理用的 yaw，ClientTick END
 归还镜头。hook 后的相对 yaw 增量在恢复时保留。
 
+## 手动放置 / FastPlace 交接
+
+`KeepSprintPlacement` 协调原版手动方块右键与移动旋转，独立于 FastPlace 开关。
+`FastPlaceTransformer` 在 `Minecraft.rightClickMouse()` 的首条指令前检查交接；
+未对齐时整次调用延后，冷却、挥手和交互包均由后续获准的原版调用执行。
+FastPlace 的 0–5 tick 冷却设置保持原意。
+
+收到右键请求或检测到实际 use-item 绑定按住时，以每 tick 20° 的偏移步长回到
+相机朝向。offset 保留原始数值，最终精确回到 0；直接 wrap offset 或停在等价的
+±360° 会在原版接回 idle yaw 时制造跳变。正常 KeepSprint 后退的初始差为 180°，
+第一下放置最多等待约 9 个移动 tick（20 TPS 下约 450 ms）。鼠标本身的移动量仍保留。
+原版最后上报的 `lastReportedYaw` 用于初始化拥有者切换和确认原生移动边界。
+
+交接期间把按键映射到最接近目标世界方向的八方向离散输入，单步方向误差最多
+22.5°，不写 motion、不构造 C03、不使用模拟器难以重现的连续模拟输入。
+冲刺仅在原版条件允许且映射后的 forward >= 0.8 时启动；完全对齐相机后，
+后退与纯侧移放置采用原版步行，前进放置仍可疾跑。
+
+ClientTick END 在原版移动包之后发布就绪，再恢复相机。按住 use-item 期间保持
+相机朝向，最后请求后另保留两个移动 tick，然后平滑返回移动 yaw；恢复后再次使用
+原有 KeepSprint 逻辑。在返回中停下也先走到精确相机 yaw，再交回原版 idle 路径。
+不改变正常 KeepSprint 在没有放置交接时的方向切换策略。
+
+被延后的短按在就绪后的 ClientTick START 重试一次，先调用原版 `getMouseOver(1)`
+刷新目标，再调用原版右键；按住或仍有排队的 KeyBinding press 时交由原版分派，
+避免额外点击。不硬编码鼠标右键，因此重绑定到键盘也沿用同一状态。
+玩家/世界、槽位或 ItemStack 身份变化、GUI、失焦、死亡、模块关闭和实际输入/旋转
+拥有者接管时取消待重试点击。专用搭路模块仍持有自己的旋转与放置。
+
+回归入口 `bash tools/keepsprint-fastplace-audit/run.sh` 执行最终 SRG jar 的真实回调，
+覆盖 0–5t、八方向、七组多圈镜头 yaw、原版 look 历史、放置前后 ray/AABB、
+短按目标刷新、队列去重、取消边界、原版冷却和停止移动时的连续朝向。
+`python3 tools/fastplace-transform-test/run.py` 则执行真实变换后的方法，检查门禁
+在所有原版副作用之前，并验证已有冷却 hook 的升级与 JVMTI 重复安装。
+这些是本地回调/几何/字节码验证；Grim / Intave 服务器端结果仍待实测。
+
 ## 让位与设置
 
 ROTATE 始终在潜行、使用物品、水平撞墙、饱食度不满足原版条件、失明、骑乘、飞行、

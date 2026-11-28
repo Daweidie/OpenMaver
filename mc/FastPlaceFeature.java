@@ -10,8 +10,9 @@ public final class FastPlaceFeature {
 
     private FastPlaceFeature() { }
 
-    /** START only updates the HUD; it never clicks or changes the remaining cooldown. */
+    /** START retries an aligned KeepSprint tap, then updates the cooldown HUD. */
     public static void onTickStart(Minecraft mc) {
+        KeepSprintPlacement.onClientTickStart(mc);
         String pause = pauseReason(mc);
         status = pause == null ? OpenMaverFeatures.getFastPlaceDelayTicks() + "t" : pause;
     }

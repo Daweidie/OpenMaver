@@ -33,7 +33,7 @@ public final class FastPlaceTransformTest implements Opcodes {
     private static void analyze(byte[] bytes) throws Exception {
         ClassNode type = new ClassNode();
         new ClassReader(bytes).accept(type, 0);
-        int hooks = 0;
+        int hooks = 0, guards = 0;
         for (Object entry : type.methods) {
             MethodNode method = (MethodNode) entry;
             if ((method.access & (ACC_ABSTRACT | ACC_NATIVE)) == 0) {
@@ -42,6 +42,15 @@ public final class FastPlaceTransformTest implements Opcodes {
             for (AbstractInsnNode insn = method.instructions.getFirst(); insn != null; insn = insn.getNext()) {
                 if (!(insn instanceof MethodInsnNode)) continue;
                 MethodInsnNode call = (MethodInsnNode) insn;
+                if ("KeepSprintPlacement".equals(call.owner) && "allowRightClick".equals(call.name)) {
+                    guards++;
+                    check(insn.getPrevious().getOpcode() == ALOAD, "entry guard receives this client");
+                    check(insn.getNext().getOpcode() == IFNE && insn.getNext().getNext().getOpcode() == RETURN,
+                            "blocked entry returns before vanilla dispatch");
+                    AbstractInsnNode first = method.instructions.getFirst();
+                    while (first.getOpcode() < 0) first = first.getNext();
+                    check(first == insn.getPrevious(), "guard is the first executable operation");
+                }
                 if (!"FastPlaceFeature".equals(call.owner) || !"useCooldown".equals(call.name)) continue;
                 hooks++;
                 check(insn.getNext() instanceof FieldInsnNode && insn.getNext().getOpcode() == PUTFIELD,
@@ -51,6 +60,62 @@ public final class FastPlaceTransformTest implements Opcodes {
             }
         }
         check(hooks == 1, "exactly one cooldown hook");
+        check(guards == 1, "exactly one placement entry guard");
+    }
+
+    public static final class GuardPlayer extends FastPlaceTest.Player { public float rotationYaw; }
+
+    private static void exerciseGuard(Class<?> type) throws Exception {
+        module.Module sprint = ModuleManager.getModule("KeepSprint");
+        if (sprint == null) { sprint = new module.movement.KeepSprint(); ModuleManager.register(sprint); }
+        sprint.setEnabled(true);
+        try {
+            Object mc = type.newInstance();
+            GuardPlayer player = new GuardPlayer();
+            type.getField("thePlayer").set(mc, player);
+            type.getField("rightClickDelayTimer").setInt(mc, 3);
+            type.getField("observedCooldown").setInt(mc, 17);
+            KeepSprintPlacement.reset();
+            KeepSprintPlacement.recordRotation(mc, player, -180);
+            type.getMethod("rightClickMouse").invoke(mc);
+            check(type.getField("clicks").getInt(mc) == 0
+                    && type.getField("rightClickDelayTimer").getInt(mc) == 3
+                    && type.getField("observedCooldown").getInt(mc) == 17,
+                    "unaligned transformed entry leaves every vanilla side effect untouched");
+            float previous = -180;
+            for (int tick = 0; tick < 9; tick++) {
+                player.rotationYaw = KeepSprintPlacement.movementYaw(0, -1, 0, true);
+                check(Math.abs(player.rotationYaw - previous) <= 20.01F, "guard handoff preserves raw yaw continuity");
+                previous = player.rotationYaw;
+                KeepSprintPlacement.onTickEnd(mc, 0);
+            }
+            player.rotationYaw = 0;
+            OpenMaverFeatures.setFastPlaceDelayTicks(2);
+            type.getMethod("rightClickMouse").invoke(mc);
+            check(type.getField("clicks").getInt(mc) == 1 && type.getField("observedCooldown").getInt(mc) == 2,
+                    "aligned transformed entry dispatches vanilla exactly once with configured cooldown");
+        } finally { sprint.setEnabled(false); KeepSprintPlacement.reset(); }
+    }
+
+    /** Previous releases already installed the cooldown hook on hot-loaded Minecraft. */
+    private static byte[] legacyHook(byte[] raw) {
+        ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+        new ClassReader(raw).accept(new ClassVisitor(ASM5, writer) {
+            @Override public MethodVisitor visitMethod(int access, String n, String d, String s, String[] e) {
+                MethodVisitor out = super.visitMethod(access, n, d, s, e);
+                if (!"rightClickMouse".equals(n)) return out;
+                return new MethodVisitor(ASM5, out) {
+                    @Override public void visitFieldInsn(int op, String owner, String n, String d) {
+                        if (op == PUTFIELD && "rightClickDelayTimer".equals(n)) {
+                            super.visitVarInsn(ALOAD, 0);
+                            super.visitMethodInsn(INVOKESTATIC, "FastPlaceFeature", "useCooldown", "(ILjava/lang/Object;)I", false);
+                        }
+                        super.visitFieldInsn(op, owner, n, d);
+                    }
+                };
+            }
+        }, 0);
+        return writer.toByteArray();
     }
 
     private static final class Loader extends URLClassLoader {
@@ -170,12 +235,20 @@ public final class FastPlaceTransformTest implements Opcodes {
         byte[] fixtureRaw = read(FastPlaceTransformTest.class.getClassLoader().getResourceAsStream(fixture + ".class"));
         byte[] fixtureChanged = transformer.transform(fixture, MINECRAFT, fixtureRaw); analyze(fixtureChanged);
         changed = new HashMap<String, byte[]>(); changed.put(fixture, fixtureChanged);
-        try (Loader loader = new Loader(new URL[0], changed)) { exercise(loader.loadClass(fixture), module); }
+        try (Loader loader = new Loader(new URL[0], changed)) {
+            Class<?> type = loader.loadClass(fixture); exercise(type, module); exerciseGuard(type);
+        }
+        byte[] upgraded = transformer.transform(fixture, MINECRAFT, legacyHook(fixtureRaw));
+        analyze(upgraded);
+        check(Arrays.equals(upgraded, transformer.transform(fixture, MINECRAFT, upgraded)), "legacy cooldown-only upgrade is idempotent");
+        changed = new HashMap<String, byte[]>(); changed.put(fixture, upgraded);
+        try (Loader loader = new Loader(new URL[0], changed)) { exerciseGuard(loader.loadClass(fixture)); }
         changed = new HashMap<String, byte[]>(); changed.put(fixture, fixtureRaw);
         try (Loader loader = new Loader(new URL[0], changed)) {
             Class<?> target = loader.loadClass(fixture);
             check(install(transformer, new Class<?>[] {target}, new String[] {MINECRAFT}), "JVMTI installs executing fixture");
             exercise(target, module);
+            exerciseGuard(target);
         }
         module.setEnabled(false); Files.deleteIfExists(settings);
         System.out.println("[fastplace-transform] " + checks + " checks passed");
