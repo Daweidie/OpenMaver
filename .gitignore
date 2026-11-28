@@ -12,6 +12,10 @@
 # 运行期日志
 /logs/
 
+# 本地账号凭据（不参与配置分享）
+/config/openmaver-accounts.json
+/config/.openmaver-accounts-*.tmp
+
 # 编辑器
 .vscode/
 .idea/

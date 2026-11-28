@@ -39,7 +39,7 @@ OpenMaver/
 │       ├── movement/GodBridge.java # 神桥/蹲起搭路开关（MC 侧逻辑在 mc/GodBridgeFeature）
 │       ├── movement/SafeWalk.java # 方块边缘潜行开关（MC 侧逻辑在 mc/SafeWalkFeature）
 │       ├── movement/AttackReduce.java # 防击退开关（MC 侧逻辑在 AttackReduceFeature）
-│       ├── player/FastPlace.java  # 快速右键开关（MC 侧逻辑在 OpenMaverFeatures）
+│       ├── player/FastPlace.java  # 快速右键开关（MC 侧冷却钩子在 FastPlaceFeature）
 │       ├── player/ChestStealer.java # 开箱搬运 / 整理 / 存入开关（MC 侧逻辑在 mc/ChestFeature）
 │       ├── player/InventoryManager.java # 自动整理背包 / 穿盔甲 / 丢多余开关（MC 侧在 mc/InventoryManagerFeature）
 │       ├── render/ChestEsp.java   # 箱子透视开关（MC 侧绘制在 mc/ChestFeature）
@@ -330,9 +330,13 @@ java -Djava.library.path=build/lib \
 - **Maver 主菜单** `mc/GuiMaverMainMenu.java`：替换原版标题界面（`GuiOpenEvent`），
   默认使用清晰的原版旋转全景图，中央展示白色 Maver 字标，以及三行半透明圆角按钮
   **Singleplayer / Multiplayer / Settings**。背景和按钮均不使用模糊。
-  左上角展示当前账号头像与用户名，旁边的 **+** 打开 ClickGUI；
+  左上角展示当前账号头像与用户名，旁边的 **+ / Add account** 自动打开浏览器登录微软账号；
+  点击头像或用户名可管理已保存的正版账号，支持刷新登录、切换和移除。
   右上角依次为 **Fullscreen / Wallpaper / Quit Game**，悬停显示入口名称。
   头像从微软 / Mojang 官方服务异步获取，支持旧版 64×32 皮肤，失败时展示 Steve。
+  兼容 **In-Game Account Switcher** 等通过 Forge 添加主菜单按钮的模组：保留原版主菜单
+  类型，绘制模组按钮并通过 Forge 标准事件处理点击；IAS 入口位置沿用其自身配置。
+  主菜单兼容回归测试：`bash tools/mainmenu-test/run.sh`（先完成构建）。
   背景可以替换成静态图片、动态 GIF 或 MP4 等视频，详见下面「主菜单壁纸」。
 - **游戏内 ClickGUI** `mc/GuiOpenMaverClickGui.java`：游戏内按 **RSHIFT** 开关（默认键位，可在
   Config 面板右上角齿轮展开设置，在 **GUI key** 行点一下切换：RSHIFT / LSHIFT / RCTRL / RALT / NUM ENTER /
@@ -341,10 +345,11 @@ java -Djava.library.path=build/lib \
   仅保留可拖动的列式界面：Combat / Movement / Render / Player / Misc，
   以及独立的 **Config / Personalization** 浮动面板；旧版侧栏界面与 Client 列已移除。
   Personalization 收纳 Wallpaper、Color、Text 与 Taunt 设置；主题色会同步更新 ClickGUI 高亮和 Config 控件，HUD 上方闪烁文字也可自定义。
+  **Color → Rainbow** 可开启右上角功能名的动态彩虹渐变，默认关闭，随配置保存；功能栏文字略小于原版字号。
   拖动标题栏移动面板，点击或右键标题栏折叠，位置与折叠状态在本次游戏会话内保留。
   左键模块切换开关、右键展开滑块 / 选项 / 复选框；底部搜索支持直接输入与 `Ctrl+K`。
-  Velocity 左键或右键打开独立参数子面板，在面板顶部切换启用状态和选择模式；模式使用可滚动下拉列表，
-  参数区单独滚动，按 `Esc`、点击关闭按钮或面板外返回，展开下拉列表时 `Esc` 先收起列表。
+  Velocity 左键切换开关、右键在 Movement 列内展开参数；列宽按当前可见配置的文字平滑加宽，
+  完整显示标签与数值，收起后平滑恢复。模式及选项左键向后切换、右键向前切换。
   所有面板都在内容溢出时单独滚动，主菜单与游戏画面均不使用整屏模糊。模块列表来自
   `ModuleManager`，Aim Assist、Player ESP、Bypass、AutoSprint、AutoClicker、Reach、
   Criticals、FastPlace、Target HUD 与 Player X-Ray 的设置直接绑定 `OpenMaverFeatures`，参数写入
@@ -442,6 +447,39 @@ if (!worldEntered) {
 > 说明：HUD / ClickGUI 依赖 `net.minecraft.*`，由 Forge 的类加载器加载。
 > 除了随 mod 加载，**纯运行期注入**也能显示（见下面「注入也能显示 UI」一节）。
 
+### 微软正版账号登录
+
+主菜单左上角 **+ / Add account** 会自动打开系统浏览器。完成微软授权后，Maver 验证 Xbox Live、
+XSTS、Minecraft Java 角色，再切换当前游戏会话并刷新主菜单头像和用户名。授权失败、取消或
+关闭账号页不会切换账号。无法自动打开浏览器时，可以点击 **Open browser / Copy link**。
+点击主菜单头像或用户名打开账号列表，**Login** 刷新凭据并切换账号，**Remove** 移除本地保存记录。
+切换仅允许在退出世界后进行；移除保存记录不会注销当前游戏会话，也不会撤销微软端授权。
+
+与 [HMCL 的 OAuth 实现](https://github.com/HMCL-dev/HMCL/blob/main/HMCLCore/src/main/java/org/jackhuang/hmcl/auth/OAuth.java)
+及 [OAuthServer](https://github.com/HMCL-dev/HMCL/blob/main/HMCL/src/main/java/org/jackhuang/hmcl/game/OAuthServer.java)
+一样，**发行者需要提供自己的微软公开应用 Client ID**。仓库不预置其他启动器的应用身份，
+没有配置 ID 时会显示明确提示。应用应支持个人微软账号、桌面公共客户端和
+`http://localhost` 回调（端口由本地监听器动态选择），并具备 Xbox Live / Minecraft Services 所需的使用资格。
+不需要 Client Secret，用户密码只在微软网页输入。
+
+发行时可把公开 ID 打进 jar：
+
+```bash
+cmake -S . -B build -DOPENMAVER_MICROSOFT_CLIENT_ID=你的应用ID
+cmake --build build --target openmaver_mod -j 2
+```
+
+本地使用也可创建 `config/openmaver-auth.properties`，写入 `clientId=你的应用ID`。
+覆盖优先级为 JVM 参数 `-Dopenmaver.microsoft.clientId=...`、环境变量
+`OPENMAVER_MICROSOFT_CLIENT_ID`、上述文件、jar 内置 ID。已保存账号使用当时授权的 ID 刷新。
+
+账号独立保存在 `config/openmaver-accounts.json`，只存角色资料、公开 Client ID 和微软刷新令牌，
+不保存密码或 Minecraft 访问令牌，也不写入 Config 导出的 `.cfg`。文件未加密；POSIX 平台限制为
+当前用户读写（0600），写入采用临时文件与原子替换。不要分享此文件；路径可通过
+`-Dopenmaver.accounts=/path/to/accounts.json` 覆盖。
+
+登录回归测试使用模拟官方服务与本机回调，不需要真实账号：`bash tools/account-test/run.sh`。
+
 ### Config 面板：配置档案（保存 / 导入）
 
 ClickGUI 的独立 **Config** 浮动面板管理配置档案，对应 `mc/ConfigProfiles.java`。
@@ -503,9 +541,9 @@ Intave 专用 MoveDisabler 目前实现了玩家背包（window 0）的惯性帧
 
 | profile | Reach 实际上限 | Aim 单 tick 上限 | AutoClicker / KillAura | FastPlace | Placement rotation |
 |---|---|---|---|---|---|
-| `legit` | 0~5.00；GRIM CAP 开启时 ≤3.00 | yaw 18° / pitch 12° | 使用配置 CPS（1~20），抖动+停顿 | 完全不改 `rightClickDelayTimer` | 仅真实准星 |
-| `balanced`（默认） | 0~5.00；GRIM CAP 开启时 ≤3.00 | yaw 35° / pitch 20° | 使用配置 CPS（1~20），抖动+停顿 | 最快 2 tick + 2/3 抖动 | Scaffold 直接走 onPlayerRightClick |
-| `aggressive` | 0~5.00；GRIM CAP 开启时 ≤3.00 | 上限放宽 | 使用配置 CPS（1~20） | 完全按 DELAY，允许压到 0 | 同左（Scaffold 始终直接发包） |
+| `legit` | 0~5.00；GRIM CAP 开启时 ≤3.00 | yaw 18° / pitch 12° | 使用配置 CPS（1~20），抖动+停顿 | 使用独立 TICK（0–5t） | 仅真实准星 |
+| `balanced`（默认） | 0~5.00；GRIM CAP 开启时 ≤3.00 | yaw 35° / pitch 20° | 使用配置 CPS（1~20），抖动+停顿 | 使用独立 TICK（0–5t） | Scaffold 直接走 onPlayerRightClick |
+| `aggressive` | 0~5.00；GRIM CAP 开启时 ≤3.00 | 上限放宽 | 使用配置 CPS（1~20） | 使用独立 TICK（0–5t） | 同左（Scaffold 始终直接发包） |
 
 > Reach 独立使用 `reach.distance`（0~5 米）与 `reach.grimCheck`（默认 false），
 > 包括 `bypass.enabled=false` 时也执行独立距离校验。KillAura 保留其原有 profile 距离上限。
@@ -703,7 +741,7 @@ IO 失败只记录一次并自动停用 debug。
 ### Velocity 防击退
 
 - Velocity 保留 `JumpReset`（新配置默认）、`NoXZ`、`Mix`，并新增来源于 `../OpenAugustus-Maver` 字节码的 17 个模式：Basic、Legit、PushGround、Push、Intave/PolarFlag、Intave、Intave13、Reverse、Spoof、SafeWalk、OldMinemen、Karhu、CustomMotion、BoundingBox、Grim-1.17、HypixelTest、PolarBlock。ClickGUI/HUD 仍显示 `Velocity`，开关与热键保留 `movement.attackreduce`。
-- 点击 **Movement → Velocity** 打开参数子面板，顶部 **Enabled / Disabled** 控制模块开关，**Mode** 下拉列表直接选择模式。模式栏固定在顶部，参数按模式及子选项显示并单独滚动，切换模式时回到参数顶部；关闭面板与拖动结束时保存设置。
+- **Movement → Velocity** 左键控制模块开关、右键展开列内参数；Movement 列平滑加宽至能完整显示当前配置文字，收起时恢复。**Mode** 左键向后切换、右键向前切换，参数按模式及子选项显示，超出窗口时在列内滚动；调整选项、拖动结束及关闭界面时保存设置。
 - `NoXZ`：所有 S12 在主线程收到后立即应用，不额外延迟，也不缩放速度或缓存其他入站/出站包；不会因受击额外强制跳跃。地面有目标且疾跑时安排原版攻击，空中只保留最多 12 tick 的落地补刀意图。落地补刀使用当时速度，不重新施加旧 S12；无目标、超时、新击退、校正或退出环境会清理旧意图。Aura 目标优先，否则取准星生物，眼睛到可见目标 AABB 距离上限为 3.0，减速由原版伤害结果决定。
 - `JumpReset`：参考 `~/Downloads/script.lua` 的短按跳跃与 GUI 暂停思路；自己的正 Y 且带水平分量的 S12 立即应用，地面和空中受击都可触发。下一次有效输入短暂向前疾跑 2 tick：地面写入一次跳跃输入；空中保持原包 Y，在有效 Aura/准星目标上尝试一次原版疾跑攻击，水平减速只由原版伤害结果决定。没有有效目标时仅接管移动输入；攻击名额忙时最多等到下一输入 tick，不与 AutoClicker/Aura 同 tick 重复攻击。随后归还输入和模块开启的疾跑；不在空中调用 `jump()`，不缓存/改写/回放 S12，不伪造 onGround，不改写相机或 Timer。
 - JumpReset 参数：`Chance=100%`（每次有效受击触发概率）、`Accuracy=100%`（下一次输入准时响应概率；失准时仅输入延后 1–2 tick）、`Only When Targeting=false`（开启后需要 Aura 或准星可见生物，距离 ≤ 3.0）、`Water Check=true`（开启后水中跳过；关闭仅放开水中检查）。执行前重查条件；离地后仍可执行重置，尚未执行的空中意图在落地时取消，避免补跳。目标失效、GUI、潜行、使用物品、Scaffold/GodBridge、校正及退出同样取消旧意图，缺少输入回调时最多 3–5 tick 过期。
@@ -1067,32 +1105,19 @@ IO 失败只记录一次并自动停用 debug。
 ### FastPlace 快速右键
 
 - 配置路径：`player.fastplace`，默认关闭，默认键位 **F**。
-- 通过限制 `Minecraft.rightClickDelayTimer` 加快右键放置/使用物品；
-  关闭模块、打开 GUI、玩家死亡或切换到非方块物品时恢复原版延迟。
-- profile 行为：
-  - `legit`：完全不修改 `rightClickDelayTimer`。
-  - `balanced`（默认）：最快 **2 tick**（原版 4 tick 的一半），并在 2/3 tick 之间
-    抖动（`JITTER`），避免连续 C08 的间隔完全等长——等长序列正是 Matrix / Grim
-    `block.fastplace` 的判据。想回到原版速度把 `DELAY` 调成 `4` 即可。
-    与 Scaffold 同时启用时仍会让位（不修改 timer）。
-  - `aggressive` / 关闭 bypass：完全按 `DELAY` 设置，允许压到 0（每 tick 右键）。
-- 设置项（ClickGUI 中展开 FastPlace）：
-  - `DELAY`：`fastplace.delayTicks`，0~4 tick，默认 `1`（`balanced` 下实际生效为 2t）。
-    `DELAY` 语义就是「写进 `rightClickDelayTimer` 的值」：`0` 最快（几乎每 tick
-    右键），数值越大越接近原版 `4`（原版冷却）。
-  - `JITTER`：`fastplace.jitter`，默认 `true`，`balanced` 档下 2/2/2/3 tick 交替。
-  - `ONLY BLOCKS`：`fastplace.onlyBlocks`，默认 `true`，仅在手持方块时生效。
-- 右侧 HUD 显示实际状态：`0t` / `1t` / `2t` 等表示正在压低冷却，`VANILLA 4t`
-  表示原版速度，`LEGIT` / `SCAFFOLD` / `NO BLOCK` / `GUI` 表示暂停原因；
-  状态变化同时以 `[FastPlace] state=... jitter=...` 写入 `logs/openmaver.log`。
-- 修复记录（v21）：旧实现是 `limit = max(4, delayTicks)` 且默认 `delayTicks=4`，
-  于是默认档位下 FastPlace 永远停在原版 4 tick（HUD 一直 `VANILLA 4t`），
-  「开了等于没开」。同时 `fastPlaceFailed` 是进程级锁存，一次反射失败就要重启
-  客户端。现在默认档位真的会加速，失败锁存在关掉再开时自动复位。
-- 方块识别沿实际物品的继承链检查，兼容独立游戏类加载器；原始 1.8.9
-  混淆字段和方法与 Forge 映射对齐。回归验证：`bash tools/fastplace-test/run.sh`。
-- AutoClicker 的 `RIGHT CLICK` 在 `balanced/legit` 下也会等待这个原版冷却归零，
-  否则 10~20 CPS 的右键会以同样速度连续发 C08，单独触发 `block.fastplace`。
+- 参考上级 `LiquidBounce` 的冷却事件思路：只在原版 `rightClickMouse()` 设置冷却时，
+  将冷却值替换为所选 Tick。输入、射线检查、交互与放置均由原版处理。
+- ClickGUI 仅保留 **TICK**：`fastplace.delayTicks`，整数 **0–5t**，默认 **1t**。
+  `0t` 不添加冷却，连续按住时仍由游戏 tick 处理；`4t` 为原版冷却，`5t` 比原版更慢。
+  实际放置还取决于输入、命中与游戏状态，Tick 不是保证成功放置的次数。
+- 固定仅作用于手持方块；其他物品和持续使用物品保留原版冷却。GUI、失焦、死亡、无世界，
+  或 Scaffold / Telly / GodBridge / Scaffold2 启用时暂停；AutoClicker 的自动右键在生效时让位。
+- 所有 bypass profile 均使用所选 Tick。旧配置保留 `fastplace.delayTicks`，移除其他
+  `fastplace.*` 选项；旧版迁移也保留显式设置的 `4t` / `5t`。
+- 普通 mod 通过 coremod 安装单个冷却钩子；运行期注入通过 JVMTI 安装同一钩子。
+  HUD 显示所选 Tick 或暂停原因；注入钩子失败显示 `NO HOOK` 并保留原版冷却。
+- 回归验证：`bash tools/fastplace-test/run.sh`、`python3 tools/fastplace-transform-test/run.py`。
+  检测表现需结合具体服务端实测。
 
 ### Reach 攻击距离
 
@@ -1351,9 +1376,8 @@ Grim 的 `combat/Reach` 不是「你报多远就查多远」，它量的是另�
     `JUMP`（写入 `criticals.mode=jump`）。`balanced`（默认档）下即使选择 packet 模式也会
     被降级为真实起跳；`legit` 档完全跳过刀暴；只有 `aggressive` 会真正发送伪造移动包。
   - `STOP SPRINT`：默认 `true`，写入 `criticals.stopSprint`。
-  - v6 迁移：旧配置的 `criticals.mode=packet/ncp/...` 会迁移到 `jump`，同时
-    `fastplace.delayTicks` 提升到 `4`，避免升级后继续对着 Matrix 吃
-    `ka.critical.*` / `bp.timer` / `block.fastplace`。
+  - v6 迁移：旧配置的 `criticals.mode=packet/ncp/...` 会迁移到 `jump`。
+    FastPlace 的显式 Tick 设置独立保留。
 - Packet 序列（`x/y/z/yaw/pitch` 均取发送前的客户端真实值，不修改客户端 position）：
   - `ALWAYS`（LiquidBounce Legacy packet 序列）：`C04(x, y+0.0625, z, true)` ->
     `C04(x, y, z, false)`。不再限制 `player.onGround = true`，因此站在地面、

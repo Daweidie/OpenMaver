@@ -75,6 +75,7 @@ public final class McpReobf {
         m(SESSION, "getUsername", "func_111285_a");
         m(SESSION, "getProfile", "func_148256_e");
         m(SESSION, "getToken", "func_148254_d");
+        m("net/minecraft/client/renderer/texture/TextureManager", "deleteTexture", "func_147645_c");
         m(DPS, "getDefaultSkin", "func_177334_a");
         m(GS, "initGui", "func_73866_w_");
         m(GS, "drawScreen", "func_73863_a");
@@ -85,6 +86,7 @@ public final class McpReobf {
         m(GS, "mouseClicked", "func_73864_a");
         m(GS, "handleMouseInput", "func_146274_d");
         m(GS, "onGuiClosed", "func_146281_b");
+        m(BTN, "drawButton", "func_146112_a");
         m(GUI, "drawRect", "func_73734_a");
         m(GUI, "drawModalRectWithCustomSizedTexture", "func_146110_a");
         m(GUI, "drawCenteredString", "func_73732_a");
@@ -167,6 +169,12 @@ public final class McpReobf {
         f(GS, "mc", "field_146297_k");
         f(BTN, "id", "field_146127_k");
         f(BTN, "displayString", "field_146126_j");
+        f(BTN, "xPosition", "field_146128_h");
+        f(BTN, "yPosition", "field_146129_i");
+        f(BTN, "width", "field_146120_f");
+        f(BTN, "height", "field_146121_g");
+        f(BTN, "visible", "field_146125_m");
+        f(BTN, "enabled", "field_146124_l");
         f(WORLD, "loadedEntityList", "field_72996_f");
         f(ENTITY, "posX", "field_70165_t");
         f(ENTITY, "posY", "field_70163_u");
@@ -203,7 +211,9 @@ public final class McpReobf {
         SUPER.put("GuiOpenMaverClickGui", GS);
         SUPER.put("ScaffoldMovementInput", MIFO);
         SUPER.put(MIFO, MINPUT);
-        SUPER.put("GuiMaverMainMenu", GS);
+        SUPER.put("GuiMaverMainMenu", "net/minecraft/client/gui/GuiMainMenu");
+        SUPER.put("net/minecraft/client/gui/GuiMainMenu", GS);
+        SUPER.put("GuiMaverAccounts", GS);
         SUPER.put(GS, GUI);
         SUPER.put(GUI, "java/lang/Object");
         SUPER.put(LIVING, ENTITY);

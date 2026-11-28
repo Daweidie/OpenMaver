@@ -1,0 +1,2 @@
+# Public application identifier, not a secret. The distributor supplies its own registration.
+clientId=@OPENMAVER_MICROSOFT_CLIENT_ID@

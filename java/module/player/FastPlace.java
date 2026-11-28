@@ -7,8 +7,8 @@ import util.Logger;
  * FastPlace 模块开关。
  *
  * <p>本类位于 core，core 在运行期注入模式下可能由 bootstrap 类加载器加载，
- * 看不到 {@code net.minecraft.*}，因此这里只保存开关状态；真正的右键延迟逻辑在
- * MC 侧的 {@code OpenMaverFeatures.updateFastPlace()} 里执行。
+ * 看不到 {@code net.minecraft.*}，因此这里只保存开关状态；MC 侧的
+ * {@code FastPlaceFeature.useCooldown()} 修改原版右键冷却，由原版处理输入与放置。
  *
  * <p>配置路径由基类按包名约定推导：{@code module.player.FastPlace -> "player.fastplace"}，
  * 对应 default.jsonc 中的：

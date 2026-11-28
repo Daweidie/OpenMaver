@@ -58,13 +58,12 @@ public final class OpenMaverHud {
     private static final int INFO_GAP = 6;
     /** 底板的羽化宽度：向内分层淡化，让矩形边缘像被模糊过一样。 */
     private static final int ROW_FEATHER = 3;
-    /** 功能列表字号：接近参考图里紧凑但清晰的白字。 */
-    private static final float ROW_TEXT_SIZE = 1.0F;
+    /** 功能列表文字比原版字号略小 5%。 */
+    private static final float ROW_TEXT_SIZE = 0.95F;
     private static final int ROW_TEXT_Y = 5;
     /** 半透明深色底，保证白字在亮背景上也清晰。 */
     private static final int ROW_BG = 0x000000;
     private static final int ROW_BG_ALPHA = 0x80;
-    private static final int ROW_TEXT = 0xFFFFFF;
     private static final int ROW_SHADOW_ALPHA = 0x90;
     /** 参数预览：灰色半透明，紧跟在模块名后面。 */
     private static final int ROW_INFO = 0xB4B4B4;
@@ -358,9 +357,9 @@ public final class OpenMaverHud {
             int rowRight = right + slide;
 
             // 右边缘固定对齐，每行宽度由自身文字决定，形成参考图里的阶梯感。
-            int nameW = font.getStringWidth(names[i]);
+            int nameW = (int) Math.ceil(font.getStringWidth(names[i]) * ROW_TEXT_SIZE);
             int infoW = hasInfo(infos[i])
-                    ? font.getStringWidth(infos[i]) : 0;
+                    ? (int) Math.ceil(font.getStringWidth(infos[i]) * ROW_TEXT_SIZE) : 0;
             int rowWidth = nameW + (infoW > 0 ? INFO_GAP + infoW : 0)
                     + ROW_PAD_LEFT + ROW_PAD_RIGHT;
             int rowX = rowRight - rowWidth;
@@ -373,7 +372,8 @@ public final class OpenMaverHud {
             int textY = y + ROW_TEXT_Y;
             int nameX = rowX + ROW_PAD_LEFT;
             texts.add(new TextDraw(names[i], nameX, textY,
-                    withAlpha(ROW_TEXT, clamp255((int) (alpha * 255.0F))),
+                    withAlpha(MaverPersonalization.getModuleListColor(i, now),
+                            clamp255((int) (alpha * 255.0F))),
                     ROW_TEXT_SIZE,
                     withAlpha(0x000000,
                             clamp255((int) (alpha * ROW_SHADOW_ALPHA)))));
@@ -718,10 +718,17 @@ public final class OpenMaverHud {
     private static void drawTexts(FontRenderer font, List<TextDraw> texts) {
         for (int i = 0; i < texts.size(); i++) {
             TextDraw text = texts.get(i);
-            if ((text.shadowColor >>> 24) != 0) {
-                font.drawString(text.text, text.x + 1, text.y + 1, text.shadowColor);
+            GL11.glPushMatrix();
+            try {
+                GL11.glTranslatef(text.x, text.y, 0.0F);
+                GL11.glScalef(text.size, text.size, 1.0F);
+                if ((text.shadowColor >>> 24) != 0) {
+                    font.drawString(text.text, 1, 1, text.shadowColor);
+                }
+                font.drawString(text.text, 0, 0, text.color);
+            } finally {
+                GL11.glPopMatrix();
             }
-            font.drawString(text.text, text.x, text.y, text.color);
         }
     }
 

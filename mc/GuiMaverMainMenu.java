@@ -2,9 +2,10 @@ import com.mojang.authlib.GameProfile;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Gui;
+import net.minecraft.client.gui.GuiButton;
+import net.minecraft.client.gui.GuiMainMenu;
 import net.minecraft.client.gui.GuiMultiplayer;
 import net.minecraft.client.gui.GuiOptions;
-import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiSelectWorld;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.texture.DynamicTexture;
@@ -40,7 +41,7 @@ import javax.imageio.ImageIO;
  * 清晰的原版全景图、中央 Logo 与三行透明按钮；账号头像与快捷入口放在顶部。
  */
 @SideOnly(Side.CLIENT)
-public final class GuiMaverMainMenu extends GuiScreen {
+public final class GuiMaverMainMenu extends GuiMainMenu {
     private static final ResourceLocation[] PANORAMA = {
         new ResourceLocation("textures/gui/title/background/panorama_0.png"),
         new ResourceLocation("textures/gui/title/background/panorama_1.png"),
@@ -52,7 +53,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
     private static final float PANORAMA_SCALE = 1.8F;
     private static final int ACTION_SINGLEPLAYER = 1;
     private static final int ACTION_MULTIPLAYER = 2;
-    private static final int ACTION_CLIENT = 3;
+    private static final int ACTION_ADD_ACCOUNT = 3;
     private static final int ACTION_OPTIONS = 4;
     private static final int ACTION_QUIT = 5;
     private static final int ACTION_WALLPAPER = 6;
@@ -61,6 +62,8 @@ public final class GuiMaverMainMenu extends GuiScreen {
     private final List<MenuButton> buttons = new ArrayList<MenuButton>();
     private String username = "Player";
     private boolean profileResolved;
+    private Session profileSession;
+    private int profileGeneration;
     private boolean failed;
     private boolean avatarFailed;
     private volatile BufferedImage skinImage;
@@ -105,7 +108,8 @@ public final class GuiMaverMainMenu extends GuiScreen {
 
     @Override
     public void initGui() {
-        super.initGui();
+        // Keep the vanilla title-screen type for Forge mods such as IAS, but build
+        // only Maver's controls. Forge adds other mods' buttons after initGui.
         buttonList.clear();
         failed = false;
         avatarFailed = false;
@@ -148,6 +152,12 @@ public final class GuiMaverMainMenu extends GuiScreen {
             drawButtons(mouseX, mouseY);
             drawFooter();
         }
+        // GuiMainMenu.drawScreen would repaint the vanilla menu over Maver.
+        // Draw Forge's standard buttons last so they stay visible and hoverable.
+        resetUiState();
+        for (GuiButton button : buttonList) {
+            button.drawButton(mc, mouseX, mouseY);
+        }
     }
 
     @Override
@@ -155,12 +165,35 @@ public final class GuiMaverMainMenu extends GuiScreen {
         if (mouseButton != 0) {
             return;
         }
+        for (GuiButton button : buttonList) {
+            if (button.visible && mouseX >= button.xPosition
+                    && mouseX < button.xPosition + button.width
+                    && mouseY >= button.yPosition
+                    && mouseY < button.yPosition + button.height) {
+                // Use vanilla's dispatch so Forge fires ActionPerformedEvent,
+                // including cancellation/replacement and IAS's Post handler.
+                super.mouseClicked(mouseX, mouseY, mouseButton);
+                return;
+            }
+        }
         for (MenuButton button : buttons) {
             if (inside(mouseX, mouseY, button)) {
                 perform(button.action);
                 return;
             }
         }
+        float ui = uiScale();
+        if (!buttons.isEmpty() && mouseX >= 12 * ui
+                && mouseX < buttons.get(buttons.size() - 1).x
+                && mouseY >= 10 * ui && mouseY < 33 * ui) {
+            mc.displayGuiScreen(new GuiMaverAccounts(this, false));
+        }
+    }
+
+    @Override
+    protected void actionPerformed(GuiButton button) {
+        // Standard buttons belong to mods and use Forge's action events. Do not
+        // interpret their IDs as GuiMainMenu's Options / Quit / Demo controls.
     }
 
     @Override
@@ -174,16 +207,15 @@ public final class GuiMaverMainMenu extends GuiScreen {
     }
 
     private void resolveProfile() {
-        if (profileResolved) {
-            return;
-        }
-        profileResolved = true;
         GameProfile profile = null;
         String token = null;
+        Session session = null;
         try {
             Minecraft minecraft = Minecraft.getMinecraft();
             if (minecraft != null) {
-                Session session = minecraft.getSession();
+                session = minecraft.getSession();
+                if (profileResolved && session == profileSession) return;
+                resetAccountProfile(session);
                 if (session != null) {
                     String name = session.getUsername();
                     if (name != null && name.length() > 0) {
@@ -197,6 +229,25 @@ public final class GuiMaverMainMenu extends GuiScreen {
             // 离线或映射缺失时继续使用占位名，不影响菜单显示。
         }
         startSkinFetch(username, profile, token);
+    }
+
+    private synchronized void resetAccountProfile(Session session) {
+        profileResolved = true;
+        profileSession = session;
+        profileGeneration++;
+        username = "Player";
+        avatarFailed = false;
+        skinImage = null;
+        skinFetchStarted = false;
+        ResourceLocation previous = skinTexture;
+        skinTexture = null;
+        if (previous != null && mc != null) {
+            try {
+                if (mc.getTextureManager() != null) mc.getTextureManager().deleteTexture(previous);
+            } catch (Throwable ignored) {
+                // A texture cleanup failure must not prevent the account name from updating.
+            }
+        }
     }
 
     /**
@@ -213,6 +264,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
             return;
         }
         skinFetchStarted = true;
+        final int generation = profileGeneration;
         BufferedImage cached = cachedSkin(name);
         if (cached != null) {
             skinImage = cached;
@@ -225,7 +277,9 @@ public final class GuiMaverMainMenu extends GuiScreen {
                     BufferedImage image = loadOfficialSkin(name, profile, token);
                     if (image != null) {
                         cacheSkin(name, image);
-                        skinImage = image;
+                        synchronized (GuiMaverMainMenu.this) {
+                            if (generation == profileGeneration) skinImage = image;
+                        }
                     }
                 } catch (Throwable ignored) {
                     // 保持默认皮肤，绝不让联网失败影响主菜单。
@@ -571,7 +625,7 @@ public final class GuiMaverMainMenu extends GuiScreen {
         int nameW = HudFont.getStringWidth(fontRendererObj, username, 0.95F * ui);
         int clientX = Math.round(40.0F * ui) + nameW + Math.round(5.0F * ui);
         clientX = Math.min(clientX, right - 3 * (iconSize + iconGap));
-        buttons.add(new MenuButton("ClickGUI", ACTION_CLIENT,
+        buttons.add(new MenuButton("Add account", ACTION_ADD_ACCOUNT,
                 clientX, iconY, iconSize, iconSize, 0, false));
         menuTop = top;
     }
@@ -848,13 +902,13 @@ public final class GuiMaverMainMenu extends GuiScreen {
         int color = fade(blend(0xE6FFFFFF, tint, h), a);
         float x = button.x, y = button.y, w = button.w, bh = button.h;
         float cx = x + w / 2.0F, cy = y + bh / 2.0F;
-        if (button.action != ACTION_CLIENT || h > 0.01F) {
+        if (button.action != ACTION_ADD_ACCOUNT || h > 0.01F) {
             fillRound(x, y, w, bh, 3.0F * ui,
                     fade(blend(0x28FFFFFF, button.danger ? 0x60D84950 : 0x55FFFFFF, h), a));
         }
         float d = 5.0F * ui;
         float lineWidth = Math.max(0.7F, 1.2F * ui);
-        if (button.action == ACTION_QUIT || button.action == ACTION_CLIENT) {
+        if (button.action == ACTION_QUIT || button.action == ACTION_ADD_ACCOUNT) {
             if (button.action == ACTION_QUIT) {
                 iconLine(cx - d, cy - d, cx + d, cy + d, lineWidth, color);
                 iconLine(cx - d, cy + d, cx + d, cy - d, lineWidth, color);
@@ -1074,8 +1128,8 @@ public final class GuiMaverMainMenu extends GuiScreen {
                 mc.displayGuiScreen(new GuiSelectWorld(this));
             } else if (action == ACTION_MULTIPLAYER) {
                 mc.displayGuiScreen(new GuiMultiplayer(this));
-            } else if (action == ACTION_CLIENT) {
-                openClickGui(null);
+            } else if (action == ACTION_ADD_ACCOUNT) {
+                mc.displayGuiScreen(new GuiMaverAccounts(this, true));
             } else if (action == ACTION_WALLPAPER) {
                 openClickGui("wallpaper");
             } else if (action == ACTION_OPTIONS) {

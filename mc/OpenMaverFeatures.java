@@ -323,7 +323,7 @@ public final class OpenMaverFeatures {
             "slapSprintSync", "noxzAttacks", "noxzTx"};
 
     /** openmaver.properties 的结构版本，用于迁移旧默认值。 */
-    private static final int SETTINGS_VERSION = 23;
+    private static final int SETTINGS_VERSION = 24;
 
     /**
      * 1.8.9 服务端的受击无敌窗口是 10 tick（hurtResistantTime 20 -> 10 才会结算）。
@@ -443,26 +443,8 @@ public final class OpenMaverFeatures {
     /** 反射失败只记录一次，避免每 tick 刷屏。 */
     private static boolean criticalsFailureLogged;
 
-    // FastPlace
-    /** 直接写入 rightClickDelayTimer 的 tick 数：0 = 每 tick 右键，4 = 原版速度。 */
+    /** Vanilla use-item cooldown; FastPlace exposes this single setting (0..5 ticks). */
     private static int fastPlaceDelayTicks = 1;
-    private static boolean fastPlaceOnlyBlocks = true;
-    /**
-     * BALANCED 档的抖动：在 2 tick 与 3 tick 之间交替。
-     *
-     * <p>Grim/Matrix 的 {@code block.fastplace} 判的是「连续 C08 的间隔是否等长且小于
-     * 原版」，等长的 2 tick 序列比抖动的 2/3 tick 序列更容易被识别；抖动只是把节奏
-     * 打散，平均速度仍明显快于原版。
-     */
-    private static boolean fastPlaceJitter = true;
-    /** BALANCED 档允许的最快冷却：2 tick（原版 4 tick 的一半）。 */
-    private static final int FASTPLACE_BALANCED_FLOOR = 2;
-    private static boolean fastPlaceWasActive;
-    private static boolean fastPlaceFailed;
-    private static boolean fastPlaceLastEnabled;
-    private static int fastPlaceJitterTick;
-    private static String fastPlaceStatus = "OFF";
-    private static String fastPlaceLastLoggedState = "";
 
     /** 本 tick 是否已经有右键动作（AutoClicker），避免同一 tick 连续放置。 */
     private static boolean rightClickUsedThisTick;
@@ -583,6 +565,7 @@ public final class OpenMaverFeatures {
         rightClickUsedThisTick = false;
         autoclickerClickedThisTick = false;
         placementsThisTick = 0;
+        updateFastPlace(mc);
         if (tickStartFailed) {
             AntiBotFeature.onTick(mc);
             processPendingCriticalJump(mc);
@@ -657,8 +640,7 @@ public final class OpenMaverFeatures {
         updateFakePlayers(mc);
         updateFullBright(mc);
         // AutoSprint / Aim / AutoClicker / Reach 已在 onTickStart 处理。
-        updateFastPlace(mc);
-        // Scaffold 已在 onTickStart 中完成放置。
+        // Scaffold 已在 onTickStart 中完成放置；FastPlace 只调整原版右键冷却。
         // Reach 的调试行在本 tick 入队（START 阶段已产生），这里回到主线程写聊天框。
         ReachDebug.flush(mc);
         OpenMaverDebug.tickSummary();
@@ -1130,6 +1112,7 @@ public final class OpenMaverFeatures {
     }
 
     private static boolean tryAutoRightClick(Minecraft mc, long now) {
+        if (FastPlaceFeature.isActive(mc)) return false;
         // 使用物品/进食/拉弓期间不再叠加右键动作。
         Object player = read(mc, "thePlayer", "field_71439_g", null);
         if (Boolean.TRUE.equals(call(player, "isUsingItem", "func_71039_bw", "bS"))) {
@@ -2256,129 +2239,16 @@ public final class OpenMaverFeatures {
     // ==================================================================
 
     private static void updateFastPlace(Minecraft mc) {
-        Module fastPlace = ModuleManager.getModule("FastPlace");
-        boolean enabled = fastPlace != null && fastPlace.isEnabled();
-        if (!enabled) {
-            // 关闭时把冷却还原成原版，并清掉 ERROR 锁存：
-            // 旧实现里一次反射失败会让 FastPlace 在本次进程内永久失效，
-            // 玩家只能重启客户端；关掉再开应当等于重新武装。
-            fastPlaceLastEnabled = false;
-            fastPlaceFailed = false;
-            fastPlaceJitterTick = 0;
-            if (fastPlaceWasActive) {
-                fastPlaceWasActive = false;
-                writeIntField(mc, "rightClickDelayTimer", "field_71467_ac", 4);
-            }
-            fastPlaceStatus = "OFF";
-            fastPlaceLastLoggedState = "";
-            return;
-        }
-        if (!fastPlaceLastEnabled) {
-            fastPlaceLastEnabled = true;
-            fastPlaceFailed = false;
-        }
-        if (fastPlaceFailed) {
-            fastPlaceStatus = "ERROR";
-            return;
-        }
-        try {
-            Object player = read(mc, "thePlayer", "field_71439_g", null);
-            Object world = read(mc, "theWorld", "field_71441_e", null);
-            String status = read(mc, "currentScreen", "field_71462_r", null) != null ? "GUI"
-                    : player == null || world == null ? "NO WORLD"
-                    : !alive(player) ? "DEAD" : null;
-            boolean active = status == null;
-            if (active && fastPlaceOnlyBlocks) {
-                active = holdingBlock(player);
-                if (!active) status = "NO BLOCK";
-            }
-
-            int limit = clamp(fastPlaceDelayTicks, 0, 4);
-            if (bypassEnabled) {
-                if (bypassProfile == PROFILE_LEGIT) {
-                    // LEGIT：完全不碰原版右键冷却。
-                    active = false;
-                    status = "LEGIT";
-                } else if (bypassProfile == PROFILE_BALANCED) {
-                    // BALANCED：不再把 FastPlace 钉死成原版 4 tick。
-                    //
-                    // 旧实现是 limit = max(4, limit)，默认档位上"开了等于没开"，
-                    // HUD 只会一直挂着 VANILLA 4t。现在：配置值比 2 tick 慢就尊重
-                    // 配置（想要原版速度仍然可以调回 4），比 2 tick 快就抬到 2，
-                    // 再用 2/3 tick 抖动打散 C08 的固定节奏 —— 比原版快一倍，
-                    // 同时不给 block.fastplace 送等长序列。
-                    limit = Math.max(limit, FASTPLACE_BALANCED_FLOOR);
-                    // Scaffold 需要等待 timer 自然归零；FastPlace 与它
-                    // 同时开启时会把 timer 卡在 2，导致永远无法放置。
-                    if (placementModuleEnabled()) {
-                        active = false;
-                        status = "SCAFFOLD";
-                    }
-                }
-            }
-            // 抖动前的有效基准值：HUD / 日志用这个，避免每 4 tick 抖一次字符串。
-            int reported = limit;
-            if (active && fastPlaceJitter && bypassEnabled
-                    && bypassProfile == PROFILE_BALANCED
-                    && limit <= FASTPLACE_BALANCED_FLOOR
-                    && ((fastPlaceJitterTick++ & 3) == 0)) {
-                // 每 4 个放行 tick 里抽出 1 个走 3 tick，序列 2/2/2/3。
-                limit = FASTPLACE_BALANCED_FLOOR + 1;
-            }
-
-            if (!active) {
-                if (fastPlaceWasActive) {
-                    fastPlaceWasActive = false;
-                    if (!writeIntField(mc, "rightClickDelayTimer", "field_71467_ac", 4)) {
-                        fastPlaceFailed = true;
-                        setFastPlaceStatus("ERROR", enabled);
-                        System.err.println("[OpenMaver] FastPlace disabled: cannot restore rightClickDelayTimer");
-                    }
-                }
-                if (!fastPlaceFailed) setFastPlaceStatus(status, enabled);
-                return;
-            }
-
-            Integer current = readIntField(mc, "rightClickDelayTimer", "field_71467_ac");
-            if (current == null) {
-                fastPlaceFailed = true;
-                setFastPlaceStatus("ERROR", enabled);
-                System.err.println("[OpenMaver] FastPlace disabled: cannot read rightClickDelayTimer");
-                return;
-            }
-            int next = Math.min(current.intValue(), limit);
-            if (!writeIntField(mc, "rightClickDelayTimer", "field_71467_ac", next)) {
-                fastPlaceFailed = true;
-                setFastPlaceStatus("ERROR", enabled);
-                System.err.println("[OpenMaver] FastPlace disabled: cannot write rightClickDelayTimer");
-                return;
-            }
-            fastPlaceWasActive = true;
-            setFastPlaceStatus(reported >= 4 ? "VANILLA 4t" : reported + "t", enabled);
-        } catch (Throwable error) {
-            fastPlaceFailed = true;
-            fastPlaceWasActive = false;
-            setFastPlaceStatus("ERROR", true);
-            System.err.println("[OpenMaver] FastPlace disabled after reflection error: " + error);
-        }
+        FastPlaceFeature.onTickStart(mc);
     }
 
-    private static void setFastPlaceStatus(String status, boolean enabled) {
-        fastPlaceStatus = status;
-        String state = status + " profile=" + (bypassEnabled ? profileName() : "OFF")
-                + " configuredDelay=" + fastPlaceDelayTicks + "t"
-                + " jitter=" + fastPlaceJitter;
-        if (enabled && !state.equals(fastPlaceLastLoggedState)) {
-            Logger.info("FastPlace", "state=" + state);
+    /** Manual FastPlace yields to every dedicated placement module. */
+    static boolean placementModuleEnabled() {
+        for (String name : new String[] {"Scaffold", "Telly", "GodBridge", "Scaffold2"}) {
+            Module module = ModuleManager.getModule(name);
+            if (module != null && module.isEnabled()) return true;
         }
-        fastPlaceLastLoggedState = enabled ? state : "";
-    }
-
-    /** Scaffold / Telly 是否启用；balanced 下 FastPlace 需要让位。 */
-    private static boolean placementModuleEnabled() {
-        Module scaffold = ModuleManager.getModule("Scaffold");
-        Module telly = ModuleManager.getModule("Telly");
-        return (scaffold != null && scaffold.isEnabled()) || (telly != null && telly.isEnabled());
+        return false;
     }
 
     private static Integer readIntField(Object target, String mcp, String srg) {        Field field = findField(target, runtimeCandidates(mcp, srg));
@@ -3180,7 +3050,7 @@ public final class OpenMaverFeatures {
         ReachDebug.setEnabled(reachDebugChat);
         criticalsMode = readCriticalsMode(values, "criticals.mode", CRITICALS_JUMP);
         criticalsStopSprint = readBoolean(values, "criticals.stopSprint", true);
-        fastPlaceDelayTicks = clamp(readInt(values, "fastplace.delayTicks", 1, 4), 0, 4);
+        fastPlaceDelayTicks = readInt(values, "fastplace.delayTicks", 1, 5);
         if (settingsVersion < 4) {
             // v3 及更早默认 JUMP：每次地面攻击都先起跳并延迟一 tick，
             // 会把 AutoClicker 的 14~17 CPS 压成 6~9。v4 曾改为 ALWAYS（packet），
@@ -3198,15 +3068,8 @@ public final class OpenMaverFeatures {
             settingsDirty = true;
         }
         if (settingsVersion < 6) {
-            // v5 及更早的默认值会被 Matrix 直接标记：
-            // - criticals ALWAYS/NCP 每次攻击额外补 2~3 条 C04
-            //   -> ka.critical.ground / hop / modify + bp.timer；
-            // - fastplace 2 tick 间隔 -> block.fastplace。
-            // v6 起迁移为真实起跳暴击与原版 4 tick 右键间隔。
+            // v6 起将旧 Criticals 默认迁移为真实起跳暴击。
             criticalsMode = CRITICALS_JUMP;
-            if (fastPlaceDelayTicks < 4) {
-                fastPlaceDelayTicks = 4;
-            }
             settingsDirty = true;
         }
         if (settingsVersion < 13) {
@@ -3300,21 +3163,6 @@ public final class OpenMaverFeatures {
             values.setProperty("velocity.zen.mode", "NoXZ");
             settingsDirty = true;
         }
-        if (settingsVersion < 21) {
-            // v20 及更早：BALANCED 把 limit = max(4, ...)，默认 delayTicks 也是 4，
-            // 于是 FastPlace 无论怎么开都停在原版 4 tick（HUD: VANILLA 4t）。
-            // v21 默认降到 1 tick；旧配置里残留的 4 只是"别加速"的历史默认值，
-            // 一并迁到 1，否则升级后仍然看不到任何变化。
-            String rawDelay = values.getProperty("fastplace.delayTicks");
-            if (rawDelay == null || "4".equals(rawDelay.trim())) {
-                values.setProperty("fastplace.delayTicks", "1");
-                fastPlaceDelayTicks = 1;
-            }
-            if (values.getProperty("fastplace.jitter") == null) {
-                values.setProperty("fastplace.jitter", "true");
-            }
-            settingsDirty = true;
-        }
         if (settingsVersion < 22) {
             // v22：SafeWalk（方块边缘潜行）从 Scaffold 的 eagle 拆成独立模块，
             // 老配置里没有 safewalk.*，这里把默认值写进文件，方便直接手改。
@@ -3335,8 +3183,15 @@ public final class OpenMaverFeatures {
             }
             settingsDirty = true;
         }
-        fastPlaceJitter = readBoolean(values, "fastplace.jitter", true);
-        fastPlaceOnlyBlocks = readBoolean(values, "fastplace.onlyBlocks", true);
+        // v24: retain the user's cooldown, retire all CPS/DCPS and input-control options.
+        // Prune obsolete keys even in imported profiles that already have a newer version.
+        if (settingsVersion < 24) settingsDirty = true;
+        for (String key : new java.util.ArrayList<String>(values.stringPropertyNames())) {
+            if (key.startsWith("fastplace.") && !"fastplace.delayTicks".equals(key)) {
+                values.remove(key);
+                settingsDirty = true;
+            }
+        }
         ScaffoldFeature.load(values);
         TellyFeature.load(values);
         GodBridgeFeature.load(values);
@@ -3715,21 +3570,9 @@ public final class OpenMaverFeatures {
     }
 
     public static int getFastPlaceDelayTicks() { return fastPlaceDelayTicks; }
-    public static String getFastPlaceStatus() { return fastPlaceStatus; }
+    public static String getFastPlaceStatus() { return FastPlaceFeature.getStatus(); }
     public static void setFastPlaceDelayTicks(int value) {
-        fastPlaceDelayTicks = clamp(value, 0, 4);
-        markDirty();
-    }
-
-    public static boolean isFastPlaceJitter() { return fastPlaceJitter; }
-    public static void setFastPlaceJitter(boolean value) {
-        fastPlaceJitter = value;
-        markDirty();
-    }
-
-    public static boolean isFastPlaceOnlyBlocks() { return fastPlaceOnlyBlocks; }
-    public static void setFastPlaceOnlyBlocks(boolean value) {
-        fastPlaceOnlyBlocks = value;
+        fastPlaceDelayTicks = clamp(value, 0, 5);
         markDirty();
     }
 
@@ -4008,8 +3851,6 @@ public final class OpenMaverFeatures {
                     + "\nui.clickgui.key=" + guiKeyNameForSave()
                     + "\naim=" + aimEnabled
                     + "\nesp=" + espEnabled
-                    + "\nfastplace.delayTicks=" + fastPlaceDelayTicks
-                    + "\nfastplace.jitter=" + fastPlaceJitter
                     + "\nbypass.enabled=" + bypassEnabled
                     + "\nbypass.anticheat=" + BYPASS_KEYS[bypassAnticheat]
                     + "\nbypass.profile=" + PROFILE_KEYS[clamp(bypassProfile, PROFILE_LEGIT, PROFILE_AGGRESSIVE)]
@@ -4062,8 +3903,6 @@ public final class OpenMaverFeatures {
                             clamp(criticalsMode, CRITICALS_PACKET, CRITICALS_LAST)]
                     + "\ncriticals.stopSprint=" + criticalsStopSprint
                     + "\nfastplace.delayTicks=" + fastPlaceDelayTicks
-                    + "\nfastplace.jitter=" + fastPlaceJitter
-                    + "\nfastplace.onlyBlocks=" + fastPlaceOnlyBlocks
                     + "\nkillaura.range=" + killAuraRange
                     + "\nkillaura.cpsMin=" + killAuraCpsMin
                     + "\nkillaura.cpsMax=" + killAuraCpsMax
@@ -4736,10 +4575,17 @@ public final class OpenMaverFeatures {
 
     private static final Object CACHE_MISS = new Object();
     private static final Method[] NO_METHODS = new Method[0];
-    private static final Map<String, Object> FIELD_CACHE =
-            new ConcurrentHashMap<String, Object>();
-    private static final Map<String, Object> METHOD_CACHE =
-            new ConcurrentHashMap<String, Object>();
+    // Defining class identity matters: mod and attach loaders may expose the same binary name.
+    private static final ClassValue<Map<String, Object>> FIELD_CACHE = new ClassValue<Map<String, Object>>() {
+        @Override protected Map<String, Object> computeValue(Class<?> type) {
+            return new ConcurrentHashMap<String, Object>();
+        }
+    };
+    private static final ClassValue<Map<String, Object>> METHOD_CACHE = new ClassValue<Map<String, Object>>() {
+        @Override protected Map<String, Object> computeValue(Class<?> type) {
+            return new ConcurrentHashMap<String, Object>();
+        }
+    };
 
     private static String namesKey(Class<?> type, String[] names) {
         StringBuilder key = new StringBuilder(type.getName());
@@ -4796,7 +4642,8 @@ public final class OpenMaverFeatures {
     static Field findField(Object target, String[] names) {
         if (target == null) return null;
         String key = namesKey(target.getClass(), names);
-        Object cached = FIELD_CACHE.get(key);
+        Map<String, Object> cache = FIELD_CACHE.get(target.getClass());
+        Object cached = cache.get(key);
         if (cached != null) {
             return cached == CACHE_MISS ? null : (Field) cached;
         }
@@ -4818,7 +4665,7 @@ public final class OpenMaverFeatures {
                 break;
             }
         }
-        FIELD_CACHE.put(key, found == null ? CACHE_MISS : found);
+        cache.put(key, found == null ? CACHE_MISS : found);
         return found;
     }
 
@@ -5055,7 +4902,8 @@ public final class OpenMaverFeatures {
     private static Method[] findMethods(Object target, String mcp, String srg,
             String obf, Object[] args) {
         String key = methodKey(target.getClass(), mcp, srg, obf, args);
-        Object cached = METHOD_CACHE.get(key);
+        Map<String, Object> cache = METHOD_CACHE.get(target.getClass());
+        Object cached = cache.get(key);
         if (cached != null) {
             return cached == CACHE_MISS ? NO_METHODS : (Method[]) cached;
         }
@@ -5078,7 +4926,7 @@ public final class OpenMaverFeatures {
             }
         }
         Method[] methods = found.isEmpty() ? NO_METHODS : found.toArray(new Method[found.size()]);
-        METHOD_CACHE.put(key, methods.length == 0 ? CACHE_MISS : methods);
+        cache.put(key, methods.length == 0 ? CACHE_MISS : methods);
         return methods;
     }
 
@@ -5105,6 +4953,7 @@ public final class OpenMaverFeatures {
     }
 
     static String[] runtimeCandidates(String mcp, String srg) {
+        if ("field_71415_G".equals(srg)) return new String[] {mcp, srg, "w"};
         if ("field_71441_e".equals(srg)) return new String[] {mcp, srg, "f"};
         if ("field_71439_g".equals(srg)) return new String[] {mcp, srg, "h"};
         if ("field_71462_r".equals(srg)) return new String[] {mcp, srg, "m"};
@@ -5120,6 +4969,7 @@ public final class OpenMaverFeatures {
         if ("field_77994_a".equals(srg)) return new String[] {mcp, srg, "b"};
         if ("field_71460_t".equals(srg)) return new String[] {mcp, srg, "o"};
         if ("field_71476_x".equals(srg)) return new String[] {mcp, srg, "s"};
+        if ("field_70181_x".equals(srg)) return new String[] {mcp, srg, "w"};
         if ("field_70122_E".equals(srg)) return new String[] {mcp, srg, "C"};
         if ("field_72313_a".equals(srg)) return new String[] {mcp, srg, "a"};
         if ("field_178783_e".equals(srg)) return new String[] {mcp, srg, "e"};

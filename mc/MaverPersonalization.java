@@ -1,5 +1,6 @@
 import java.io.File;
 import java.io.FileInputStream;
+import java.awt.Color;
 import java.util.Locale;
 import java.util.Properties;
 
@@ -12,6 +13,7 @@ public final class MaverPersonalization {
     public static final String DEFAULT_TAUNT = "gg";
     private static boolean loaded;
     private static int color = DEFAULT_COLOR;
+    private static boolean moduleListRainbow;
     private static String text = DEFAULT_TEXT;
     private static boolean tauntEnabled;
     private static String tauntText = DEFAULT_TAUNT;
@@ -35,6 +37,7 @@ public final class MaverPersonalization {
     public static void load(Properties values) {
         loaded = true;
         color = parseColor(values.getProperty("ui.theme.color"), DEFAULT_COLOR);
+        moduleListRainbow = Boolean.parseBoolean(values.getProperty("hud.moduleList.rainbow", "false"));
         text = cleanText(values.getProperty("hud.splash.text", DEFAULT_TEXT));
         tauntEnabled = Boolean.parseBoolean(values.getProperty("personalization.taunt.enabled", "false"));
         tauntText = cleanTaunt(values.getProperty("personalization.taunt.text", DEFAULT_TAUNT));
@@ -44,6 +47,7 @@ public final class MaverPersonalization {
         ensureLoaded();
         // Properties.load(InputStream) uses Latin-1; escape Unicode and leading spaces.
         return "ui.theme.color=" + getHexColor() + "\nhud.splash.text=" + escape(text) + "\n"
+                + "hud.moduleList.rainbow=" + moduleListRainbow + "\n"
                 + "personalization.taunt.enabled=" + tauntEnabled + "\n"
                 + "personalization.taunt.text=" + escape(tauntText) + "\n";
     }
@@ -84,6 +88,19 @@ public final class MaverPersonalization {
             result.appendCodePoint(cp);
         }
         return result.toString();
+    }
+
+    public static boolean isModuleListRainbow() { ensureLoaded(); return moduleListRainbow; }
+    public static void setModuleListRainbow(boolean value) {
+        ensureLoaded();
+        moduleListRainbow = value;
+        OpenMaverFeatures.markDirty();
+    }
+    /** One color per row, with the same time phase for the whole rendered frame. */
+    public static int getModuleListColor(int row, long now) {
+        if (!isModuleListRainbow()) return 0xFFFFFFFF;
+        float phase = Math.floorMod(now, 8_000_000_000L) / 8_000_000_000.0F;
+        return Color.HSBtoRGB((phase + row * 0.075F) % 1.0F, 0.65F, 1.0F);
     }
 
     public static int getColor() { ensureLoaded(); return color; }

@@ -35,6 +35,7 @@ public final class ClickGuiInteractionTest {
         ModuleManager.register(new Module("GodBridge", "movement.godbridge") {});
         ModuleManager.register(new Module("Scaffold2", "movement.scaffold2") {});
         ModuleManager.register(new module.movement.AttackReduce());
+        ModuleManager.register(new module.player.FastPlace());
         for (String category : new String[] {"movement", "render", "player", "misc"}) {
             ModuleManager.register(new Module(category + " Demo", category + ".demo") {});
         }
@@ -46,6 +47,16 @@ public final class ClickGuiInteractionTest {
         GuiOpenMaverClickGui gui = open(null, null, 1200, 600);
         check(columns(gui).size() == 7, "Five module categories plus Config and Personalization");
         velocitySettings(gui);
+        Object fastPlace = findEntry(gui, "Fast Place");
+        check(((List<?>) get(fastPlace, "settings")).size() == 1,
+                "FastPlace exposes only one setting");
+        Object fastPlaceTick = findSetting(fastPlace, "TICK");
+        check(((Number) get(fastPlaceTick, "min")).intValue() == 0
+                && ((Number) get(fastPlaceTick, "max")).intValue() == 5
+                && "t".equals(get(fastPlaceTick, "suffix")), "FastPlace Tick range is 0-5t");
+        invoke(fastPlaceTick, "set", new Class<?>[] {double.class}, 5.0D);
+        check(OpenMaverFeatures.getFastPlaceDelayTicks() == 5, "FastPlace slider binds the actual 5t cooldown");
+        invoke(fastPlaceTick, "set", new Class<?>[] {double.class}, 1.0D);
         for (String hidden : new String[] {"Telly", "God Bridge", "Scaffold2"}) {
             check(!hasEntry(gui, hidden), hidden + " standalone row is hidden");
         }
@@ -205,6 +216,17 @@ public final class ClickGuiInteractionTest {
 
         Object wallpaper = column(gui, "personalization");
         click(gui, wallpaper, "section", "color");
+        check(!MaverPersonalization.isModuleListRainbow(), "Function list rainbow defaults to off");
+        click(gui, wallpaper, "moduleRainbow");
+        check(MaverPersonalization.isModuleListRainbow(), "Color panel enables function list rainbow");
+        check(MaverPersonalization.getModuleListColor(0, 0L) != MaverPersonalization.getModuleListColor(4, 0L),
+                "Rainbow gives different rows different colors");
+        check(MaverPersonalization.getModuleListColor(0, 0L) != MaverPersonalization.getModuleListColor(0, 2_000_000_000L),
+                "Rainbow colors move over time");
+        click(gui, wallpaper, "moduleRainbow");
+        check(MaverPersonalization.getModuleListColor(0, 0L) == 0xFFFFFFFF,
+                "Disabling rainbow restores white function names");
+        click(gui, wallpaper, "moduleRainbow");
         click(gui, wallpaper, "themePreset", "1");
         check(MaverPersonalization.getColor() == 0xFF83B4F5, "Theme swatch updates the ClickGUI color");
         click(gui, wallpaper, "themeInput");
@@ -273,6 +295,10 @@ public final class ClickGuiInteractionTest {
         Properties persisted = new Properties();
         persisted.load(new ByteArrayInputStream(Files.readAllBytes(root.resolve("features.properties"))));
         check("#4C78D0".equals(persisted.getProperty("ui.theme.color")), "Theme color is saved to feature settings");
+        check("true".equals(persisted.getProperty("hud.moduleList.rainbow")), "Function list rainbow is saved with settings");
+        MaverPersonalization.setModuleListRainbow(false);
+        MaverPersonalization.load(persisted);
+        check(MaverPersonalization.isModuleListRainbow(), "Saved settings restore the rainbow option");
         check("Maver Client".equals(persisted.getProperty("hud.splash.text")), "HUD label is saved to feature settings");
         check("false".equals(persisted.getProperty("nametag.throughWalls")), "NameTag options are saved with feature settings");
         check("true".equals(persisted.getProperty("antibot.nameCheck")), "Anti Bot options are saved with feature settings");
@@ -313,121 +339,143 @@ public final class ClickGuiInteractionTest {
         invoke(expertMotion, "setPercent", new Class<?>[] {double.class}, .25D);
         check(AugustusVelocity.value("Push", "PushMotion1") == 5, "Expert slider binds the actual mode");
 
-        // Velocity opens a modal surface instead of making the Movement column longer.
         Object col = column(gui, "movement");
         int originalHeight = gui.height;
+        int originalWidth = gui.width;
+        Object state = get(col, "state");
+        int originalX = (Integer) get(state, "x");
+        int baseWidth = (Integer) get(col, "width");
         gui.height = 320;
         invoke(gui, "bringToFront", new Class<?>[] {col.getClass()}, col);
         render(gui);
         clickHit(gui, entryHit(col, "Velocity"));
-        render(gui);
-        Object panel = get(gui, "settingsPanel");
-        check(panel != null && !ModuleManager.getModule("Velocity").isEnabled(),
-                "Left-click opens Velocity settings without changing its enabled state");
-        check(!((java.util.Set<?>) get(gui, "expanded")).contains(get(entry, "id"))
-                && (Integer) get(col, "maxScroll") == 0,
-                "Velocity settings do not expand inside the Movement column");
-        check((Integer) get(panel, "maxScroll") > 0, "Expert parameters have their own scroll area");
-        clickHit(gui, panelAction(panel, "enabled"));
-        check(ModuleManager.getModule("Velocity").isEnabled(), "Subpanel can enable Velocity");
-        clickHit(gui, panelAction(panel, "enabled"));
-        check(!ModuleManager.getModule("Velocity").isEnabled(), "Subpanel can disable Velocity");
-        gui.keyTyped('x', 0);
-        check("".equals(get(gui, "searchQuery")), "Subpanel typing cannot activate module search");
+        check(ModuleManager.getModule("Velocity").isEnabled(), "Left-click enables Velocity directly");
+        clickHit(gui, entryHit(col, "Velocity"));
+        check(!ModuleManager.getModule("Velocity").isEnabled(), "Left-click disables Velocity directly");
 
-        Object checkbox = settingHit(panel, "NotWhileSPressed");
+        rightClickHit(gui, entryHit(col, "Velocity"));
+        check(((java.util.Set<?>) get(gui, "expanded")).contains(get(entry, "id")),
+                "Right-click expands Velocity inside Movement");
+        set(gui, "frameDelta", 16F);
+        invoke(gui, "drawColumns", new Class<?>[0]);
+        int firstWidth = (Integer) get(col, "width");
+        check(firstWidth > baseWidth, "Opening starts increasing the column width");
+        set(entry, "expandProgress", 1F);
+        render(gui);
+        check((Integer) get(col, "width") > firstWidth, "Width grows across frames instead of jumping");
+        check((Integer) get(col, "maxScroll") > 0, "Expert settings scroll within Movement");
+        for (Object other : columns(gui)) {
+            if (other != col) check(get(other, "width").equals(get(other, "baseWidth")),
+                    "Other columns keep their original width");
+        }
+
+        Object checkbox = settingHit(col, "NotWhileSPressed");
         boolean previousCheck = AugustusVelocity.enabled("common", "NotWhileSPressed");
-        clickHit(gui, checkbox);
+        gui.mouseClicked((Integer) get(checkbox, "x") + (Integer) get(checkbox, "w") - 9,
+                (Integer) get(checkbox, "y") + (Integer) get(checkbox, "h") / 2, 0);
         check(AugustusVelocity.enabled("common", "NotWhileSPressed") != previousCheck,
-                "Subpanel checkbox updates runtime settings");
-        Object lagHit = settingHit(panel, "Lag");
+                "Checkboxes respond in the added width beyond the original column edge");
+        Object lagHit = settingHit(col, "Lag");
         Mouse.left = true;
         clickHit(gui, lagHit);
         invoke(gui, "updateDrag", new Class<?>[] {int.class},
                 (Integer) get(lagHit, "controlX") + (Integer) get(lagHit, "controlW") * 3 / 4);
-        check(AugustusVelocity.value("common", "Lag") == 300, "Subpanel sliders use their wider track");
+        check(get(gui, "dragSetting") == lag && Math.abs(AugustusVelocity.value("common", "Lag") - 300)
+                <= 400D / (Integer) get(lagHit, "controlW") + .5D,
+                "Slider dragging uses the widened track within one pixel of the requested value");
         Mouse.left = false;
         gui.drawScreen(0, 0, 0F);
         check(get(gui, "dragSetting") == null, "Releasing a slider finishes and saves the drag");
         invoke(lag, "set", new Class<?>[] {double.class}, 0D);
 
-        int modeY = (Integer) get(settingHit(panel, "MODE"), "y");
-        boolean reached = false;
-        for (int i = 0; i < 40; i++) {
-            for (Object hit : (List<?>) get(panel, "hits")) {
-                if (get(hit, "setting") != expertMotion) continue;
-                reached = true;
-                break;
-            }
-            if (reached) break;
-            wheel(gui, (Integer) get(panel, "x") + 20, (Integer) get(panel, "bodyY") + 15, -120);
+        for (int i = 0; i < 40 && findVisibleSetting(col, "DEBUG CHAT") == null; i++) {
+            wheel(gui, (Integer) get(col, "headerX") + 20, (Integer) get(col, "bodyY") + 15, -120);
         }
-        check(reached && (Integer) get(panel, "scroll") > 0, "Last Expert motion is reachable by wheel scrolling");
-        check((Integer) get(settingHit(panel, "MODE"), "y") == modeY, "Mode selector stays fixed while parameters scroll");
-        for (Object hit : (List<?>) get(panel, "hits")) {
-            if (get(hit, "setting") == null || get(hit, "setting") == mode) continue;
-            check((Integer) get(hit, "y") >= (Integer) get(panel, "bodyY")
+        check((Integer) get(col, "scroll") > 0 && findVisibleSetting(col, "DEBUG CHAT") != null,
+                "The final Velocity setting is reachable by scrolling the column");
+        for (Object hit : (List<?>) get(col, "hits")) {
+            if (get(hit, "setting") == null) continue;
+            check((Integer) get(hit, "y") >= (Integer) get(col, "bodyY")
                     && (Integer) get(hit, "y") + (Integer) get(hit, "h")
-                    <= (Integer) get(panel, "bodyY") + (Integer) get(panel, "bodyH"),
-                    "Scrolled setting hits stay inside the parameter area");
+                    <= (Integer) get(col, "bodyY") + (Integer) get(col, "bodyH"),
+                    "Scrolled controls cannot cover the header or extend past the column");
         }
-
-        clickHit(gui, settingHit(panel, "MODE"));
+        set(col, "scroll", 0);
+        set(col, "scrollVis", 0F);
         render(gui);
-        check(AttackReduceFeature.getMode() == 6 && get(panel, "dropdown") != null,
-                "Mode click opens a dropdown without cycling the current value");
-        int bodyScroll = (Integer) get(panel, "scroll");
-        for (int i = 0; i < 12; i++) {
-            wheel(gui, (Integer) get(panel, "choiceX") + 15, (Integer) get(panel, "choiceY") + 10, -120);
+        clickHit(gui, settingHit(col, "MODE"));
+        check(AttackReduceFeature.getMode() == 7, "Left-click cycles forward through Velocity modes");
+        render(gui);
+        rightClickHit(gui, settingHit(col, "MODE"));
+        check(AttackReduceFeature.getMode() == 6, "Right-click cycles backward through Velocity modes");
+
+        // Check the text actually sent to the renderer, including long conditional labels.
+        for (int i = 0; i < names.length; i++) {
+            invoke(mode, "set", new Class<?>[] {double.class}, (double) i);
+            HudFont.text.clear();
+            render(gui);
+            render(gui);
+            for (Object setting : (List<?>) get(entry, "settings")) {
+                if (!Boolean.TRUE.equals(invoke(setting, "visible", new Class<?>[0]))) continue;
+                check(HudFont.text.contains(get(setting, "label")),
+                        "Full Velocity label renders in mode " + i + ": " + get(setting, "label"));
+            }
+            check(HudFont.text.contains(invoke(mode, "display", new Class<?>[0])),
+                    "Full selected mode name renders for mode " + i);
         }
-        check((Integer) get(panel, "scroll") == bodyScroll, "Dropdown wheel cannot move the parameter area");
-        clickHit(gui, dropdownChoice(panel, "19"));
+        invoke(mode, "set", new Class<?>[] {double.class}, 3D);
+        invoke(explosion, "set", new Class<?>[] {double.class}, 0D);
         render(gui);
-        check(AttackReduceFeature.getMode() == 19 && get(panel, "dropdown") == null,
-                "Dropdown can directly select the final Velocity mode");
-        check((Integer) get(panel, "scroll") == 0, "Changing modes resets parameter scrolling");
-        check(findVisibleSetting(panel, "PushMotion1") == null, "Mode changes remove settings from the previous mode");
-        clickHit(gui, settingHit(panel, "MODE"));
         render(gui);
-        check(dropdownChoice(panel, "19") != null, "Dropdown opens with the current mode in view");
-        gui.keyTyped('\0', Keyboard.KEY_ESCAPE);
-        check(get(panel, "dropdown") == null && get(gui, "settingsPanel") == panel,
-                "First Escape closes just the dropdown");
-        gui.keyTyped('\0', Keyboard.KEY_ESCAPE);
-        check(get(gui, "settingsPanel") == null && !(Boolean) get(gui, "closing"),
-                "Second Escape returns to the main ClickGUI");
+        int compactWidth = (Integer) get(col, "width");
+        invoke(explosion, "set", new Class<?>[] {double.class}, 1D);
+        HudFont.text.clear();
+        render(gui);
+        render(gui);
+        check((Integer) get(col, "width") >= compactWidth && HudFont.text.contains(get(explosionXZ, "label")),
+                "Revealing conditional settings keeps enough width to render their full text");
+        Object cancelCondition = findSetting(entry, "S32PacketConfirmTransactionCancelCondition");
+        invoke(cancelCondition, "set", new Class<?>[] {double.class}, 1D);
+        render(gui);
+        render(gui);
+        check((Integer) get(col, "width") > compactWidth,
+                "Choosing a longer option grows the column to fit both the label and value");
+        invoke(cancelCondition, "set", new Class<?>[] {double.class}, 0D);
+        render(gui);
+        render(gui);
 
-        gui.mouseClicked((Integer) get(entryHit(col, "Velocity"), "x") + 20,
-                (Integer) get(entryHit(col, "Velocity"), "y") + 8, 1);
-        render(gui);
-        check(get(gui, "settingsPanel") != null, "Right-click also opens the Velocity subpanel");
-        Module demo = ModuleManager.getModule("Combat Demo");
-        boolean demoEnabled = demo.isEnabled();
-        clickHit(gui, entryHit(column(gui, "combat"), "Combat Demo"));
-        check(get(gui, "settingsPanel") == null && demo.isEnabled() == demoEnabled,
-                "Clicking outside dismisses the subpanel without toggling a background module");
-
-        // The same geometry remains usable at Minecraft's smaller GUI resolutions.
-        int originalWidth = gui.width;
+        // Expansion near the right edge must stay on screen at small GUI resolutions.
         gui.width = 320;
         gui.height = 240;
-        invoke(gui, "openSettingsPanel", new Class<?>[] {entry.getClass()}, entry);
+        set(state, "x", gui.width - baseWidth);
+        set(col, "visX", (float) (gui.width - baseWidth));
         render(gui);
-        panel = get(gui, "settingsPanel");
-        clickHit(gui, settingHit(panel, "MODE"));
+        check((Integer) get(col, "headerX") >= 0
+                && (Integer) get(col, "headerX") + (Integer) get(col, "width") <= gui.width,
+                "Expanded column fits a 320x240 GUI near its right edge");
+        Mouse.left = true;
+        int visualX = (Integer) get(col, "headerX");
+        int headerY = (Integer) get(col, "headerY");
+        gui.mouseClicked(visualX + 10, headerY + 8, 0);
+        invoke(gui, "updateColumnPress", new Class<?>[] {int.class, int.class}, visualX, headerY + 8);
+        Mouse.left = false;
+        invoke(gui, "updateColumnPress", new Class<?>[] {int.class, int.class}, visualX, headerY + 8);
+        check((Integer) get(state, "x") == Math.max(0, visualX - 10),
+                "Dragging a widened column starts from its visible position");
         render(gui);
-        check((Integer) get(panel, "x") >= 0 && (Integer) get(panel, "x") + (Integer) get(panel, "w") <= gui.width
-                && (Integer) get(panel, "y") + (Integer) get(panel, "h") <= gui.height,
-                "Subpanel fits a 320x240 GUI");
-        check((Integer) get(panel, "choiceY") >= 0
-                && (Integer) get(panel, "choiceY") + (Integer) get(panel, "choiceH") <= gui.height,
-                "Dropdown fits a small GUI");
-        gui.keyTyped('\0', Keyboard.KEY_ESCAPE);
+        rightClickHit(gui, entryHit(col, "Velocity"));
+        int expandedWidth = (Integer) get(col, "width");
+        set(gui, "frameDelta", 16F);
+        invoke(gui, "drawColumns", new Class<?>[0]);
+        check((Integer) get(col, "width") < expandedWidth && (Integer) get(col, "width") > baseWidth,
+                "Collapsing smoothly reduces the width");
+        set(entry, "expandProgress", 0F);
         render(gui);
-        clickHit(gui, panelAction(panel, "close"));
-        check(get(gui, "settingsPanel") == null, "Close button returns to the main GUI");
+        render(gui);
+        check((Integer) get(col, "width") == baseWidth, "Collapsed Velocity restores the original column width");
         gui.width = originalWidth;
         gui.height = originalHeight;
+        set(state, "x", originalX);
         invoke(mode, "set", new Class<?>[] {double.class}, 1D);
         render(gui);
     }
@@ -440,18 +488,13 @@ public final class ClickGuiInteractionTest {
         render(gui);
     }
 
-    private static Object panelAction(Object panel, String action) throws Exception {
-        for (Object hit : (List<?>) get(panel, "hits")) if (action.equals(get(hit, "action"))) return hit;
-        throw new AssertionError("No panel action " + action);
+    private static void rightClickHit(GuiOpenMaverClickGui gui, Object hit) throws Exception {
+        gui.mouseClicked((Integer) get(hit, "x") + (Integer) get(hit, "w") / 2,
+                (Integer) get(hit, "y") + (Integer) get(hit, "h") / 2, 1);
     }
 
-    private static Object dropdownChoice(Object panel, String value) throws Exception {
-        for (Object hit : (List<?>) get(panel, "choices")) if (value.equals(get(hit, "value"))) return hit;
-        throw new AssertionError("No dropdown choice " + value);
-    }
-
-    private static Object findVisibleSetting(Object panel, String label) throws Exception {
-        for (Object hit : (List<?>) get(panel, "hits")) {
+    private static Object findVisibleSetting(Object column, String label) throws Exception {
+        for (Object hit : (List<?>) get(column, "hits")) {
             Object setting = get(hit, "setting");
             if (setting != null && label.equalsIgnoreCase((String) get(setting, "label"))) return setting;
         }

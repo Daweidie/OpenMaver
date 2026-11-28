@@ -76,6 +76,22 @@ public final class OpenMaverMcBridge {
             debug("Velocity runtime hooks="+velocityHooks);
             Class.forName("AttackReduceFeature",true,gameLoader).getMethod("setVelocityHooksAvailable",boolean.class).invoke(null,velocityHooks);
 
+            // The same retransformation bridge installs the single vanilla cooldown hook.
+            // Keep a FastPlace failure local so the event bridge and other modules still load.
+            boolean fastPlaceHooks = false;
+            try {
+                Object fastPlaceTransformer = Class.forName("FastPlaceTransformer", true, gameLoader)
+                        .getDeclaredConstructor().newInstance();
+                String minecraft = "net.minecraft.client.Minecraft";
+                fastPlaceHooks = installVelocityHooks(fastPlaceTransformer,
+                        new Class<?>[] {Class.forName(minecraft, false, gameLoader)}, new String[] {minecraft});
+            } catch (Throwable error) {
+                debug("FastPlace cooldown hook failed: " + error);
+            }
+            debug("FastPlace runtime hook=" + fastPlaceHooks);
+            Class.forName("FastPlaceFeature", true, gameLoader).getMethod("setHooksAvailable", boolean.class)
+                    .invoke(null, fastPlaceHooks);
+
             // 通过 LaunchClassLoader 加载（FML 转换器会对 SRG 名做映射）
             Class<?> hudClass = Class.forName("OpenMaverHud", true, gameLoader);
             Class<?> handlerClass = Class.forName("OpenMaverClientHandler", true, gameLoader);

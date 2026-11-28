@@ -100,7 +100,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private final String initialColumn;
     private final List<Entry> entries = new ArrayList<Entry>();
     private final Set<String> expanded = new HashSet<String>();
-    private SettingsPanel settingsPanel;
 
     private String searchQuery = "";
     private boolean searchFocused;
@@ -173,7 +172,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         buildEntries();
 
         expanded.clear();
-        settingsPanel = null;
         this.columnsAt = this.openedAt;
         initColumns();
 
@@ -777,17 +775,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private void addFastPlaceSettings(Entry entry) {
-        entry.settings.add(Setting.slider("DELAY", 0.0F, 4.0F, 1.0F, 0, "t", new Binding() {
+        entry.settings.add(Setting.slider("TICK", 0, 5, 1, 0, "t", new Binding() {
             public double get() { return OpenMaverFeatures.getFastPlaceDelayTicks(); }
             public void set(double value) { OpenMaverFeatures.setFastPlaceDelayTicks((int) Math.round(value)); }
-        }));
-        entry.settings.add(Setting.check("JITTER", new Binding() {
-            public double get() { return OpenMaverFeatures.isFastPlaceJitter() ? 1.0D : 0.0D; }
-            public void set(double value) { OpenMaverFeatures.setFastPlaceJitter(value > 0.5D); }
-        }));
-        entry.settings.add(Setting.check("ONLY BLOCKS", new Binding() {
-            public double get() { return OpenMaverFeatures.isFastPlaceOnlyBlocks() ? 1.0D : 0.0D; }
-            public void set(double value) { OpenMaverFeatures.setFastPlaceOnlyBlocks(value > 0.5D); }
         }));
     }
 
@@ -992,7 +982,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
 
     /** 输入式重置与 OpenZen NoXZ / Mix 参数。 */
     private void addAttackReduceSettings(Entry entry) {
-        entry.separateSettings = true;
+        entry.fitSettingsWidth = true;
         entry.settings.add(Setting.select("MODE", AttackReduceFeature.MODE_NAMES, new Binding() {
             public double get() { return AttackReduceFeature.getMode(); }
             public void set(double value) { AttackReduceFeature.setMode((int) Math.round(value)); }
@@ -1159,6 +1149,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private static final int COL_BOTTOM_PAD = 4;
     private static final int COL_GAP = 10;
     private static final int COL_TOP = 30;
+    private static final float COL_WIDTH_MS = 130.0F;
     private static final int SET_SLIDER_H = 20;
     private static final int SET_LINE_H = 14;
     private static final int SET_PAD = 2;
@@ -1296,6 +1287,28 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         return h;
     }
 
+    /** 为完整标签、数值与控件之间的留白预留宽度，滑块按范围两端预留数值空间。 */
+    private static int settingValueSpace(FontRenderer font, Setting setting) {
+        if (setting.kind == Setting.CHECK) return 14;
+        int valueW = microWidth(font, setting.display());
+        if (setting.kind == Setting.SLIDER) {
+            valueW = Math.max(valueW, Math.max(microWidth(font, setting.formatValue(setting.min)),
+                    microWidth(font, setting.formatValue(setting.max))));
+        }
+        int minimum = setting.kind == Setting.RANGE ? 56 : setting.kind == Setting.SLIDER ? 34 : 0;
+        return Math.max(minimum, valueW + 8);
+    }
+
+    private static int columnSettingsWidth(FontRenderer font, Entry entry) {
+        int w = COL_W;
+        for (Setting setting : entry.settings) {
+            if (setting.visible()) {
+                w = Math.max(w, 14 + microWidth(font, setting.label) + settingValueSpace(font, setting));
+            }
+        }
+        return w;
+    }
+
     /** 列的进场动画：依次从上方滑入并淡入，关闭时随 openProgress 一起淡出。 */
     private float columnReveal(int index) {
         float t = clamp01((frameNow - columnsAt - index * 28L) / 260.0F);
@@ -1312,13 +1325,12 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         tooltip = null;
 
         FontRenderer font = this.mc.fontRendererObj;
-        Column top = settingsPanel == null ? topColumnAt(lastMouseX, lastMouseY) : null;
+        Column top = topColumnAt(lastMouseX, lastMouseY);
         for (int i = 0; i < columns.size(); i++) {
             Column column = columns.get(i);
             drawColumn(font, column, columnReveal(column.order), column == top);
         }
         drawSearchBar(font);
-        if (settingsPanel != null) drawSettingsPanel(font);
         drawTooltip(font);
     }
 
@@ -1328,11 +1340,28 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             return;
         }
         long now = frameNow;
+        boolean utility = isUtilityColumn(column);
+        List<Entry> list = utility ? Collections.<Entry>emptyList() : columnEntries(column.id);
+        int targetW = column.baseWidth;
+        if (!column.state.collapsed) {
+            for (Entry entry : list) {
+                if (entry.fitSettingsWidth && expanded.contains(entry.id)) {
+                    targetW = Math.max(targetW, columnSettingsWidth(font, entry));
+                }
+            }
+        }
+        targetW = Math.min(this.width, targetW);
+        column.visWidth = approach(column.visWidth, targetW, frameDelta, COL_WIDTH_MS);
+        if (Math.abs(column.visWidth - targetW) < 0.3F) column.visWidth = targetW;
+        column.width = clampInt(Math.round(column.visWidth), 1, this.width);
+        int maxX = Math.max(0, this.width - column.width);
+        int targetX = clampInt(column.state.x, 0, maxX);
         // 拖动时视觉位置快速追随目标位置，松手后也会平滑落位。
-        column.visX = approach(column.visX, column.state.x, frameDelta, 40.0F);
+        column.visX = approach(column.visX, targetX, frameDelta, 40.0F);
+        column.visX = Math.max(0, Math.min(maxX, column.visX));
         column.visY = approach(column.visY, column.state.y, frameDelta, 40.0F);
-        if (Math.abs(column.visX - column.state.x) < 0.3F) {
-            column.visX = column.state.x;
+        if (Math.abs(column.visX - targetX) < 0.3F) {
+            column.visX = targetX;
         }
         if (Math.abs(column.visY - column.state.y) < 0.3F) {
             column.visY = column.state.y;
@@ -1344,8 +1373,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         int x = Math.round(column.visX);
         int y = Math.round(column.visY - (1.0F - clamp01(alpha / Math.max(0.01F, openProgress))) * 14.0F);
         int w = column.width;
-        boolean utility = isUtilityColumn(column);
-        List<Entry> list = utility ? Collections.<Entry>emptyList() : columnEntries(column.id);
 
         // 内容总高度（含正在展开的设置区）。
         int contentH = utility ? utilityContentHeight(column) : 0;
@@ -1353,7 +1380,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         for (int i = 0; i < rows; i++) {
             contentH += COL_ROW_H;
             Entry entry = list.get(i);
-            if (!entry.separateSettings && !entry.settings.isEmpty()) {
+            if (!entry.settings.isEmpty()) {
                 contentH += Math.round(columnSettingsHeight(entry) * getEntryProgress(entry, now));
             }
         }
@@ -1416,9 +1443,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
         for (int i = 0; i < rows; i++) {
             boolean hovered = bodyHoverable
-                    && isHovered(lastMouseX, lastMouseY, x, rowY, COL_W, COL_ROW_H);
+                    && isHovered(lastMouseX, lastMouseY, x, rowY, w, COL_ROW_H);
             Entry entry = list.get(i);
-            if (hovered && entry.separateSettings) tooltip = "Click to open Velocity settings";
             entry.hoverProgress = approach(entry.hoverProgress, hovered ? 1.0F : 0.0F,
                     Math.min(50.0F, now - entry.animationAt), HOVER_MS);
             entry.animationAt = now;
@@ -1428,17 +1454,17 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             entry.toggleProgress = approach(entry.toggleProgress, entry.isEnabled() ? 1.0F : 0.0F,
                     Math.min(50.0F, now - entry.toggleAt), 150.0F);
             entry.toggleAt = now;
-            float expand = entry.settings.isEmpty() || entry.separateSettings
+            float expand = entry.settings.isEmpty()
                     ? 0.0F : easeOutCubic(entry.expandProgress);
             boolean nextOn = i + 1 < rows && list.get(i + 1).isEnabled() && expand < 0.01F;
-            drawColumnRow(font, x, rowY, entry.name, entry.keybind(), entry.toggleProgress,
+            drawColumnRow(font, x, rowY, w, entry.name, entry.keybind(), entry.toggleProgress,
                     entry.hoverProgress, entry.pressProgress, !entry.settings.isEmpty(), expand,
                     alpha);
             if (entry.toggleProgress > 0.5F && nextOn) {
-                Gui.drawRect(x, rowY + COL_ROW_H - 1, x + COL_W, rowY + COL_ROW_H,
+                Gui.drawRect(x, rowY + COL_ROW_H - 1, x + w, rowY + COL_ROW_H,
                         fade(0x24000000, alpha));
             }
-            column.hits.add(Hit.entry(entry, x, rowY, COL_W, COL_ROW_H));
+            column.hits.add(Hit.entry(entry, x, rowY, w, COL_ROW_H));
             rowY += COL_ROW_H;
 
             if (expand > 0.001F) {
@@ -1447,10 +1473,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 int clipTop = Math.max(rowY, bodyTop);
                 int clipBottom = Math.min(rowY + shownH, bodyTop + bodyH);
                 if (clipBottom > clipTop) {
-                    pushScissor(x, clipTop, COL_W, clipBottom - clipTop);
+                    pushScissor(x, clipTop, w, clipBottom - clipTop);
                     drawColumnSettings(font, column, entry, x, rowY, fullH, alpha * (0.4F + 0.6F * expand),
-                            bodyHoverable && isHovered(lastMouseX, lastMouseY, x, clipTop, COL_W, clipBottom - clipTop));
-                    pushScissor(x, bodyTop, COL_W, bodyH);
+                            bodyHoverable && isHovered(lastMouseX, lastMouseY, x, clipTop, w, clipBottom - clipTop));
+                    pushScissor(x, bodyTop, w, bodyH);
                 }
                 rowY += shownH;
             }
@@ -1466,24 +1492,24 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
     }
 
-    private void drawColumnRow(FontRenderer font, int x, int y, String name, String keybind,
+    private void drawColumnRow(FontRenderer font, int x, int y, int w, String name, String keybind,
             float on, float hover, float press, boolean hasSettings, float expand, float alpha) {
         if (on > 0.01F) {
             int fill = blendColor(MaverPersonalization.getColor(), MaverPersonalization.getHoverColor(), hover);
-            Gui.drawRect(x, y, x + COL_W, y + COL_ROW_H, fade(fill, alpha * on));
+            Gui.drawRect(x, y, x + w, y + COL_ROW_H, fade(fill, alpha * on));
         }
         if (hover > 0.01F && on < 0.99F) {
-            Gui.drawRect(x, y, x + COL_W, y + COL_ROW_H,
+            Gui.drawRect(x, y, x + w, y + COL_ROW_H,
                     fade(0x12FFFFFF, alpha * hover * (1.0F - on)));
         }
         if (press > 0.01F) {
-            Gui.drawRect(x, y, x + COL_W, y + COL_ROW_H, fade(0x18FFFFFF, alpha * press));
+            Gui.drawRect(x, y, x + w, y + COL_ROW_H, fade(0x18FFFFFF, alpha * press));
         }
         int textColor = blendColor(COL_ROW_TEXT, MaverPersonalization.getTextColor(), on);
         textColor = blendColor(textColor, on > 0.5F ? MaverPersonalization.getTextColor() : 0xFFFFFFFF, hover * 0.5F);
         // 悬停时文字轻轻右移 1.5px，增加手感。
         int textX = x + 7 + Math.round(hover * 1.5F);
-        int right = x + COL_W - 6;
+        int right = x + w - 6;
         if (hasSettings) {
             int chevColor = blendColor(blendColor(COL_DIM, MaverPersonalization.getTextColor(), on), textColor, expand);
             drawChevronProgress(right - 3, y + COL_ROW_H / 2, expand, fade(chevColor, alpha));
@@ -1502,25 +1528,27 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     private void drawColumnSettings(FontRenderer font, Column column, Entry entry, int x, int y,
             int h, float alpha, boolean hoverable) {
         long now = frameNow;
-        Gui.drawRect(x, y, x + COL_W, y + h, fade(COL_SETTINGS_BG, alpha));
+        int w = column.width;
+        Gui.drawRect(x, y, x + w, y + h, fade(COL_SETTINGS_BG, alpha));
         Gui.drawRect(x, y, x + 2, y + h, fade(MaverPersonalization.getColor(), alpha * 0.85F));
         int cx = x + 8;
-        int cw = COL_W - 14;
+        int cw = w - 14;
         int cy = y + SET_PAD;
         for (int i = 0; i < entry.settings.size(); i++) {
             Setting setting = entry.settings.get(i);
             if (!setting.visible()) continue;
             int sh = columnSettingHeight(setting);
-            boolean hovered = hoverable && isHovered(lastMouseX, lastMouseY, x, cy, COL_W, sh);
+            boolean hovered = hoverable && isHovered(lastMouseX, lastMouseY, x, cy, w, sh);
             String key = settingKey(entry, setting);
             ControlAnim anim = control("colset:" + key, hovered, dragSetting == setting, now);
             float hi = Math.max(anim.hover, anim.active);
             if (hi > 0.01F) {
-                Gui.drawRect(x + 2, cy, x + COL_W, cy + sh, fade(0x0AFFFFFF, alpha * hi));
+                Gui.drawRect(x + 2, cy, x + w, cy + sh, fade(0x0AFFFFFF, alpha * hi));
             }
             int labelColor = fade(blendColor(0xFF9AA2B2, 0xFFE6E8EE, hi), alpha);
             if (setting.kind == Setting.SLIDER) {
-                micro(font, ellipsizeMicro(font, setting.label, cw - 34), cx, cy + 3, labelColor);
+                int valueSpace = entry.fitSettingsWidth ? settingValueSpace(font, setting) : 34;
+                micro(font, ellipsizeMicro(font, setting.label, cw - valueSpace), cx, cy + 3, labelColor);
                 String value = setting.display();
                 micro(font, value, cx + cw - microWidth(font, value), cy + 3,
                         fade(0xFFFFFFFF, alpha));
@@ -1534,9 +1562,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 fillCircle(thumbX, trackY + 1, 3 + Math.round(hi), fade(0xFFFFFFFF, alpha));
                 addSettingHit(column, entry, setting, x, cy, sh, cx, cw);
             } else if (setting.kind == Setting.RANGE) {
-                micro(font, ellipsizeMicro(font, setting.label, cw - 56), cx, cy + 3, labelColor);
+                int valueSpace = entry.fitSettingsWidth ? settingValueSpace(font, setting) : 56;
+                micro(font, ellipsizeMicro(font, setting.label, cw - valueSpace), cx, cy + 3, labelColor);
                 String text = ellipsizeMicro(font,
-                        setting.lowDisplay() + "-" + setting.highDisplay(), 50);
+                        setting.lowDisplay() + "-" + setting.highDisplay(), valueSpace - 6);
                 micro(font, text, cx + cw - microWidth(font, text), cy + 3,
                         fade(0xFFFFFFFF, alpha));
                 int trackY = cy + 13;
@@ -1552,8 +1581,11 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                         fade(0xFFFFFFFF, alpha));
                 addSettingHit(column, entry, setting, x, cy, sh, cx, cw);
             } else if (setting.kind == Setting.SELECT) {
-                micro(font, ellipsizeMicro(font, setting.label, cw / 2), cx, cy + 4, labelColor);
-                String value = ellipsizeMicro(font, setting.display(), cw / 2);
+                int valueSpace = entry.fitSettingsWidth ? settingValueSpace(font, setting) : cw / 2;
+                micro(font, ellipsizeMicro(font, setting.label,
+                        entry.fitSettingsWidth ? cw - valueSpace : cw / 2), cx, cy + 4, labelColor);
+                String value = ellipsizeMicro(font, setting.display(),
+                        entry.fitSettingsWidth ? Math.min(cw, valueSpace - 8) : cw / 2);
                 micro(font, value, cx + cw - microWidth(font, value), cy + 4,
                         fade(blendColor(MaverPersonalization.getColor(), 0xFFFFFFFF, hi * 0.5F), alpha));
                 addSettingHit(column, entry, setting, x, cy, sh, cx, cw);
@@ -1575,10 +1607,18 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     /** 设置区还在展开 / 收起动画中时不登记点击区域，避免被下一行遮住的控件抢点击。 */
-    private static void addSettingHit(Column column, Entry entry, Setting setting,
+    private void addSettingHit(Column column, Entry entry, Setting setting,
             int x, int y, int h, int controlX, int controlW) {
         if (entry.expandProgress >= 0.95F) {
-            column.hits.add(Hit.setting(entry, setting, x, y, COL_W, h, controlX, controlW));
+            int top = Math.max(y, column.bodyY);
+            int bottom = Math.min(y + h, column.bodyY + column.bodyH);
+            if (bottom > top) {
+                column.hits.add(Hit.setting(entry, setting, x, top, column.width, bottom - top, controlX, controlW));
+            }
+            if (dragSetting == setting) {
+                dragX = controlX;
+                dragW = controlW;
+            }
         }
     }
 
@@ -1657,8 +1697,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
                 pressMoved = false;
                 pressStartX = mx;
                 pressStartY = my;
-                pressOffsetX = mx - column.state.x;
-                pressOffsetY = my - column.state.y;
+                pressOffsetX = mx - column.headerX;
+                pressOffsetY = my - column.headerY;
             } else if (button == 1) {
                 toggleCollapse(column);
             }
@@ -1680,9 +1720,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             } else if (hit.setting == null) {
                 Entry entry = hit.entry;
                 entry.press();
-                if (entry.separateSettings && (button == 0 || button == 1)) {
-                    openSettingsPanel(entry);
-                } else if (button == 0) {
+                if (button == 0) {
                     entry.toggle();
                 } else if (button == 1 && !entry.settings.isEmpty()) {
                     toggleExpanded(entry);
@@ -1759,10 +1797,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private void scrollColumn(int mx, int my, int wheel) {
-        if (settingsPanel != null) {
-            scrollSettingsPanel(mx, my, wheel);
-            return;
-        }
         Column column = topColumnAt(mx, my);
         if (column != null && my >= column.bodyY) {
             column.scroll = clampInt(column.scroll - Integer.signum(wheel) * COL_ROW_H * 2,
@@ -1786,10 +1820,12 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         final String title;
         final ColumnState state;
         final int order;
-        final int width;
+        final int baseWidth;
+        int width;
         final List<Hit> hits = new ArrayList<Hit>();
         float visX;
         float visY;
+        float visWidth;
         float collapse;
         int scroll;
         int maxScroll;
@@ -1804,7 +1840,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             this.title = title;
             this.state = state;
             this.order = order;
+            this.baseWidth = width;
             this.width = width;
+            this.visWidth = width;
             this.visX = state.x;
             this.visY = state.y;
             this.collapse = state.collapsed ? 1.0F : 0.0F;
@@ -1854,233 +1892,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
     }
 
-    /** A modal settings surface keeps large modules out of the category column. */
-    private static final class SettingsPanel {
-        final Entry entry;
-        final List<Hit> hits = new ArrayList<Hit>();
-        final List<Hit> choices = new ArrayList<Hit>();
-        int x, y, w, h, bodyY, bodyH;
-        int scroll, maxScroll;
-        Hit dropdown;
-        int choiceScroll, maxChoiceScroll;
-        int choiceX, choiceY, choiceW, choiceH;
-
-        SettingsPanel(Entry entry) { this.entry = entry; }
-    }
-
-    private static final int PANEL_SLIDER_H = 28;
-    private static final int PANEL_LINE_H = 22;
-    private static final int CHOICE_H = 20;
-
-    private void openSettingsPanel(Entry entry) {
-        finishPersonalizationInput();
-        profileFieldFocused = searchFocused = false;
-        pressColumn = null;
-        dragSetting = null;
-        dragEntry = null;
-        expanded.remove(entry.id);
-        entry.expandProgress = 0.0F;
-        settingsPanel = new SettingsPanel(entry);
-        OpenMaverFeatures.playUiClick(1.1F);
-    }
-
-    private void closeSettingsPanel() {
-        settingsPanel = null;
-        dragSetting = null;
-        dragEntry = null;
-        OpenMaverFeatures.flushSettings();
-        OpenMaverFeatures.playUiClick(0.95F);
-    }
-
-    private static int panelSettingHeight(Setting setting) {
-        return setting.kind == Setting.SLIDER ? PANEL_SLIDER_H : PANEL_LINE_H;
-    }
-
-    private void drawSettingsPanel(FontRenderer font) {
-        tooltip = null;
-        SettingsPanel panel = settingsPanel;
-        panel.hits.clear();
-        panel.w = Math.max(1, Math.min(360, this.width - 16));
-        panel.h = Math.max(1, Math.min(420, this.height - 16));
-        panel.x = (this.width - panel.w) / 2;
-        panel.y = (this.height - panel.h) / 2;
-        int x = panel.x, y = panel.y, w = panel.w;
-        float alpha = openProgress;
-        Gui.drawRect(0, 0, this.width, this.height, fade(0xA0000000, alpha));
-        roundRect(x - 2, y + 2, w + 4, panel.h + 2, 8, fade(0x60000000, alpha));
-        roundRect(x, y, w, panel.h, 6, fade(0xFF1C1D21, alpha));
-        shapePolygon(x, y, w, 32, 6, 6, 0, 0, fade(COL_HEADER_BG, alpha));
-        hud(font, panel.entry.name, x + 12, y + 12, fade(COL_TITLE, alpha));
-        boolean enabled = panel.entry.isEnabled();
-        roundRect(x + w - 94, y + 7, 58, 18, 4,
-                fade(enabled ? MaverPersonalization.getColor() : 0xFF34363E, alpha));
-        micro(font, enabled ? "Enabled" : "Disabled", x + w - 87, y + 13,
-                fade(enabled ? MaverPersonalization.getTextColor() : COL_ROW_TEXT, alpha));
-        panel.hits.add(Hit.action("enabled", null, x + w - 94, y + 7, 58, 18));
-        hud(font, "x", x + w - 22, y + 11, fade(COL_ROW_TEXT, alpha));
-        panel.hits.add(Hit.action("close", null, x + w - 30, y + 4, 26, 24));
-
-        // Mode stays visible while the parameters below it scroll independently.
-        drawPanelSetting(font, panel, panel.entry.settings.get(0), y + 36, PANEL_LINE_H, alpha);
-        panel.bodyY = y + 64;
-        panel.bodyH = Math.max(0, panel.h - 84);
-        int contentH = 0;
-        for (int i = 1; i < panel.entry.settings.size(); i++) {
-            Setting setting = panel.entry.settings.get(i);
-            if (setting.visible()) contentH += panelSettingHeight(setting);
-        }
-        panel.maxScroll = Math.max(0, contentH - panel.bodyH);
-        panel.scroll = clampInt(panel.scroll, 0, panel.maxScroll);
-        if (panel.bodyH > 0) {
-            pushScissor(x + 4, panel.bodyY, w - 8, panel.bodyH);
-            int cy = panel.bodyY - panel.scroll;
-            for (int i = 1; i < panel.entry.settings.size(); i++) {
-                Setting setting = panel.entry.settings.get(i);
-                if (!setting.visible()) continue;
-                int sh = panelSettingHeight(setting);
-                if (cy + sh > panel.bodyY && cy < panel.bodyY + panel.bodyH) {
-                    drawPanelSetting(font, panel, setting, cy, sh, alpha);
-                }
-                cy += sh;
-            }
-            popScissor();
-        }
-        if (panel.maxScroll > 0 && panel.bodyH > 0) {
-            int thumbH = Math.max(12, panel.bodyH * panel.bodyH / contentH);
-            int thumbY = panel.bodyY + (panel.bodyH - thumbH) * panel.scroll / panel.maxScroll;
-            roundRect(x + w - 5, thumbY, 2, thumbH, 1, fade(0x60FFFFFF, alpha));
-        }
-        micro(font, "Scroll to adjust  /  Esc to go back", x + 12, y + panel.h - 13,
-                fade(COL_DIM, alpha));
-        if (panel.dropdown != null) drawPanelDropdown(font, panel, alpha);
-    }
-
-    private void drawPanelSetting(FontRenderer font, SettingsPanel panel, Setting setting,
-            int y, int h, float alpha) {
-        int x = panel.x + 12, w = panel.w - 24;
-        boolean inBody = setting != panel.entry.settings.get(0);
-        boolean hovered = panel.dropdown == null && isHovered(lastMouseX, lastMouseY, x, y, w, h)
-                && (!inBody || isHovered(lastMouseX, lastMouseY, panel.x, panel.bodyY, panel.w, panel.bodyH));
-        ControlAnim anim = control("panel:" + settingKey(panel.entry, setting), hovered,
-                dragSetting == setting, frameNow);
-        if (anim.hover > 0.01F) roundRect(x - 4, y, w + 8, h, 3, fade(0x10FFFFFF, alpha * anim.hover));
-        int color = fade(blendColor(0xFFABB2C1, COL_TITLE, anim.hover), alpha);
-        if (hovered) tooltip = setting.label + "  " + (setting.kind == Setting.CHECK
-                ? (setting.checked() ? "On" : "Off") : setting.display());
-        if (setting.kind == Setting.SLIDER) {
-            String value = setting.display();
-            hud(font, ellipsizeHud(font, setting.label, w - hudWidth(font, value) - 12), x, y + 4, color);
-            hud(font, value, x + w - hudWidth(font, value), y + 4, fade(COL_TITLE, alpha));
-            int fill = Math.round(w * (float) setting.percent());
-            roundRect(x, y + 19, w, 3, 1, fade(0x26FFFFFF, alpha));
-            roundRect(x, y + 19, fill, 3, 1, fade(MaverPersonalization.getColor(), alpha));
-            fillCircle(x + fill, y + 20, 3, fade(COL_TITLE, alpha));
-        } else if (setting.kind == Setting.SELECT) {
-            hud(font, ellipsizeHud(font, setting.label, w / 2 - 8), x, y + 6, color);
-            String value = ellipsizeHud(font, setting.display(), w / 2 - 16);
-            hud(font, value, x + w - 16 - hudWidth(font, value), y + 6,
-                    fade(MaverPersonalization.getColor(), alpha));
-            drawChevronProgress(x + w - 5, y + h / 2, panel.dropdown != null
-                    && panel.dropdown.setting == setting ? 1.0F : 0.0F, fade(COL_TITLE, alpha));
-        } else {
-            hud(font, ellipsizeHud(font, setting.label, w - 22), x, y + 6, color);
-            roundRect(x + w - 12, y + 5, 12, 12, 3,
-                    fade(setting.checked() ? MaverPersonalization.getColor() : 0xFF454750, alpha));
-            if (setting.checked()) drawCheck(x + w - 9, y + 11,
-                    fade(MaverPersonalization.getTextColor(), alpha));
-        }
-        // Clip hit boxes as well as drawing, so partial rows cannot cover the header/footer.
-        int top = inBody ? Math.max(y, panel.bodyY) : y;
-        int bottom = inBody ? Math.min(y + h, panel.bodyY + panel.bodyH) : y + h;
-        if (bottom > top) panel.hits.add(Hit.setting(panel.entry, setting, x, top, w, bottom - top, x, w));
-    }
-
-    private void drawPanelDropdown(FontRenderer font, SettingsPanel panel, float alpha) {
-        Hit anchor = panel.dropdown;
-        panel.choices.clear();
-        if (!anchor.setting.visible()) { panel.dropdown = null; return; }
-        int below = panel.y + panel.h - 18 - anchor.y - anchor.h;
-        int above = anchor.y - panel.y - 32;
-        int desired = Math.min(8, anchor.setting.options.length) * CHOICE_H + 4;
-        boolean down = below >= desired || below >= above;
-        int rows = Math.min(anchor.setting.options.length,
-                Math.min(8, Math.max(1, ((down ? below : above) - 4) / CHOICE_H)));
-        panel.maxChoiceScroll = Math.max(0, anchor.setting.options.length - rows);
-        panel.choiceScroll = clampInt(panel.choiceScroll, 0, panel.maxChoiceScroll);
-        panel.choiceX = anchor.x;
-        panel.choiceW = anchor.w;
-        panel.choiceH = rows * CHOICE_H + 4;
-        panel.choiceY = down ? anchor.y + anchor.h : anchor.y - panel.choiceH;
-        int x = panel.choiceX, y = panel.choiceY, w = panel.choiceW;
-        roundRect(x - 1, y - 1, w + 2, panel.choiceH + 2, 4, fade(0xFF555966, alpha));
-        roundRect(x, y, w, panel.choiceH, 4, fade(0xFF24262D, alpha));
-        for (int row = 0; row < rows; row++) {
-            int index = panel.choiceScroll + row;
-            int cy = y + 2 + row * CHOICE_H;
-            boolean selected = index == (int) Math.round(anchor.setting.value());
-            boolean hovered = isHovered(lastMouseX, lastMouseY, x, cy, w, CHOICE_H);
-            if (selected || hovered) roundRect(x + 2, cy, w - 4, CHOICE_H, 3,
-                    fade(selected ? MaverPersonalization.getColor() : 0xFF3B3F49, alpha));
-            hud(font, ellipsizeHud(font, anchor.setting.options[index], w - 22), x + 8, cy + 6,
-                    fade(selected ? MaverPersonalization.getTextColor() : COL_ROW_TEXT, alpha));
-            panel.choices.add(Hit.action("choice", Integer.toString(index), x, cy, w, CHOICE_H));
-        }
-        if (panel.maxChoiceScroll > 0) {
-            int track = panel.choiceH - 4;
-            int thumb = Math.max(10, track * rows / anchor.setting.options.length);
-            int ty = y + 2 + (track - thumb) * panel.choiceScroll / panel.maxChoiceScroll;
-            roundRect(x + w - 4, ty, 2, thumb, 1, fade(0x90FFFFFF, alpha));
-        }
-    }
-
-    private void handleSettingsPanelClick(int mx, int my, int button) {
-        SettingsPanel panel = settingsPanel;
-        if (panel.dropdown != null) {
-            if (button == 0) for (Hit choice : panel.choices) {
-                if (!isHovered(mx, my, choice.x, choice.y, choice.w, choice.h)) continue;
-                Setting setting = panel.dropdown.setting;
-                setting.set(Integer.parseInt(choice.value));
-                if (setting == panel.entry.settings.get(0)) panel.scroll = 0;
-                panel.dropdown = null;
-                OpenMaverFeatures.flushSettings();
-                OpenMaverFeatures.playUiClick(1.1F);
-                return;
-            }
-            panel.dropdown = null;
-            return;
-        }
-        if (!isHovered(mx, my, panel.x, panel.y, panel.w, panel.h)) {
-            if (button == 0 || button == 1) closeSettingsPanel();
-            return;
-        }
-        for (Hit hit : panel.hits) {
-            if (!isHovered(mx, my, hit.x, hit.y, hit.w, hit.h)) continue;
-            if ("close".equals(hit.action) && button == 0) closeSettingsPanel();
-            else if ("enabled".equals(hit.action) && button == 0) panel.entry.toggle();
-            else if (hit.setting != null && hit.setting.visible()) {
-                if (hit.setting.kind == Setting.SELECT && (button == 0 || button == 1)) {
-                    panel.dropdown = hit;
-                    panel.choiceScroll = Math.max(0, (int) Math.round(hit.setting.value()) - 3);
-                    panel.choices.clear();
-                } else handleColumnSettingClick(hit, mx, button);
-            }
-            return;
-        }
-    }
-
-    private void scrollSettingsPanel(int mx, int my, int wheel) {
-        SettingsPanel panel = settingsPanel;
-        if (panel.dropdown != null) {
-            if (isHovered(mx, my, panel.choiceX, panel.choiceY, panel.choiceW, panel.choiceH)) {
-                panel.choiceScroll = clampInt(panel.choiceScroll - Integer.signum(wheel) * 2,
-                        0, panel.maxChoiceScroll);
-            }
-        } else if (isHovered(mx, my, panel.x, panel.bodyY, panel.w, panel.bodyH)) {
-            panel.scroll = clampInt(panel.scroll - Integer.signum(wheel) * PANEL_LINE_H * 2,
-                    0, panel.maxScroll);
-        }
-    }
-
     // Config 与 Personalization 是同一套列面板；绘制和命中共用 Hit，不存在旧页面入口。
 
     private int utilityContentHeight(Column column) {
@@ -2090,7 +1901,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
         int height = 8 + 4 * COL_ROW_H;
         if ("wallpaper".equals(personalizationSection)) height += wallpaperContentHeight();
-        else if ("color".equals(personalizationSection)) height += 78;
+        else if ("color".equals(personalizationSection)) height += 100;
         else if ("text".equals(personalizationSection)) height += 70;
         else if ("taunt".equals(personalizationSection)) height += 92;
         return height;
@@ -2227,6 +2038,9 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             }
             drawUtilityButton(font, column, "themeReset", null, innerX, fieldY + 23, innerW, 16,
                     "Reset theme", "Restore the default violet theme", false, false, alpha, hoverable);
+            drawUtilityRow(font, column, "moduleRainbow", "Rainbow",
+                    MaverPersonalization.isModuleListRainbow() ? "ON" : "OFF",
+                    x, fieldY + 44, alpha, hoverable, "Flowing rainbow colors for the function list");
         } else if ("text".equals(personalizationSection)) {
             micro(font, "Function bar label", innerX + 2, bodyY + 4, fade(COL_DIM, alpha));
             int fieldY = bodyY + 20;
@@ -2490,6 +2304,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
             } catch (RuntimeException ignored) {
                 // A malformed hit cannot affect the active theme.
             }
+        } else if ("moduleRainbow".equals(action)) {
+            MaverPersonalization.setModuleListRainbow(!MaverPersonalization.isModuleListRainbow());
         } else if ("themeReset".equals(action)) {
             MaverPersonalization.setColor(MaverPersonalization.DEFAULT_COLOR);
             personalizationInput = MaverPersonalization.getHexColor();
@@ -2611,8 +2427,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         }
         lastMouseX = mouseX;
         lastMouseY = mouseY;
-        if (settingsPanel != null) handleSettingsPanelClick(mouseX, mouseY, button);
-        else handleColumnClick(mouseX, mouseY, button);
+        handleColumnClick(mouseX, mouseY, button);
     }
 
     private void updateDrag(int mouseX) {
@@ -2676,13 +2491,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     @Override
     protected void keyTyped(char typedChar, int keyCode) throws IOException {
         if (closing) {
-            return;
-        }
-        if (settingsPanel != null) {
-            if (keyCode == Keyboard.KEY_ESCAPE) {
-                if (settingsPanel.dropdown != null) settingsPanel.dropdown = null;
-                else closeSettingsPanel();
-            }
             return;
         }
         if (handlePersonalizationKey(typedChar, keyCode)) return;
@@ -2749,7 +2557,6 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         dragSetting = null;
         dragEntry = null;
         pressColumn = null;
-        settingsPanel = null;
         searchFocused = false;
         profileFieldFocused = false;
         finishPersonalizationInput();
@@ -3409,7 +3216,7 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         final Module module;
         final String featureId;
         final List<Setting> settings = new ArrayList<Setting>();
-        boolean separateSettings;
+        boolean fitSettingsWidth;
         float hoverProgress;
         float toggleProgress;
         float expandProgress;

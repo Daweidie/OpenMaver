@@ -10,4 +10,7 @@ public class TextureManager {
     public boolean loadTexture(ResourceLocation location, ITextureObject texture) {
         return false;
     }
+
+    public void deleteTexture(ResourceLocation location) {
+    }
 }

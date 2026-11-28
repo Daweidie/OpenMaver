@@ -123,6 +123,15 @@ if(Java_Development_FOUND)
     set(OPENMAVER_MC_JAR "${CMAKE_BINARY_DIR}/openmaver-mc.jar")
     set(OPENMAVER_MOD_STAGE "${CMAKE_BINARY_DIR}/mod-stage")
 
+    # Public Microsoft application ID supplied by the Maver distributor (no client secret).
+    set(OPENMAVER_MICROSOFT_CLIENT_ID "" CACHE STRING "Microsoft public-client application ID for account login")
+    if(NOT OPENMAVER_MICROSOFT_CLIENT_ID STREQUAL "" AND
+            NOT OPENMAVER_MICROSOFT_CLIENT_ID MATCHES "^[A-Za-z0-9-]+$")
+        message(FATAL_ERROR "OPENMAVER_MICROSOFT_CLIENT_ID must be a public application ID")
+    endif()
+    configure_file("${CMAKE_SOURCE_DIR}/cmake/microsoft-auth.properties.in"
+            "${CMAKE_BINARY_DIR}/microsoft-auth.properties" @ONLY)
+
     file(GLOB_RECURSE OPENMAVER_MC_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/mc/*.java")
 
@@ -177,6 +186,9 @@ if(Java_Development_FOUND)
                 McpReobf "${OPENMAVER_MC_CLASSES_DIR}" "${OPENMAVER_MC_REOBF_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_SOURCE_DIR}/mc/resources" "${OPENMAVER_MC_REOBF_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${OPENMAVER_MC_REOBF_DIR}/openmaver"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/microsoft-auth.properties"
+                "${OPENMAVER_MC_REOBF_DIR}/openmaver/microsoft-auth.properties"
         DEPENDS openmaver_mc openmaver_reobf_tool
         COMMENT "reobf: MCP -> SRG（运行期可用）并复制 HUD 资源"
         VERBATIM
