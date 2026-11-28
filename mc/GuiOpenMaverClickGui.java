@@ -69,7 +69,8 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
         new Category("misc", "Misc")
     };
 
-    private static final String[] ESP_COLOR_NAMES = {"Orange", "Cyan", "Violet", "Red"};
+    private static final String[] ESP_MODES = {"Box", "Outline"};
+    private static final String[] ESP_COLOR_NAMES = {"Orange", "Cyan", "Violet", "Red", "White"};
     private static final String[] XRAY_COLOR_NAMES = {"Health", "Orange", "Cyan", "Violet", "Red"};
     private static final String[] AIM_MODES = {"Smooth", "Instant"};
     private static final String[] AIM_TARGETS = {"Head", "Chest", "Body"};
@@ -402,6 +403,10 @@ public final class GuiOpenMaverClickGui extends GuiScreen {
     }
 
     private void addEspSettings(Entry entry) {
+        entry.settings.add(Setting.select("MODE", ESP_MODES, new Binding() {
+            public double get() { return OpenMaverFeatures.getEspMode(); }
+            public void set(double value) { OpenMaverFeatures.setEspMode((int) Math.round(value)); }
+        }));
         entry.settings.add(Setting.slider("RANGE", 16.0F, 128.0F, 4.0F, 0, " m", new Binding() {
             public double get() { return OpenMaverFeatures.getEspRange(); }
             public void set(double value) { OpenMaverFeatures.setEspRange((float) value); }

@@ -144,6 +144,7 @@ public final class McpReobf {
         m(STACK, "getItemDamage", "func_77960_j");
         m(GSM, "color", "func_179131_c");
         m(GSM, "bindTexture", "func_179144_i");
+        m(GSM, "setActiveTexture", "func_179138_g");
         m(GSM, "enableDepth", "func_179126_j");
         m(GSM, "depthMask", "func_179132_a");
         m(GSM, "depthFunc", "func_179143_c");

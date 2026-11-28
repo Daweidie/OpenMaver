@@ -552,7 +552,8 @@ public final class OpenMaverHud {
     }
 
     private static String espInfo() {
-        return Math.round(OpenMaverFeatures.getEspRange()) + "m";
+        return (OpenMaverFeatures.getEspMode() == OpenMaverFeatures.ESP_MODE_OUTLINE ? "Outline " : "")
+                + Math.round(OpenMaverFeatures.getEspRange()) + "m";
     }
 
     /** 最多保留两位小数，并去掉无意义的尾随 0（3.20 -> 3.2，3.00 -> 3）。 */

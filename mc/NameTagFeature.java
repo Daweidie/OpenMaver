@@ -48,7 +48,7 @@ public final class NameTagFeature {
         OpenMaverFeatures.markDirty();
     }
 
-    /** Player X-Ray renders a model twice; its extra passes must not duplicate labels. */
+    /** Extra X-Ray/ESP model passes must not duplicate labels or capture them in a mask. */
     public static void beginSkinPass() { skinPassDepth++; }
     public static void endSkinPass() { skinPassDepth = Math.max(0, skinPassDepth - 1); }
 

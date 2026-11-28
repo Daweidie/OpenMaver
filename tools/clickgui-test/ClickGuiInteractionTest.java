@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.io.ByteArrayInputStream;
 import java.util.Properties;
 import java.util.List;
+import java.util.Arrays;
 import module.Module;
 import module.ModuleManager;
 import net.minecraft.client.Minecraft;
@@ -47,6 +48,17 @@ public final class ClickGuiInteractionTest {
         GuiOpenMaverClickGui gui = open(null, null, 1200, 600);
         check(columns(gui).size() == 7, "Five module categories plus Config and Personalization");
         velocitySettings(gui);
+        Object esp = findEntry(gui, "Player ESP");
+        Object espMode = findSetting(esp, "MODE");
+        check(Arrays.equals((String[]) get(espMode, "options"), new String[] {"Box", "Outline"}),
+                "Player ESP exposes Box and model Outline modes");
+        invoke(espMode, "set", new Class<?>[] {double.class}, 1.0D);
+        check(OpenMaverFeatures.getEspMode() == OpenMaverFeatures.ESP_MODE_OUTLINE,
+                "Outline selector controls the actual renderer");
+        Object espColor = findSetting(esp, "COLOR");
+        check("White".equals(((String[]) get(espColor, "options"))[4]), "ESP includes a white contour color");
+        invoke(espColor, "set", new Class<?>[] {double.class}, 4.0D);
+        check(OpenMaverFeatures.getEspColor() == 4, "White color binds without being clamped to Red");
         Object fastPlace = findEntry(gui, "Fast Place");
         check(((List<?>) get(fastPlace, "settings")).size() == 1,
                 "FastPlace exposes only one setting");
@@ -295,6 +307,8 @@ public final class ClickGuiInteractionTest {
         Properties persisted = new Properties();
         persisted.load(new ByteArrayInputStream(Files.readAllBytes(root.resolve("features.properties"))));
         check("#4C78D0".equals(persisted.getProperty("ui.theme.color")), "Theme color is saved to feature settings");
+        check("1".equals(persisted.getProperty("esp.mode")), "Outline mode persists with feature settings");
+        check("4".equals(persisted.getProperty("esp.color")), "White ESP color persists with feature settings");
         check("true".equals(persisted.getProperty("hud.moduleList.rainbow")), "Function list rainbow is saved with settings");
         MaverPersonalization.setModuleListRainbow(false);
         MaverPersonalization.load(persisted);

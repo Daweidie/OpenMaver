@@ -13,4 +13,5 @@ public class GlStateManager {
     public static void colorMask(boolean red, boolean green, boolean blue, boolean alpha) {}
     public static void color(float red, float green, float blue, float alpha) {}
     public static void bindTexture(int texture) {}
+    public static void setActiveTexture(int texture) {}
 }

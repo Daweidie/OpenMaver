@@ -16,6 +16,7 @@ public class GlStateManager {
     public static void activeTexture(int value) {
         if (unit != value) { unit = value; GL11.state.put("active", "" + value); }
     }
+    public static void setActiveTexture(int value) { activeTexture(value - 0x84C0); }
     public static void bindTexture(int value) {
         if (textures[unit].binding != value) {
             textures[unit].binding = value;

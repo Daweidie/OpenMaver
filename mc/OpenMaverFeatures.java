@@ -241,10 +241,13 @@ public final class OpenMaverFeatures {
     private static final float AIM_MANUAL_DECAY_MS = 120.0F;
 
     // Player ESP
+    public static final int ESP_MODE_BOX = 0;
+    public static final int ESP_MODE_OUTLINE = 1;
+    private static int espMode = ESP_MODE_BOX;
     private static float espRange = 48.0F;
     private static float espThickness = 1.5F;
     private static float espOpacity = 0.9F;
-    private static int espColor = 0;      // 0 = Orange, 1 = Cyan, 2 = Violet, 3 = Red
+    private static int espColor = 0;      // Orange, Cyan, Violet, Red, White
     private static boolean espPlayersOnly;
 
     // Target HUD
@@ -494,7 +497,8 @@ public final class OpenMaverFeatures {
         {1.0F, 0.42F, 0.22F},
         {0.36F, 0.88F, 1.0F},
         {0.69F, 0.55F, 1.0F},
-        {1.0F, 0.35F, 0.40F}
+        {1.0F, 0.35F, 0.40F},
+        {1.0F, 1.0F, 1.0F}
     };
 
     private static final float[][] XRAY_COLORS = {
@@ -2868,10 +2872,11 @@ public final class OpenMaverFeatures {
         aimRequireClick = readBoolean(values, "aim.requireClick", true);
         aimGcdEnabled = readBoolean(values, "aim.gcd", true);
         aimMaxStep = clamp(readFloat(values, "aim.maxStep", 35.0F), 5.0F, 90.0F);
+        espMode = readInt(values, "esp.mode", ESP_MODE_BOX, ESP_MODE_OUTLINE);
         espRange = clamp(readFloat(values, "esp.range", 48.0F), 16.0F, 128.0F);
         espThickness = clamp(readFloat(values, "esp.thickness", 1.5F), 0.5F, 4.0F);
         espOpacity = clamp(readFloat(values, "esp.opacity", 0.9F), 0.2F, 1.0F);
-        espColor = readInt(values, "esp.color", 0, 3);
+        espColor = readInt(values, "esp.color", 0, ESP_COLORS.length - 1);
         espPlayersOnly = readBoolean(values, "esp.playersOnly", false);
         targetHudRange = clamp(readFloat(values, "targethud.range", 32.0F), 8.0F, 64.0F);
         targetHudScale = clamp(readFloat(values, "targethud.scale", 1.0F), 0.7F, 1.4F);
@@ -3367,6 +3372,9 @@ public final class OpenMaverFeatures {
         markDirty();
     }
 
+    public static int getEspMode() { return espMode; }
+    public static void setEspMode(int value) { espMode = clamp(value, ESP_MODE_BOX, ESP_MODE_OUTLINE); markDirty(); }
+
     public static float getEspRange() { return espRange; }
     public static void setEspRange(float value) { espRange = clamp(value, 16.0F, 128.0F); markDirty(); }
 
@@ -3377,7 +3385,7 @@ public final class OpenMaverFeatures {
     public static void setEspOpacity(float value) { espOpacity = clamp(value, 0.2F, 1.0F); markDirty(); }
 
     public static int getEspColor() { return espColor; }
-    public static void setEspColor(int value) { espColor = clamp(value, 0, 3); markDirty(); }
+    public static void setEspColor(int value) { espColor = clamp(value, 0, ESP_COLORS.length - 1); markDirty(); }
 
     public static boolean isEspPlayersOnly() { return espPlayersOnly; }
     public static void setEspPlayersOnly(boolean value) { espPlayersOnly = value; markDirty(); }
@@ -3868,6 +3876,7 @@ public final class OpenMaverFeatures {
                     + "\naim.requireClick=" + aimRequireClick
                     + "\naim.gcd=" + aimGcdEnabled
                     + "\naim.maxStep=" + aimMaxStep
+                    + "\nesp.mode=" + espMode
                     + "\nesp.range=" + espRange
                     + "\nesp.thickness=" + espThickness
                     + "\nesp.opacity=" + espOpacity
@@ -3946,6 +3955,7 @@ public final class OpenMaverFeatures {
     }
 
     public static void onRender(RenderWorldLastEvent event) {
+        if (PlayerEspOutline.isRendering()) return;
         Module xrayModule = ModuleManager.getModule("Player X-Ray");
         boolean xrayEnabled = xrayModule != null && xrayModule.isEnabled();
         if (!espEnabled && !xrayEnabled) {
@@ -3969,7 +3979,16 @@ public final class OpenMaverFeatures {
         if (entities == null) {
             return;
         }
-        if (espEnabled) {
+        float partialTicks = 1.0F;
+        Object eventPartial = read(event, "partialTicks", "partialTicks", Float.class);
+        if (eventPartial instanceof Number) {
+            partialTicks = ((Number) eventPartial).floatValue();
+        }
+        if (xrayEnabled) {
+            renderPlayerXray(renderManager, player, entities, partialTicks);
+        }
+        if (espEnabled && (espMode != ESP_MODE_OUTLINE
+                || !renderEspOutline(renderManager, player, entities, partialTicks))) {
             GlColor.restore();
             GL11.glPushAttrib(GL11.GL_ENABLE_BIT | GL11.GL_LINE_BIT
                     | GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
@@ -4009,14 +4028,60 @@ public final class OpenMaverFeatures {
             GL11.glPopAttrib();
             GlColor.restore();
         }
-        if (xrayEnabled) {
-            float partialTicks = 1.0F;
-            Object eventPartial = read(event, "partialTicks", "partialTicks", Float.class);
-            if (eventPartial instanceof Number) {
-                partialTicks = ((Number) eventPartial).floatValue();
+    }
+
+    private static boolean renderEspOutline(final RenderManager manager, EntityLivingBase self,
+            List<?> entities, final float partialTicks) {
+        final List<EntityLivingBase> targets = espTargets(self, entities);
+        if (targets.isEmpty()) return true;
+        float[] rgb = ESP_COLORS[espColor];
+        return PlayerEspOutline.render(org.lwjgl.opengl.Display.getWidth(),
+                org.lwjgl.opengl.Display.getHeight(), espThickness, rgb, espOpacity, new Runnable() {
+            @Override public void run() {
+                for (EntityLivingBase target : targets) renderEspModel(manager, target, partialTicks);
             }
-            renderPlayerXray(renderManager, player, entities, partialTicks);
+        });
+    }
+
+    static List<EntityLivingBase> espTargets(EntityLivingBase self, List<?> entities) {
+        List<EntityLivingBase> result = new ArrayList<EntityLivingBase>();
+        double rangeSq = (double) espRange * espRange;
+        for (Object candidate : entities) {
+            if (!(candidate instanceof EntityLivingBase) || candidate == self
+                    || (espPlayersOnly && !(candidate instanceof EntityPlayer))) continue;
+            EntityLivingBase entity = (EntityLivingBase) candidate;
+            if (alive(entity) && !AntiBotFeature.shouldFilterRender(entity)
+                    && distance(self, entity) <= rangeSq) result.add(entity);
         }
+        return result;
+    }
+
+    /** Invoke only the model renderer: no ground shadow, fire, F3 hitbox or duplicate label. */
+    static void renderEspModel(RenderManager manager, EntityLivingBase entity, float partialTicks) {
+        Object renderer = call(manager, "getEntityRenderObject", "func_78713_a", "a", entity);
+        if (renderer == null) return;
+        double x = espPosition(entity, "posX", "field_70165_t", "lastTickPosX", "field_70142_S", partialTicks)
+                - number(manager, "viewerPosX", "field_78725_b");
+        double y = espPosition(entity, "posY", "field_70163_u", "lastTickPosY", "field_70137_T", partialTicks)
+                - number(manager, "viewerPosY", "field_78726_c");
+        double z = espPosition(entity, "posZ", "field_70161_v", "lastTickPosZ", "field_70136_U", partialTicks)
+                - number(manager, "viewerPosZ", "field_78723_d");
+        float previousYaw = (float) number(entity, "prevRotationYaw", "field_70126_B");
+        float yaw = previousYaw + ((float) number(entity, "rotationYaw", "field_70177_z") - previousYaw) * partialTicks;
+        GlColor.restore();
+        if (!callVoid(renderer, "doRender", "func_76986_a", "a", entity,
+                Double.valueOf(x), Double.valueOf(y), Double.valueOf(z), Float.valueOf(yaw),
+                Float.valueOf(partialTicks))) {
+            throw new IllegalStateException("Player ESP model renderer failed");
+        }
+    }
+
+    private static double espPosition(Object entity, String current, String currentSrg,
+            String previous, String previousSrg, float partialTicks) {
+        double position = number(entity, current, currentSrg);
+        if (number(entity, "ticksExisted", "field_70173_aa") == 0.0D) return position;
+        double last = number(entity, previous, previousSrg);
+        return last + (position - last) * partialTicks;
     }
 
     // ==================================================================
@@ -4953,6 +5018,14 @@ public final class OpenMaverFeatures {
     }
 
     static String[] runtimeCandidates(String mcp, String srg) {
+        if ("field_78725_b".equals(srg)) return new String[] {mcp, srg, "o"};
+        if ("field_78726_c".equals(srg)) return new String[] {mcp, srg, "p"};
+        if ("field_78723_d".equals(srg)) return new String[] {mcp, srg, "q"};
+        if ("field_70142_S".equals(srg)) return new String[] {mcp, srg, "P"};
+        if ("field_70137_T".equals(srg)) return new String[] {mcp, srg, "Q"};
+        if ("field_70136_U".equals(srg)) return new String[] {mcp, srg, "R"};
+        if ("field_70126_B".equals(srg)) return new String[] {mcp, srg, "A"};
+        if ("field_70173_aa".equals(srg)) return new String[] {mcp, srg, "W"};
         if ("field_71415_G".equals(srg)) return new String[] {mcp, srg, "w"};
         if ("field_71441_e".equals(srg)) return new String[] {mcp, srg, "f"};
         if ("field_71439_g".equals(srg)) return new String[] {mcp, srg, "h"};
